@@ -1,0 +1,256 @@
+# Golden regression suite for Generate (SPEC §9). Scored deterministically from the sqlglot
+# AST; SQL strings are never compared. `reference` is the author's correct answer: it is not
+# used for scoring, but tests verify that it satisfies `expect`.
+#
+# Reference time: Friday 2026-10-02 09:00 in Asia/Seoul.
+reference_time: "2026-10-02T09:00:00+09:00"
+
+cases:
+  # --- single resource ----------------------------------------------------------------
+  - id: customers_in_region
+    category: single_resource
+    question: 서울 지역 고객 수 알려줘
+    expect:
+      status: ok
+      aggregates: [{ function: count, field: "*" }]
+      resources: [customers]
+      constraints:
+        - { field: customers.region, op: "=", parameter_value: 서울 }
+      parameters:
+        - { value: 서울, type: string }
+      forbidden_literals: [서울]
+    reference:
+      statement: SELECT COUNT(*) FROM customers WHERE region = :region
+      parameters: { region: 서울 }
+      parameter_types: { region: string }
+
+  - id: customer_list
+    category: single_resource
+    question: 고객 이름과 지역 목록 보여줘
+    expect:
+      status: ok
+      resources: [customers]
+      fields: [customers.name, customers.region]
+    reference:
+      statement: SELECT name, region FROM customers
+
+  # --- relation / join ----------------------------------------------------------------
+  - id: revenue_by_region
+    category: join
+    question: 지역별 매출 합계
+    expect:
+      status: ok
+      aggregates: [{ function: sum, field: orders.amount }]
+      group_by: [customers.region]
+      resources: [orders, customers]
+      fields: [orders.amount, customers.region]
+      joins: [[orders.customer_id, customers.id]]
+      constraints:
+        - { field: orders.status, op: "=", value: COMPLETED }
+      forbidden_parameter_values: [COMPLETED]
+    reference:
+      statement: >-
+        SELECT c.region, SUM(o.amount) AS revenue FROM orders o
+        JOIN customers c ON c.id = o.customer_id
+        WHERE o.status = 'COMPLETED' GROUP BY c.region
+
+  - id: shipment_carriers_with_amount
+    category: join
+    question: 배송 건마다 택배사와 해당 주문 금액을 보여줘
+    expect:
+      status: ok
+      resources: [shipments, orders]
+      fields: [shipments.carrier, orders.amount]
+      joins: [[shipments.order_id, orders.id]]
+    reference:
+      statement: >-
+        SELECT s.id, s.carrier, o.amount FROM shipments s JOIN orders o ON o.id = s.order_id
+
+  # --- business rule constants --------------------------------------------------------
+  - id: total_revenue
+    category: business_rule
+    question: 전체 매출 알려줘
+    expect:
+      status: ok
+      aggregates: [{ function: sum, field: orders.amount }]
+      resources: [orders]
+      fields: [orders.amount]
+      constraints:
+        - { field: orders.status, op: "=", value: COMPLETED }
+      forbidden_parameter_values: [COMPLETED]
+    reference:
+      statement: SELECT SUM(amount) AS revenue FROM orders WHERE status = 'COMPLETED'
+
+  - id: order_count_excludes_cancelled
+    category: business_rule
+    question: 전체 주문 건수
+    expect:
+      status: ok
+      aggregates: [{ function: count, field: "*" }]
+      resources: [orders]
+      constraints:
+        - { field: orders.status, op: ["!=", "not in"], value: CANCELLED }
+      forbidden_parameter_values: [CANCELLED]
+    reference:
+      statement: SELECT COUNT(*) FROM orders WHERE status <> 'CANCELLED'
+
+  # --- relative time ------------------------------------------------------------------
+  - id: revenue_last_30_days
+    category: relative_time
+    question: 최근 30일 매출
+    expect:
+      status: ok
+      aggregates: [{ function: sum, field: orders.amount }]
+      resources: [orders]
+      forbidden_fields: [orders.ordered_at]
+      constraints:
+        - { field: orders.paid_at, op: ">=", parameter_value: "2026-09-02T09:00:00+09:00" }
+        - { field: orders.paid_at, op: "<", parameter_value: "2026-10-02T09:00:00+09:00" }
+        - { field: orders.status, op: "=", value: COMPLETED }
+      forbidden_parameter_values: [COMPLETED]
+      forbidden_constructs: [relative_time_function]
+    reference:
+      statement: >-
+        SELECT SUM(amount) FROM orders
+        WHERE status = 'COMPLETED' AND paid_at >= :start_at AND paid_at < :end_at
+      parameters: { start_at: "2026-09-02T09:00:00+09:00", end_at: "2026-10-02T09:00:00+09:00" }
+      parameter_types: { start_at: date-time, end_at: date-time }
+
+  - id: revenue_last_month
+    category: relative_time
+    question: 지난달 매출
+    expect:
+      status: ok
+      aggregates: [{ function: sum, field: orders.amount }]
+      resources: [orders]
+      constraints:
+        - { field: orders.paid_at, op: ">=", parameter_value: "2026-09-01T00:00:00+09:00" }
+        - { field: orders.paid_at, op: "<", parameter_value: "2026-10-01T00:00:00+09:00" }
+        - { field: orders.status, op: "=", value: COMPLETED }
+      forbidden_fields: [orders.ordered_at]
+      forbidden_parameter_values: [COMPLETED]
+      forbidden_constructs: [relative_time_function]
+    reference:
+      statement: >-
+        SELECT SUM(amount) FROM orders
+        WHERE status = 'COMPLETED' AND paid_at >= :start_at AND paid_at < :end_at
+      parameters: { start_at: "2026-09-01T00:00:00+09:00", end_at: "2026-10-01T00:00:00+09:00" }
+      parameter_types: { start_at: date-time, end_at: date-time }
+
+  # --- date column chosen from field descriptions -------------------------------------
+  - id: order_count_last_week_uses_ordered_at
+    category: date_column_by_description
+    question: 지난주 주문 건수
+    expect:
+      status: ok
+      aggregates: [{ function: count, field: "*" }]
+      resources: [orders]
+      forbidden_fields: [orders.paid_at]
+      constraints:
+        - { field: orders.ordered_at, op: ">=", parameter_value: "2026-09-21T00:00:00+09:00" }
+        - { field: orders.ordered_at, op: "<", parameter_value: "2026-09-28T00:00:00+09:00" }
+        - { field: orders.status, op: ["!=", "not in"], value: CANCELLED }
+      forbidden_parameter_values: [CANCELLED]
+      forbidden_constructs: [relative_time_function]
+    reference:
+      statement: >-
+        SELECT COUNT(*) FROM orders
+        WHERE status <> 'CANCELLED' AND ordered_at >= :start_at AND ordered_at < :end_at
+      parameters: { start_at: "2026-09-21T00:00:00+09:00", end_at: "2026-09-28T00:00:00+09:00" }
+      parameter_types: { start_at: date-time, end_at: date-time }
+
+  - id: revenue_yesterday_uses_paid_at
+    category: date_column_by_description
+    question: 어제 매출
+    expect:
+      status: ok
+      aggregates: [{ function: sum, field: orders.amount }]
+      resources: [orders]
+      forbidden_fields: [orders.ordered_at]
+      constraints:
+        - { field: orders.paid_at, op: ">=", parameter_value: "2026-10-01T00:00:00+09:00" }
+        - { field: orders.paid_at, op: "<", parameter_value: "2026-10-02T00:00:00+09:00" }
+        - { field: orders.status, op: "=", value: COMPLETED }
+      forbidden_parameter_values: [COMPLETED]
+      forbidden_constructs: [relative_time_function]
+    reference:
+      statement: >-
+        SELECT SUM(amount) FROM orders
+        WHERE status = 'COMPLETED' AND paid_at >= :start_at AND paid_at < :end_at
+      parameters: { start_at: "2026-10-01T00:00:00+09:00", end_at: "2026-10-02T00:00:00+09:00" }
+      parameter_types: { start_at: date-time, end_at: date-time }
+
+  # --- user values are parameters, rule constants are literals ------------------------
+  - id: busan_revenue
+    category: parameterization
+    question: 부산 지역 매출
+    expect:
+      status: ok
+      aggregates: [{ function: sum, field: orders.amount }]
+      resources: [orders, customers]
+      joins: [[orders.customer_id, customers.id]]
+      constraints:
+        - { field: customers.region, op: "=", parameter_value: 부산 }
+        - { field: orders.status, op: "=", value: COMPLETED }
+      parameters:
+        - { value: 부산, type: string }
+      forbidden_literals: [부산]
+      forbidden_parameter_values: [COMPLETED]
+    reference:
+      statement: >-
+        SELECT SUM(o.amount) FROM orders o JOIN customers c ON c.id = o.customer_id
+        WHERE c.region = :region AND o.status = 'COMPLETED'
+      parameters: { region: 부산 }
+      parameter_types: { region: string }
+
+  - id: orders_over_amount
+    category: parameterization
+    question: 10만원 이상인 주문 건수
+    expect:
+      status: ok
+      aggregates: [{ function: count, field: "*" }]
+      resources: [orders]
+      constraints:
+        - { field: orders.amount, op: ">=", parameter_value: 100000 }
+        - { field: orders.status, op: ["!=", "not in"], value: CANCELLED }
+      forbidden_literals: ["100000"]
+      forbidden_parameter_values: [CANCELLED]
+    reference:
+      statement: >-
+        SELECT COUNT(*) FROM orders WHERE amount >= :min_amount AND status <> 'CANCELLED'
+      parameters: { min_amount: 100000 }
+      parameter_types: { min_amount: number }
+
+  # --- ambiguous ----------------------------------------------------------------------
+  - id: shipments_last_30_days_ambiguous_date
+    category: ambiguous_date_column
+    question: 최근 30일 배송 건수
+    expect: { status: ambiguous }
+
+  - id: shipments_yesterday_ambiguous_date
+    category: ambiguous_date_column
+    question: 어제 배송 건수
+    expect: { status: ambiguous }
+
+  - id: best_customer_ambiguous_metric
+    category: ambiguous
+    question: 제일 좋은 고객이 누구야?
+    expect: { status: ambiguous }
+
+  # --- unanswerable -------------------------------------------------------------------
+  - id: churn_rate
+    category: unanswerable
+    # A bare "churn rate" leaves the metric undefined and can reasonably be ambiguous.
+    # Define it using subscription history, which this context does not contain.
+    question: 지난달 구독 중이던 고객 중 지난달 구독을 해지한 고객의 비율 알려줘
+    expect: { status: unanswerable }
+
+  - id: refund_total
+    category: unanswerable
+    question: 환불 금액 합계
+    expect: { status: unanswerable }
+
+  - id: revenue_by_product_category
+    category: unanswerable
+    question: 상품 카테고리별 매출
+    expect: { status: unanswerable }

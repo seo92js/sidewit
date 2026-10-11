@@ -1,0 +1,321 @@
+# Supplemental regression: different schema, values and periods from commerce and prompt examples.
+{
+  "reference_time": "2026-10-02T09:00:00+09:00",
+  "cases": [
+    {
+      "id": "members_in_sapporo",
+      "category": "supplemental_low_cost_regression",
+      "question": "札幌 지역 회원 수",
+      "expect": {
+        "status": "ok",
+        "resources": [
+          "members"
+        ],
+        "aggregates": [
+          {
+            "function": "count",
+            "field": "*"
+          }
+        ],
+        "constraints": [
+          {
+            "field": "members.zone",
+            "op": "=",
+            "parameter_value": "札幌"
+          }
+        ],
+        "parameters": [
+          {
+            "value": "札幌",
+            "type": "string"
+          }
+        ],
+        "forbidden_literals": [
+          "札幌"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT COUNT(*) FROM members WHERE zone = :zone",
+        "parameters": {
+          "zone": "札幌"
+        },
+        "parameter_types": {
+          "zone": "string"
+        }
+      }
+    },
+    {
+      "id": "kyoto_fees_join",
+      "category": "supplemental_low_cost_regression",
+      "question": "京都 지역 대여료 합계",
+      "expect": {
+        "status": "ok",
+        "resources": [
+          "rentals",
+          "members"
+        ],
+        "aggregates": [
+          {
+            "function": "sum",
+            "field": "rentals.fee"
+          }
+        ],
+        "joins": [
+          [
+            "rentals.member_id",
+            "members.id"
+          ]
+        ],
+        "constraints": [
+          {
+            "field": "members.zone",
+            "op": "=",
+            "parameter_value": "京都"
+          },
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          }
+        ],
+        "parameters": [
+          {
+            "value": "京都",
+            "type": "string"
+          }
+        ],
+        "forbidden_literals": [
+          "京都"
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT SUM(r.fee) FROM rentals r JOIN members m ON r.member_id = m.id WHERE m.zone = :zone AND r.state = 'SETTLED'",
+        "parameters": {
+          "zone": "京都"
+        },
+        "parameter_types": {
+          "zone": "string"
+        }
+      }
+    },
+    {
+      "id": "rentals_over_fee",
+      "category": "supplemental_low_cost_regression",
+      "question": "대여료 2500원 이상인 대여 건수",
+      "expect": {
+        "status": "ok",
+        "resources": [
+          "rentals"
+        ],
+        "aggregates": [
+          {
+            "function": "count",
+            "field": "*"
+          }
+        ],
+        "constraints": [
+          {
+            "field": "rentals.fee",
+            "op": ">=",
+            "parameter_value": 2500
+          },
+          {
+            "field": "rentals.state",
+            "op": [
+              "!=",
+              "not in"
+            ],
+            "value": "VOID"
+          }
+        ],
+        "parameters": [
+          {
+            "value": 2500,
+            "type": "number"
+          }
+        ],
+        "forbidden_literals": [
+          "2500"
+        ],
+        "forbidden_parameter_values": [
+          "VOID"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT COUNT(*) FROM rentals WHERE fee >= :minimum_fee AND state <> 'VOID'",
+        "parameters": {
+          "minimum_fee": 2500
+        },
+        "parameter_types": {
+          "minimum_fee": "number"
+        }
+      }
+    },
+    {
+      "id": "fees_last_14_days",
+      "category": "supplemental_low_cost_regression",
+      "question": "최근 14일 대여료 합계",
+      "expect": {
+        "status": "ok",
+        "resources": [
+          "rentals"
+        ],
+        "aggregates": [
+          {
+            "function": "sum",
+            "field": "rentals.fee"
+          }
+        ],
+        "constraints": [
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          },
+          {
+            "field": "rentals.settled_at",
+            "op": ">=",
+            "parameter_value": "2026-09-18T09:00:00+09:00"
+          },
+          {
+            "field": "rentals.settled_at",
+            "op": "<",
+            "parameter_value": "2026-10-02T09:00:00+09:00"
+          }
+        ],
+        "forbidden_fields": [
+          "rentals.opened_at"
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ],
+        "forbidden_constructs": [
+          "relative_time_function"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT SUM(fee) FROM rentals WHERE state = 'SETTLED' AND settled_at >= :start_at AND settled_at < :end_at",
+        "parameters": {
+          "start_at": "2026-09-18T09:00:00+09:00",
+          "end_at": "2026-10-02T09:00:00+09:00"
+        },
+        "parameter_types": {
+          "start_at": "date-time",
+          "end_at": "date-time"
+        }
+      }
+    },
+    {
+      "id": "parcels_ambiguous_date",
+      "category": "supplemental_low_cost_regression",
+      "question": "최근 14일 배송 건수",
+      "expect": {
+        "status": "ambiguous"
+      }
+    },
+    {
+      "id": "parcels_explicit_registered_at",
+      "category": "supplemental_low_cost_regression",
+      "question": "parcels.registered_at을 기준으로 최근 14일 배송 건수",
+      "expect": {
+        "status": "ok",
+        "resources": [
+          "parcels"
+        ],
+        "aggregates": [
+          {
+            "function": "count",
+            "field": "*"
+          }
+        ],
+        "constraints": [
+          {
+            "field": "parcels.registered_at",
+            "op": ">=",
+            "parameter_value": "2026-09-18T09:00:00+09:00"
+          },
+          {
+            "field": "parcels.registered_at",
+            "op": "<",
+            "parameter_value": "2026-10-02T09:00:00+09:00"
+          }
+        ],
+        "forbidden_fields": [
+          "parcels.sorted_at",
+          "parcels.handed_over_at"
+        ],
+        "forbidden_constructs": [
+          "relative_time_function"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT COUNT(*) FROM parcels WHERE registered_at >= :start_at AND registered_at < :end_at",
+        "parameters": {
+          "start_at": "2026-09-18T09:00:00+09:00",
+          "end_at": "2026-10-02T09:00:00+09:00"
+        },
+        "parameter_types": {
+          "start_at": "date-time",
+          "end_at": "date-time"
+        }
+      }
+    },
+    {
+      "id": "late_fee_missing",
+      "category": "supplemental_low_cost_regression",
+      "question": "실제 청구된 연체료 총액",
+      "expect": {
+        "status": "unanswerable"
+      }
+    },
+    {
+      "id": "fees_by_book_genre_missing",
+      "category": "supplemental_low_cost_regression",
+      "question": "도서 장르별 대여료 합계",
+      "expect": {
+        "status": "unanswerable"
+      }
+    },
+    {
+      "id": "reviews_last_14_days_ignore_updated_at",
+      "category": "held_out_bookkeeping_timestamp",
+      "question": "최근 14일 리뷰 수",
+      "expect": {
+        "status": "ok",
+        "resources": [
+          "reviews"
+        ],
+        "constraints": [
+          {
+            "field": "reviews.created_at",
+            "op": [
+              ">=",
+              ">"
+            ],
+            "parameter": true
+          }
+        ],
+        "forbidden_fields": [
+          "reviews.updated_at"
+        ],
+        "forbidden_constructs": [
+          "relative_time_function"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT COUNT(*) FROM reviews WHERE created_at >= :start_at AND created_at < :end_at",
+        "parameters": {
+          "start_at": "2026-09-18T09:00:00+09:00",
+          "end_at": "2026-10-02T09:00:00+09:00"
+        },
+        "parameter_types": {
+          "start_at": "date-time",
+          "end_at": "date-time"
+        }
+      }
+    }
+  ]
+}

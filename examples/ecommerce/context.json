@@ -1,0 +1,134 @@
+{
+  "name": "ecommerce",
+  "dialect": "postgresql",
+  "timezone": "Asia/Seoul",
+  "definition": {
+    "resources": [
+      {
+        "name": "customers",
+        "description": "고객",
+        "fields": [
+          {
+            "name": "id",
+            "type": "bigint",
+            "primary_key": true,
+            "nullable": false
+          },
+          {
+            "name": "name",
+            "type": "text",
+            "description": "고객 이름"
+          },
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "description": "고객 지역",
+            "allowed_values": [
+              "서울",
+              "부산",
+              "대구"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "orders",
+        "description": "주문",
+        "fields": [
+          {
+            "name": "id",
+            "type": "bigint",
+            "primary_key": true,
+            "nullable": false
+          },
+          {
+            "name": "customer_id",
+            "type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "amount",
+            "type": "numeric(12,2)",
+            "description": "실제 결제 금액(원)"
+          },
+          {
+            "name": "status",
+            "type": "text",
+            "nullable": false,
+            "description": "주문 상태",
+            "allowed_values": [
+              "COMPLETED",
+              "CANCELLED",
+              "PENDING"
+            ]
+          },
+          {
+            "name": "ordered_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "description": "주문 생성 시각. 주문 건수의 기간은 이 컬럼 기준."
+          },
+          {
+            "name": "paid_at",
+            "type": "timestamptz",
+            "description": "결제 완료 시각. 매출의 기간은 이 컬럼 기준."
+          }
+        ]
+      },
+      {
+        "name": "shipments",
+        "fields": [
+          {
+            "name": "id",
+            "type": "bigint",
+            "primary_key": true,
+            "nullable": false
+          },
+          {
+            "name": "order_id",
+            "type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "carrier",
+            "type": "text",
+            "description": "택배사"
+          },
+          {
+            "name": "created_at",
+            "type": "timestamptz"
+          },
+          {
+            "name": "processed_at",
+            "type": "timestamptz"
+          },
+          {
+            "name": "completed_at",
+            "type": "timestamptz"
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "from": "orders.customer_id",
+        "to": "customers.id"
+      },
+      {
+        "from": "shipments.order_id",
+        "to": "orders.id"
+      }
+    ],
+    "rules": [
+      {
+        "id": "revenue",
+        "text": "매출(revenue)은 status = 'COMPLETED'인 주문의 amount 합계이다."
+      },
+      {
+        "id": "order_count",
+        "text": "주문 건수에서 status = 'CANCELLED'인 주문은 제외한다."
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+services:
+  api:
+    build: ./backend
+    environment:
+      SIDEWIT_API_KEY: ${SIDEWIT_API_KEY:-}
+      SIDEWIT_GENERATION_HISTORY: ${SIDEWIT_GENERATION_HISTORY:-200}
+      SIDEWIT_LLM_PROVIDER: ${SIDEWIT_LLM_PROVIDER:-}
+      SIDEWIT_LLM_MODEL: ${SIDEWIT_LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      # Contexts and Tools as JSON files. One Sidewit instance per directory.
+      - ${SIDEWIT_DATA_PATH:-./data}:/data
+    ports:
+      - "127.0.0.1:${SIDEWIT_API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  # Optional management UI; `docker compose up api` runs without it.
+  web:
+    build: ./frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SIDEWIT_WEB_PORT:-3000}:80"

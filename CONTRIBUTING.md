@@ -1,0 +1,60 @@
+# Contributing
+
+Sidewit is licensed under Apache-2.0. Contributions should preserve the boundary between
+proposing an Operation and executing it in the calling application.
+
+## Development checks
+
+You need Docker for backend checks and Node.js 20.19+ with npm for frontend checks.
+From the repository root:
+
+```bash
+bash scripts/check-backend.sh
+(cd frontend && npm ci && npm run check)
+```
+
+The backend script runs Ruff and pytest in Docker. It starts and removes a temporary
+PostgreSQL instance for validator parity tests; the product itself needs no database.
+It also builds the Python wheel and renders all three generation prompts directly from that
+artifact to catch missing package resources.
+Tests use temporary data directories and provider fixtures, not real LLM keys.
+Frontend checks run Prettier, ESLint, Vitest, TypeScript and the Vite build.
+The [CI workflow](.github/workflows/checks.yml) also builds both Docker images.
+
+## Pull requests
+
+- Keep each change focused and explain the user-visible problem, behavior and validation.
+- Add a regression test for behavior changes. Update the [specification](docs/SPEC.md) when
+  changing contracts, and user-facing documentation when usage changes.
+- Keep provider-specific response formats inside provider adapters. Unsupported required
+  validation must not silently pass.
+- Use commit messages in the form `<type>: <description>`, for example
+  `fix: reject conflicting Tool updates`.
+- Do not commit credentials, `.env`, user data, private logs, backups or internal review records.
+
+Discuss new Operation types or changes to storage and execution boundaries before implementing
+large changes. Use synthetic data in examples and reproductions.
+
+## Real-provider evaluation
+
+Real evaluations are separate from automated tests. They send fixture Contexts and questions
+to the configured provider and incur API charges. Use only data you are authorized to send;
+never run them automatically for untrusted pull requests.
+
+Follow the [evaluation guide](evals/README.md). Record the model, code revision, fixture and
+prompt versions, pass/fail counts and failure explanations. Keep raw outputs outside version
+control; share sanitized summaries when relevant. FakeProvider results verify pipeline
+behavior, not model accuracy.
+
+## Release checks
+
+Before release, verify Context → Generate → Tool draft/save/invoke and the
+`ok`, `ambiguous` and `unanswerable` paths with both OpenAI and Gemini. If either provider
+has not been tested, record `Real LLM provider E2E has not been verified.` as a release blocker.
+Publish known model failures with the release notes; do not present regression pass rates
+as general accuracy. Confirm loopback defaults and credential/data exclusions in Git and
+Docker build contexts.
+
+## Security issues
+
+Follow the [security policy](SECURITY.md) rather than posting sensitive details in a public issue.

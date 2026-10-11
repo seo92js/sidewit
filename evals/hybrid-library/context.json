@@ -1,0 +1,255 @@
+{
+  "name": "eval-hybrid-library",
+  "dialect": "postgresql",
+  "timezone": "Asia/Tokyo",
+  "allow_generated_sql": true,
+  "definition": {
+    "resources": [
+      {
+        "name": "members",
+        "description": "도서관 회원",
+        "fields": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "zone",
+            "type": "text",
+            "description": "거주 지역"
+          },
+          {
+            "name": "name",
+            "type": "text",
+            "description": "회원 이름"
+          }
+        ]
+      },
+      {
+        "name": "rentals",
+        "description": "대여 결제",
+        "fields": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "member_id",
+            "type": "bigint"
+          },
+          {
+            "name": "fee",
+            "type": "numeric",
+            "description": "실제 결제된 대여료"
+          },
+          {
+            "name": "state",
+            "type": "text",
+            "description": "대여 상태"
+          },
+          {
+            "name": "opened_at",
+            "type": "timestamptz",
+            "description": "대여 시작 시각. 대여 건수의 기간 기준."
+          },
+          {
+            "name": "settled_at",
+            "type": "timestamptz",
+            "description": "결제 완료 시각. 대여료 합계의 기간 기준."
+          }
+        ]
+      },
+      {
+        "name": "parcels",
+        "description": "배송",
+        "fields": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "rental_id",
+            "type": "bigint"
+          },
+          {
+            "name": "registered_at",
+            "type": "timestamptz"
+          },
+          {
+            "name": "sorted_at",
+            "type": "timestamptz"
+          },
+          {
+            "name": "handed_over_at",
+            "type": "timestamptz"
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "from": "rentals.member_id",
+        "to": "members.id"
+      },
+      {
+        "from": "parcels.rental_id",
+        "to": "rentals.id"
+      }
+    ],
+    "rules": [
+      {
+        "id": "fee_total",
+        "text": "대여료 합계는 state = 'SETTLED'인 rentals의 fee 합계이다."
+      },
+      {
+        "id": "rental_count",
+        "text": "대여 건수는 state = 'VOID'인 rentals를 제외한다."
+      }
+    ],
+    "metrics": [
+      {
+        "id": "members_in_zone",
+        "description": "거주 지역(zone)별 회원 행 수. ID가 null이어도 포함. 반드시 zone 입력.",
+        "resource": "members",
+        "aggregate": {
+          "kind": "row_count"
+        },
+        "inputs": [
+          {
+            "name": "zone",
+            "type": "string",
+            "field": "members.zone"
+          }
+        ]
+      },
+      {
+        "id": "regional_fees",
+        "description": "특정 거주 지역의 실제 결제 대여료 합계. 반드시 zone 입력.",
+        "resource": "rentals",
+        "aggregate": {
+          "kind": "sum",
+          "field": "rentals.fee"
+        },
+        "joins": [
+          {
+            "from": "rentals.member_id",
+            "to": "members.id"
+          }
+        ],
+        "fixed_filters": [
+          {
+            "field": "rentals.state",
+            "value": "SETTLED"
+          }
+        ],
+        "inputs": [
+          {
+            "name": "zone",
+            "type": "string",
+            "field": "members.zone"
+          }
+        ],
+        "time_fields": [
+          "rentals.settled_at"
+        ],
+        "default_time_field": "rentals.settled_at"
+      },
+      {
+        "id": "rentals_over_fee",
+        "description": "입력한 최소 대여료 이상인 대여 행 수. 취소 VOID 제외. minimum_fee 입력.",
+        "resource": "rentals",
+        "aggregate": {
+          "kind": "row_count"
+        },
+        "fixed_filters": [
+          {
+            "field": "rentals.state",
+            "op": "!=",
+            "value": "VOID"
+          }
+        ],
+        "inputs": [
+          {
+            "name": "minimum_fee",
+            "type": "number",
+            "field": "rentals.fee",
+            "op": ">="
+          }
+        ],
+        "time_fields": [
+          "rentals.opened_at"
+        ],
+        "default_time_field": "rentals.opened_at"
+      },
+      {
+        "id": "fees_total",
+        "description": "전체 실제 결제 대여료 합계. 기간은 settled_at 기준. 지역 필터 없음.",
+        "resource": "rentals",
+        "aggregate": {
+          "kind": "sum",
+          "field": "rentals.fee"
+        },
+        "fixed_filters": [
+          {
+            "field": "rentals.state",
+            "value": "SETTLED"
+          }
+        ],
+        "time_fields": [
+          "rentals.settled_at"
+        ],
+        "default_time_field": "rentals.settled_at"
+      },
+      {
+        "id": "parcel_count",
+        "description": "배송 행 수. nullable id도 포함한다. 날짜 기준은 사용자가 명시해야 함.",
+        "resource": "parcels",
+        "aggregate": {
+          "kind": "row_count"
+        },
+        "time_fields": [
+          "parcels.registered_at",
+          "parcels.sorted_at",
+          "parcels.handed_over_at"
+        ]
+      },
+      {
+        "id": "named_members",
+        "description": "전체 회원 중 name이 NULL이 아닌 회원 수. 지역 필터 없음.",
+        "resource": "members",
+        "aggregate": {
+          "kind": "non_null_count",
+          "field": "members.name"
+        }
+      },
+      {
+        "id": "fees_by_zone",
+        "description": "거주 지역별 실제 결제 대여료 합계. 모든 지역을 zone으로 그룹화.",
+        "resource": "rentals",
+        "aggregate": {
+          "kind": "sum",
+          "field": "rentals.fee"
+        },
+        "joins": [
+          {
+            "from": "rentals.member_id",
+            "to": "members.id"
+          }
+        ],
+        "fixed_filters": [
+          {
+            "field": "rentals.state",
+            "value": "SETTLED"
+          }
+        ],
+        "group_by": [
+          "members.zone"
+        ],
+        "time_fields": [
+          "rentals.settled_at"
+        ],
+        "default_time_field": "rentals.settled_at"
+      }
+    ]
+  }
+}

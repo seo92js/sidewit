@@ -1,0 +1,454 @@
+import {
+  ChevronDown,
+  ChevronRight,
+  HelpCircle,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+  Wrench,
+  XCircle,
+} from "lucide-react";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router";
+
+import { ApiError } from "@/api/client";
+import { useContexts, useFeedback, useGenerate, useGeneration } from "@/api/queries";
+import type { GenerateResponse, OperationSource } from "@/api/types";
+import { Empty, ErrorAlert, IssueList, Loading, ValidationPanel } from "@/components/app/common";
+import { LazySqlEditor } from "@/components/app/LazySqlEditor";
+import { NativeSelect } from "@/components/app/NativeSelect";
+import { OperationView } from "@/components/app/OperationView";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+
+const CONTEXT_STORAGE = "sidewit.playground.context";
+
+export default function PlaygroundPage() {
+  const contexts = useContexts();
+  const generate = useGenerate();
+  const [storedContextId, setStoredContextId] = useState(
+    () => localStorage.getItem(CONTEXT_STORAGE) ?? "",
+  );
+  const [question, setQuestion] = useState("");
+  const [referenceTime, setReferenceTime] = useState("");
+  const [metricId, setMetricId] = useState("");
+  const [dateField, setDateField] = useState("");
+  const [requireMetric, setRequireMetric] = useState(false);
+
+  // Fall back to the first context when the stored one no longer exists.
+  const selected =
+    contexts.data?.find((c) => c.id === storedContextId) ?? contexts.data?.[0] ?? undefined;
+  const contextId = selected?.id ?? "";
+  const setContextId = (id: string) => {
+    localStorage.setItem(CONTEXT_STORAGE, id);
+    setStoredContextId(id);
+  };
+  const metrics = selected?.definition.metrics ?? [];
+  // Pinning to metrics only matters when the Context also allows model-written SQL.
+  const canRequireMetric = metrics.length > 0 && !!selected?.allow_generated_sql;
+  const metric = metrics.find((m) => m.id === metricId);
+
+  const submit = () => {
+    if (!contextId || !question.trim() || generate.isPending) return;
+    generate.mutate({
+      context_id: contextId,
+      question,
+      ...(referenceTime.trim() ? { reference_time: referenceTime.trim() } : {}),
+      ...(metric ? { metric_id: metric.id } : {}),
+      ...(metric?.time_fields?.includes(dateField) ? { date_field: dateField } : {}),
+      ...(canRequireMetric && requireMetric ? { require_metric: true } : {}),
+    });
+  };
+
+  if (contexts.isLoading) return <Loading />;
+  if (contexts.error) return <ErrorAlert error={contexts.error} title="Could not load contexts" />;
+  if (!contexts.data?.length) {
+    return (
+      <Empty>
+        No context yet.{" "}
+        <Link className="underline" to="/contexts">
+          Create a context
+        </Link>{" "}
+        with your schema first.
+      </Empty>
+    );
+  }
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[minmax(320px,2fr)_3fr]">
+      <section className="space-y-4">
+        <div>
+          <h1 className="text-lg font-semibold">Playground</h1>
+          <p className="text-sm text-muted-foreground">
+            Ask in natural language. Sidewit returns a parameterized SQL operation — it never runs
+            SQL; your application does.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="context">Context</Label>
+          <NativeSelect
+            id="context"
+            className="w-full"
+            value={contextId}
+            onChange={(e) => {
+              setContextId(e.target.value);
+              setMetricId("");
+              setDateField("");
+              generate.reset();
+            }}
+          >
+            {contexts.data.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} (v{c.version})
+              </option>
+            ))}
+          </NativeSelect>
+          {selected && (
+            <p className="text-xs text-muted-foreground">
+              {selected.definition.resources.length} resources · {selected.definition.rules.length}{" "}
+              business rules · timezone {selected.timezone} ·{" "}
+              {metrics.length === 0
+                ? "model-written SQL"
+                : selected.allow_generated_sql
+                  ? `${metrics.length} metrics first, then model-written SQL`
+                  : `${metrics.length} metrics only`}
+            </p>
+          )}
+        </div>
+
+        {metrics.length > 0 && (
+          <div className="space-y-2">
+            <Label htmlFor="metric">Metric contract</Label>
+            <NativeSelect
+              id="metric"
+              className="w-full"
+              value={metric?.id ?? ""}
+              onChange={(e) => {
+                setMetricId(e.target.value);
+                setDateField("");
+              }}
+            >
+              <option value="">Let the model choose (a metric, or SQL if allowed)</option>
+              {metrics.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id} — {m.description}
+                </option>
+              ))}
+            </NativeSelect>
+            <p className="text-xs text-muted-foreground">
+              Choosing a metric pins this request to it; the server builds the SQL from the
+              contract. Review the model's inputs and period.
+            </p>
+            {canRequireMetric && !metric && (
+              <label className="flex items-center gap-2 text-xs">
+                <Checkbox
+                  id="require-metric"
+                  checked={requireMetric}
+                  onCheckedChange={(v) => setRequireMetric(v === true)}
+                />
+                Answer only with a registered metric (no model-written SQL)
+              </label>
+            )}
+            {!!metric?.time_fields?.length && (
+              <>
+                <Label htmlFor="date-field">Date basis (for period questions)</Label>
+                <NativeSelect
+                  id="date-field"
+                  className="w-full"
+                  value={dateField}
+                  onChange={(e) => setDateField(e.target.value)}
+                >
+                  <option value="">Explicit field in question or contract default</option>
+                  {metric.time_fields.map((ref) => (
+                    <option key={ref} value={ref}>
+                      {ref}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <Label htmlFor="question">Question</Label>
+          <Textarea
+            id="question"
+            rows={4}
+            placeholder="지난 30일 서울 결제 매출 알려줘"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+            }}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="reference-time">Reference time (optional)</Label>
+          <Input
+            id="reference-time"
+            placeholder="now · e.g. 2026-10-02T09:00:00+09:00"
+            value={referenceTime}
+            onChange={(e) => setReferenceTime(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Resolves relative periods (“last 30 days”) into absolute parameters. ISO 8601 with UTC
+            offset. Empty means the server's current time in the context timezone.
+          </p>
+        </div>
+
+        <Button onClick={submit} disabled={!contextId || !question.trim() || generate.isPending}>
+          <Sparkles /> {generate.isPending ? "Generating…" : "Generate operation"}
+        </Button>
+        <span className="ml-2 text-xs text-muted-foreground">⌘/Ctrl + Enter</span>
+      </section>
+
+      <section className="min-w-0">
+        {generate.isPending && <Loading label="Generating and validating…" />}
+        {!generate.isPending && generate.error && <GenerateError error={generate.error} />}
+        {!generate.isPending && generate.data && <GenerateResult result={generate.data} />}
+        {!generate.isPending && !generate.data && !generate.error && (
+          <Empty>
+            The generated operation, or why Sidewit could not produce one, appears here.
+          </Empty>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function StatusHeader({
+  status,
+  generationId,
+  contextVersion,
+}: {
+  status: string;
+  generationId: string;
+  contextVersion?: number;
+}) {
+  const styles: Record<string, string> = {
+    ok: "bg-emerald-600 text-white",
+    ambiguous: "bg-amber-500 text-white",
+    unanswerable: "bg-slate-600 text-white",
+    rejected: "bg-red-600 text-white",
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge className={styles[status]}>{status}</Badge>
+      <span className="font-mono text-xs text-muted-foreground">
+        generation {generationId.slice(0, 8)}
+        {contextVersion !== undefined && ` · context v${contextVersion}`}
+      </span>
+    </div>
+  );
+}
+
+function GenerateResult({ result }: { result: GenerateResponse }) {
+  const navigate = useNavigate();
+  if (result.status === "ambiguous") {
+    return (
+      <Card className="border-amber-300">
+        <CardHeader>
+          <StatusHeader
+            status="ambiguous"
+            generationId={result.generation_id}
+            contextVersion={result.context_version}
+          />
+          <CardTitle className="flex items-center gap-2 text-base">
+            <HelpCircle className="size-4 text-amber-600" /> The question needs clarification
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <p>{result.reason}</p>
+          <div>
+            <div className="mb-1 text-xs font-medium">Ask the user</div>
+            <ul className="list-disc space-y-1 pl-5">
+              {result.clarifications.map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            No SQL was generated. Rephrase the question or add descriptions/business rules to the
+            context.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (result.status === "unanswerable") {
+    return (
+      <Card>
+        <CardHeader>
+          <StatusHeader
+            status="unanswerable"
+            generationId={result.generation_id}
+            contextVersion={result.context_version}
+          />
+          <CardTitle className="text-base">The context cannot answer this question</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p>{result.reason}</p>
+          <p className="text-xs text-muted-foreground">No SQL was generated.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <StatusHeader
+          status="ok"
+          generationId={result.generation_id}
+          contextVersion={result.context_version}
+        />
+        <CardTitle className="text-base">SQL operation</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <SourceBadge source={result.source} />
+        {result.metric_binding && (
+          <p className="text-sm">
+            Metric contract: <code>{result.metric_binding.metric_id}</code>
+            {result.metric_binding.time_field && (
+              <>
+                {" "}
+                · date basis: <code>{result.metric_binding.time_field}</code>
+              </>
+            )}
+          </p>
+        )}
+        <OperationView operation={result.operation} />
+        <ValidationPanel
+          result={result.validation}
+          label={
+            result.metric_binding
+              ? "SQL and metric contract validated"
+              : "SQL structurally validated"
+          }
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
+            <Wrench /> Create Tool draft
+          </Button>
+          {result.tool_suggestion && (
+            <span className="text-xs text-muted-foreground">
+              suggested: <code className="font-mono">{result.tool_suggestion.name}</code>
+            </span>
+          )}
+          <Feedback generationId={result.generation_id} />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Generation history is temporary. Create and save a Tool before this record expires or the
+          server restarts.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Feedback({ generationId }: { generationId: string }) {
+  const feedback = useFeedback();
+  const sent =
+    feedback.variables?.id === generationId && feedback.isSuccess
+      ? feedback.variables.feedback
+      : null;
+  return (
+    <div className="ml-auto flex items-center gap-1">
+      <span className="text-xs text-muted-foreground">Was this right?</span>
+      {(["up", "down"] as const).map((value) => (
+        <Button
+          key={value}
+          size="icon-sm"
+          variant={sent === value ? "secondary" : "ghost"}
+          aria-label={value === "up" ? "Good result" : "Bad result"}
+          onClick={() => feedback.mutate({ id: generationId, feedback: value })}
+        >
+          {value === "up" ? <ThumbsUp /> : <ThumbsDown />}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function GenerateError({ error }: { error: unknown }) {
+  const [showSql, setShowSql] = useState(false);
+  const rejected = error instanceof ApiError && error.error === "generation_invalid";
+  const generationId = rejected ? (error.details.generation_id as string) : undefined;
+  const log = useGeneration(showSql ? generationId : undefined);
+
+  if (!rejected) return <ErrorAlert error={error} title="Generation failed" />;
+  return (
+    <Card className="border-red-300">
+      <CardHeader>
+        <StatusHeader
+          status="rejected"
+          generationId={generationId ?? ""}
+          contextVersion={log.data?.context_version}
+        />
+        <CardTitle className="flex items-center gap-2 text-base">
+          <XCircle className="size-4 text-red-600" /> Rejected generation
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <p>
+          The generated SQL failed structural validation, and so did the one repair attempt. The API
+          returned <strong>no operation</strong>, so an application cannot use unvalidated SQL by
+          mistake.
+        </p>
+        <IssueList issues={error.issues("validation_errors")} />
+        <button
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => setShowSql((v) => !v)}
+        >
+          {showSql ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          Show rejected SQL (debugging information from the generation log)
+        </button>
+        {showSql && (
+          <div className="space-y-2 rounded-md border-2 border-dashed border-red-300 bg-red-50/50 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="destructive">Not validated · Do not execute</Badge>
+              <span className="text-xs text-muted-foreground">
+                Not an operation and not part of the API response. Shown only to debug the context
+                or prompt.
+              </span>
+            </div>
+            {log.isLoading ? (
+              <Loading />
+            ) : log.error ? (
+              <ErrorAlert error={log.error} />
+            ) : (
+              log.data?.operation && (
+                <LazySqlEditor value={log.data.operation.statement} readOnly height={140} />
+              )
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SourceBadge({ source }: { source: OperationSource }) {
+  return source === "metric" ? (
+    <p className="flex items-center gap-2 text-sm">
+      <Badge className="bg-emerald-600 text-white">metric contract</Badge>
+      <span className="text-muted-foreground">
+        The server built this SQL from a registered metric.
+      </span>
+    </p>
+  ) : (
+    <p className="flex items-center gap-2 text-sm">
+      <Badge className="bg-amber-500 text-white">model-written SQL</Badge>
+      <span className="text-muted-foreground">
+        Structurally validated only; review that it means what was asked.
+      </span>
+    </p>
+  );
+}

@@ -1,0 +1,38 @@
+# Credentials and private local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+.ssh/
+.claude/
+.codex/
+.agents/
+# Dependencies and generated files
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+.DS_Store
+eval-results/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+coverage/
+*.tsbuildinfo
+*.log
+.idea/
+.vscode/
+# Runtime records, backups and private exports
+/data/
+/backups/
+/sidewit-data-*.tgz

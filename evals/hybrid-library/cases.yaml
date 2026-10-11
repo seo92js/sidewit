@@ -1,0 +1,346 @@
+# Separate-schema hybrid routing regression suite: registered metrics first, model-written SQL otherwise.
+{
+  "reference_time": "2026-10-02T09:00:00+09:00",
+  "cases": [
+    {
+      "id": "metric_route_regional_fees",
+      "category": "hybrid_metric_route",
+      "question": "京都 지역 대여료 합계",
+      "expect": {
+        "status": "ok",
+        "source": "metric",
+        "resources": [
+          "rentals",
+          "members"
+        ],
+        "aggregates": [
+          {
+            "function": "sum",
+            "field": "rentals.fee"
+          }
+        ],
+        "joins": [
+          [
+            "rentals.member_id",
+            "members.id"
+          ]
+        ],
+        "constraints": [
+          {
+            "field": "members.zone",
+            "op": "=",
+            "parameter_value": "京都"
+          },
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          }
+        ],
+        "parameters": [
+          {
+            "value": "京都",
+            "type": "string"
+          }
+        ],
+        "forbidden_literals": [
+          "京都"
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT SUM(r.fee) FROM rentals r JOIN members m ON r.member_id = m.id WHERE m.zone = :zone AND r.state = 'SETTLED'",
+        "parameters": {
+          "zone": "京都"
+        },
+        "parameter_types": {
+          "zone": "string"
+        }
+      }
+    },
+    {
+      "id": "metric_route_fees_with_period",
+      "category": "hybrid_metric_route",
+      "question": "최근 14일 대여료 합계",
+      "expect": {
+        "status": "ok",
+        "source": "metric",
+        "resources": [
+          "rentals"
+        ],
+        "aggregates": [
+          {
+            "function": "sum",
+            "field": "rentals.fee"
+          }
+        ],
+        "constraints": [
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          },
+          {
+            "field": "rentals.settled_at",
+            "op": ">=",
+            "parameter_value": "2026-09-18T09:00:00+09:00"
+          },
+          {
+            "field": "rentals.settled_at",
+            "op": "<",
+            "parameter_value": "2026-10-02T09:00:00+09:00"
+          }
+        ],
+        "forbidden_fields": [
+          "rentals.opened_at"
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ],
+        "forbidden_constructs": [
+          "relative_time_function"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT SUM(fee) FROM rentals WHERE state = 'SETTLED' AND settled_at >= :start_at AND settled_at < :end_at",
+        "parameters": {
+          "start_at": "2026-09-18T09:00:00+09:00",
+          "end_at": "2026-10-02T09:00:00+09:00"
+        },
+        "parameter_types": {
+          "start_at": "date-time",
+          "end_at": "date-time"
+        }
+      }
+    },
+    {
+      "id": "metric_route_fees_by_zone",
+      "category": "hybrid_metric_route",
+      "question": "거주 지역별 실제 결제 대여료 합계",
+      "expect": {
+        "status": "ok",
+        "source": "metric",
+        "resources": [
+          "rentals",
+          "members"
+        ],
+        "aggregates": [
+          {
+            "function": "sum",
+            "field": "rentals.fee"
+          }
+        ],
+        "group_by": [
+          "members.zone"
+        ],
+        "joins": [
+          [
+            "rentals.member_id",
+            "members.id"
+          ]
+        ],
+        "constraints": [
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          }
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT m.zone, SUM(r.fee) FROM rentals r JOIN members m ON r.member_id = m.id WHERE r.state = 'SETTLED' GROUP BY m.zone"
+      }
+    },
+    {
+      "id": "sql_route_member_list",
+      "category": "hybrid_sql_route",
+      "question": "회원 이름과 거주 지역 목록 보여줘",
+      "expect": {
+        "status": "ok",
+        "source": "generated_sql",
+        "resources": [
+          "members"
+        ],
+        "fields": [
+          "members.name",
+          "members.zone"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT name, zone FROM members"
+      }
+    },
+    {
+      "id": "sql_route_rental_count_by_zone",
+      "category": "hybrid_sql_route",
+      "question": "거주 지역별 대여 건수",
+      "expect": {
+        "status": "ok",
+        "source": "generated_sql",
+        "resources": [
+          "rentals",
+          "members"
+        ],
+        "joins": [
+          [
+            "rentals.member_id",
+            "members.id"
+          ]
+        ],
+        "group_by": [
+          "members.zone"
+        ],
+        "constraints": [
+          {
+            "field": "rentals.state",
+            "op": [
+              "!=",
+              "not in"
+            ],
+            "value": "VOID"
+          }
+        ],
+        "forbidden_parameter_values": [
+          "VOID"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT m.zone, COUNT(*) FROM rentals r JOIN members m ON r.member_id = m.id WHERE r.state <> 'VOID' GROUP BY m.zone"
+      }
+    },
+    {
+      "id": "near_miss_regional_fees_with_minimum",
+      "category": "hybrid_near_miss",
+      "question": "京都 지역에서 대여료 3000원 이상인 실제 결제 대여료 합계",
+      "expect": {
+        "status": "ok",
+        "source": "generated_sql",
+        "resources": [
+          "rentals",
+          "members"
+        ],
+        "aggregates": [
+          {
+            "function": "sum",
+            "field": "rentals.fee"
+          }
+        ],
+        "joins": [
+          [
+            "rentals.member_id",
+            "members.id"
+          ]
+        ],
+        "constraints": [
+          {
+            "field": "members.zone",
+            "op": "=",
+            "parameter_value": "京都"
+          },
+          {
+            "field": "rentals.fee",
+            "op": ">=",
+            "parameter_value": 3000
+          },
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          }
+        ],
+        "forbidden_literals": [
+          "京都",
+          "3000"
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT SUM(r.fee) FROM rentals r JOIN members m ON r.member_id = m.id WHERE m.zone = :zone AND r.fee >= :minimum_fee AND r.state = 'SETTLED'",
+        "parameters": {
+          "zone": "京都",
+          "minimum_fee": 3000
+        },
+        "parameter_types": {
+          "zone": "string",
+          "minimum_fee": "number"
+        }
+      }
+    },
+    {
+      "id": "near_miss_average_settled_fee",
+      "category": "hybrid_near_miss",
+      "question": "최근 14일 실제 결제 대여료 평균",
+      "expect": {
+        "status": "ok",
+        "source": "generated_sql",
+        "resources": [
+          "rentals"
+        ],
+        "aggregates": [
+          {
+            "function": "avg",
+            "field": "rentals.fee"
+          }
+        ],
+        "constraints": [
+          {
+            "field": "rentals.state",
+            "op": "=",
+            "value": "SETTLED"
+          },
+          {
+            "field": "rentals.settled_at",
+            "op": [
+              ">=",
+              ">"
+            ],
+            "parameter": true
+          }
+        ],
+        "forbidden_fields": [
+          "rentals.opened_at"
+        ],
+        "forbidden_parameter_values": [
+          "SETTLED"
+        ],
+        "forbidden_constructs": [
+          "relative_time_function"
+        ]
+      },
+      "reference": {
+        "statement": "SELECT AVG(fee) FROM rentals WHERE state = 'SETTLED' AND settled_at >= :start_at AND settled_at < :end_at",
+        "parameters": {
+          "start_at": "2026-09-18T09:00:00+09:00",
+          "end_at": "2026-10-02T09:00:00+09:00"
+        },
+        "parameter_types": {
+          "start_at": "date-time",
+          "end_at": "date-time"
+        }
+      }
+    },
+    {
+      "id": "neither_route_late_fee",
+      "category": "hybrid_unanswerable",
+      "question": "실제 청구된 연체료 총액",
+      "expect": {
+        "status": "unanswerable"
+      }
+    },
+    {
+      "id": "ambiguous_parcel_period",
+      "category": "hybrid_ambiguous",
+      "question": "최근 14일 배송 건수",
+      "expect": {
+        "status": "ambiguous"
+      }
+    }
+  ]
+}
