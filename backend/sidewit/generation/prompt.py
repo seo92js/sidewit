@@ -3,17 +3,18 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from sidewit.domain.context import ContextDefinition, ContextField, Rule
+from sidewit.domain.dialect import Dialect, identifier, to_sqlglot
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
 from sidewit.generation.prompts import template
 
-PROMPT_VERSION = "generate_v7"
+PROMPT_VERSION = "generate_v8"
 # Bookkeeping timestamps rarely define a business period; they never make a period ambiguous.
 _AUDIT_FIELD = re.compile(r"(^|_)(updated|modified|deleted|synced|archived)(_at|_on)?$", re.I)
 
 
 def render_system_prompt(
-    definition: ContextDefinition, dialect: str, timezone: str, reference_time: datetime
+    definition: ContextDefinition, dialect: Dialect, timezone: str, reference_time: datetime
 ) -> str:
     local = reference_time.astimezone(ZoneInfo(timezone))
     return template(PROMPT_VERSION).substitute(
@@ -21,7 +22,7 @@ def render_system_prompt(
         timezone=timezone,
         reference_time=local.isoformat(),
         reference_weekday=local.strftime("%A"),
-        context=render_context(definition),
+        context=render_context(definition) + render_identifier_hints(definition, dialect),
     )
 
 
@@ -66,13 +67,13 @@ def render_context(definition: ContextDefinition) -> str:
     return "\n".join(lines)
 
 
-HYBRID_PROMPT_VERSION = "hybrid_v2"
+HYBRID_PROMPT_VERSION = "hybrid_v3"
 
 
 def render_hybrid_prompt(
-    definition: ContextDefinition, dialect: str, timezone: str, reference_time: datetime
+    definition: ContextDefinition, dialect: Dialect, timezone: str, reference_time: datetime
 ) -> str:
-    """generate_v7 (the SQL route) followed by the registered metrics and routing rules."""
+    """generate_v8 (the SQL route) followed by the registered metrics and routing rules."""
     return render_system_prompt(definition, dialect, timezone, reference_time) + template(
         HYBRID_PROMPT_VERSION
     ).substitute(metrics=render_metrics(definition))
@@ -108,16 +109,55 @@ def render_metrics(definition: ContextDefinition) -> str:
     return "\n".join(lines) or "(none)"
 
 
-def render_repair_message(errors: list[Issue]) -> str:
+def render_identifier_hints(definition: ContextDefinition, dialect: Dialect) -> str:
+    """SQL spellings from the same quoting rules used by the metric compiler."""
+    lines: list[str] = []
+    for resource in definition.resources:
+        table = identifier(resource.name, dialect)
+        fields = [identifier(field.name, dialect) for field in resource.fields]
+        if table.quoted or any(column.quoted for column in fields):
+            table_sql = table.sql(dialect=to_sqlglot(dialect))
+            lines.append(f"- Resource SQL: {table_sql}")
+            lines.extend(
+                f"  - Field SQL: {table_sql}.{column.sql(dialect=to_sqlglot(dialect))}"
+                for column in fields
+            )
+    if not lines:
+        return ""
+    return (
+        "\n\n## Exact SQL identifiers\n"
+        "These resources or fields require quoting. Use these exact SQL spellings; "
+        "with an alias, replace only the resource qualifier, keeping the field spelling.\n"
+        + "\n".join(lines)
+    )
+
+
+def render_repair_message(
+    errors: list[Issue],
+    definition: ContextDefinition | None = None,
+    dialect: Dialect = "postgresql",
+) -> str:
     listed = "\n".join(
         f"- [{e.code}] {e.message}" + (f" (ref: {e.ref})" if e.ref else "") for e in errors
     )
+    hints = ""
+    if definition is not None and any(
+        error.code in {"unknown_resource", "unknown_field"} for error in errors
+    ):
+        identifiers = render_identifier_hints(definition, dialect)
+        if identifiers:
+            hints = (
+                "\n\nCheck identifier quoting before concluding that data is missing. "
+                "PostgreSQL folds unquoted names to lowercase. A registered mixed-case name "
+                "must retain its double quotes, for both tables and columns. "
+                "Do not guess a replacement for a genuinely unknown name." + identifiers
+            )
     return (
         "The SQL in your previous response failed SQL or request-parameter validation:\n"
         f"{listed}\n\n"
         "Return a corrected response for the same question, following every rule. "
         "If the data context cannot answer the question, return status `unanswerable` or "
-        "`ambiguous` instead of guessing."
+        "`ambiguous` instead of guessing." + hints
     )
 
 

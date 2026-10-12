@@ -121,3 +121,37 @@ def test_repair_message_lists_validation_errors():
     assert "- [unknown_field] Field 'amt' does not exist on 'orders'. (ref: orders.amt)" in message
     assert "- [multiple_statements] Exactly one statement is allowed.\n" in message
     assert "`unanswerable`" in message
+
+
+def test_prompt_renders_exact_sql_identifiers_and_escapes_quotes():
+    definition = ContextDefinition.model_validate(
+        {
+            "resources": [
+                {"name": "Store", "fields": [{"name": "regionSido", "type": "text"}]},
+                {"name": "order", "fields": [{"name": 'a"b', "type": "text"}]},
+            ]
+        }
+    )
+    prompt = render_system_prompt(definition, "postgresql", "UTC", datetime.now(UTC))
+    assert '- Resource SQL: "Store"' in prompt
+    assert '- Field SQL: "Store"."regionSido"' in prompt
+    assert '- Field SQL: "order"."a""b"' in prompt
+    assert "PostgreSQL folds unquoted identifiers to lowercase" in prompt
+
+
+def test_repair_identifier_hints_only_for_name_resolution_errors():
+    definition = ContextDefinition.model_validate(
+        {
+            "resources": [
+                {"name": "Store", "fields": [{"name": "regionSido", "type": "text"}]},
+            ]
+        }
+    )
+    for code in ("unknown_resource", "unknown_field"):
+        message = render_repair_message([Issue(code=code, message="Unknown name")], definition)
+        assert '"Store"."regionSido"' in message
+        assert "Do not guess a replacement for a genuinely unknown name" in message
+    message = render_repair_message(
+        [Issue(code="multiple_statements", message="Only one statement")], definition
+    )
+    assert "Exact SQL identifiers" not in message

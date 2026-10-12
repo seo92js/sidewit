@@ -217,7 +217,7 @@ class SqlPlanner(_PlannerBase):
         )
 
     def repair_message(self, errors: list[Issue]) -> str:
-        return render_repair_message(errors)
+        return render_repair_message(errors, self.definition, self.dialect)
 
 
 class MetricPlanner(_PlannerBase):

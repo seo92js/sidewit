@@ -44,6 +44,28 @@ export function InvokePanel({ tool, dirty }: { tool: Tool; dirty: boolean }) {
     ),
   );
 
+  const [inputSchema, setInputSchema] = useState(tool.input_schema);
+  if (inputSchema !== tool.input_schema) {
+    // Reconcile before rendering the changed controls, so display and submission use
+    // the same values. Preserve compatible inputs, but never reinterpret an old type.
+    setInputSchema(tool.input_schema);
+    setValues(
+      Object.fromEntries(
+        inputs.map((name) => {
+          const prop = tool.input_schema.properties[name];
+          const previous = inputSchema.properties[name];
+          const value = values[name];
+          const compatible =
+            previous &&
+            paramType(previous) === paramType(prop) &&
+            (!prop.enum || (typeof value === "string" && prop.enum.includes(value)));
+          return [name, compatible ? value : paramType(prop) === "boolean" ? false : undefined];
+        }),
+      ),
+    );
+    setInputErrors({});
+  }
+
   // invalid_arguments issues are shown under their input; only the rest go to the alert.
   // Other errors (e.g. 409 tool_invalid) are shown by the alert as they are.
   const fieldErrors: Record<string, Issue[]> = {};

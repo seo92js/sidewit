@@ -128,8 +128,8 @@ Context 파일(§11)의 내용:
 `definition.metrics`는 기본 `[]`인 개발자 등록 계약이다. 지표 ID, aggregate, 명시적 INNER JOIN, GROUP BY, 고정 scalar 비교, required inputs, 허용 날짜 컬럼/default를 등록한다. `row_count`는 COUNT(*), `non_null_count`는 명시한 컬럼의 NULL 제외 count다. 고정 조건과 caller input의 field가 겹치거나 타입/참조/JOIN이 잘못되면 Context 저장 시 422다. DDL import는 계약을 보존하고 무효 참조를 warning으로 알린다.
 
 Generate는 **등록 지표를 먼저** 시도한다. 경로는 세 가지다.
-- 지표가 없으면 모델이 SQL을 쓴다(`generate_v7`).
-- 지표가 있고 `allow_generated_sql: true`(기본)이면 **hybrid**(`hybrid_v2`)로, LLM 호출 한 번에 모델이 경로를 고른다. 등록 지표 하나가 질문 전체에 답하면 `route: metric`(서버가 계약으로 SQL 조립), 아니면 `route: sql`(모델이 SQL 작성)이다. SQL 경로에서도 등록 지표의 집계·고정 조건을 업무 정의로 따르도록 지시한다.
+- 지표가 없으면 모델이 SQL을 쓴다(`generate_v8`).
+- 지표가 있고 `allow_generated_sql: true`(기본)이면 **hybrid**(`hybrid_v3`)로, LLM 호출 한 번에 모델이 경로를 고른다. 등록 지표 하나가 질문 전체에 답하면 `route: metric`(서버가 계약으로 SQL 조립), 아니면 `route: sql`(모델이 SQL 작성)이다. SQL 경로에서도 등록 지표의 집계·고정 조건을 업무 정의로 따르도록 지시한다.
 - `allow_generated_sql: false`이면 지표로만 답하고(`metric_plan_v2`), 맞는 지표가 없으면 unanswerable이다. 이 설정은 등록 지표가 1개 이상 필요하다(아니면 422 `no_generation_path`).
 
 성공 응답의 `source`는 `metric`(계약으로 조립) 또는 `generated_sql`(모델 작성)이다. 계약으로 조립한 SQL은 결정론적이지만, **모델이 맞는 지표·입력·기간을 골랐는지는 보장하지 않는다**(예: 허용 값이 `京都`인데 `교토`를 추출하는 실패). 상세 필드와 시간 경계는 [지표 계약](METRIC_CONTRACTS.md)을 따른다.
@@ -357,7 +357,7 @@ created_at
 ```
 
 처리 흐름:
-1. Planner를 고른다(`generation/planners.py`): 지표가 없으면 `SqlPlanner`(`generate_v7`), 지표가 있고 생성 SQL을 허용하면 `HybridPlanner`(`hybrid_v2`), 허용하지 않거나 요청이 지표 옵션을 주면 `MetricPlanner`(`metric_plan_v2`). Hybrid는 모델의 `route`에 따라 SQL/Metric planner의 변환·검증을 재사용하고, `route`가 없으면 `route_missing`으로 repair한다. 지표 옵션을 지표 없는 Context에 보내면 LLM 호출 전 422 `invalid_metric_request`다. 지표 경로는 서버 compiler가 aggregate/JOIN/filter/group을 구성하고 날짜 기준을 구조화 옵션 → 유일한 명시 field → default 순서로 선택한다. 필요한 기준이 없으면 ambiguous다.
+1. Planner를 고른다(`generation/planners.py`): 지표가 없으면 `SqlPlanner`(`generate_v8`), 지표가 있고 생성 SQL을 허용하면 `HybridPlanner`(`hybrid_v3`), 허용하지 않거나 요청이 지표 옵션을 주면 `MetricPlanner`(`metric_plan_v2`). Hybrid는 모델의 `route`에 따라 SQL/Metric planner의 변환·검증을 재사용하고, `route`가 없으면 `route_missing`으로 repair한다. 지표 옵션을 지표 없는 Context에 보내면 LLM 호출 전 422 `invalid_metric_request`다. 지표 경로는 서버 compiler가 aggregate/JOIN/filter/group을 구성하고 날짜 기준을 구조화 옵션 → 유일한 명시 field → default 순서로 선택한다. 필요한 기준이 없으면 ambiguous다.
 2. `status=ok`이면 정적 Validator를 Generate 정책으로 실행한다(§7). SQL 경로는 `generate_policy(question)`(요청값 literal 검사 포함), 지표 경로는 `CONTRACT_POLICY`다. `ambiguous`/`unanswerable`이면 검증하지 않고 반환한다. LLM이 SQL을 함께 보내더라도 버린다.
 3. 검증에 실패하면 에러 목록을 붙여 **한 번만** 다시 요청한다(repair).
 4. 그래도 실패하면 422 `generation_invalid`다. **응답에는 SQL을 넣지 않는다.** 생성된 SQL은 메모리의 Generation 기록에만 남는다.
@@ -519,7 +519,7 @@ provider 호환성을 위해 동적 키 객체 대신 리스트를 쓴다. `valu
   - 하나의 SELECT 문만 생성한다.
   - §4의 2·3번 규칙(가변 값만 파라미터로, 상대 시간은 절대값으로, `NOW()` 금지, 리터럴 안 placeholder 금지).
   - Business Rule을 반영한다.
-- 현재 프롬프트는 `sidewit/prompts/generate_v7.md`, `sidewit/prompts/hybrid_v2.md`, `sidewit/prompts/metric_plan_v2.md`이며 `prompt_version`을 Generation에 기록한다. field의 `allowed_values`는 '정확한 표기로만, 번역·음역·창작 금지'로 지시한다. 설명 없는 날짜·타임스탬프 field가 여럿이면 기간 선택이 모호하다는 힌트를 렌더링하되, `updated_at`·`deleted_at` 같은 bookkeeping timestamp는 세지 않는다. 이는 모델에 주는 지시이며 강제 검증이 아니다.
+- 현재 프롬프트는 `sidewit/prompts/generate_v8.md`, `sidewit/prompts/hybrid_v3.md`, `sidewit/prompts/metric_plan_v2.md`이며 `prompt_version`을 Generation에 기록한다. 대소문자 보존·예약어 등에 인용이 필요한 테이블/컬럼은 compiler와 동일한 식별자 렌더러로 정확한 SQL 표기를 제공한다. `unknown_resource`/`unknown_field` 재시도에서도 이 표기와 인용 규칙을 안내하며, 생성 SQL을 자동으로 고치거나 검증을 완화하지 않는다. field의 `allowed_values`는 '정확한 표기로만, 번역·음역·창작 금지'로 지시한다. 설명 없는 날짜·타임스탬프 field가 여럿이면 기간 선택이 모호하다는 힌트를 렌더링하되, `updated_at`·`deleted_at` 같은 bookkeeping timestamp는 세지 않는다. 이는 모델에 주는 지시이며 강제 검증이 아니다.
 
 ---
 
