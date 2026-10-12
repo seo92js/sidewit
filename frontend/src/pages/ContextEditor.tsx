@@ -139,7 +139,8 @@ export function ContextEditor({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       <UnsavedChangesGuard
-        dirty={!remove.isSuccess && (dirty || importHasInput || update.isPending)}
+        dirty={!remove.isSuccess && (dirty || importHasInput)}
+        busy={update.isPending}
       />
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
@@ -228,7 +229,7 @@ export function ContextEditor({ id }: { id: string }) {
           <Button
             variant="destructive"
             size="sm"
-            disabled={remove.isPending}
+            disabled={remove.isPending || update.isPending}
             onClick={() => {
               if (confirm(`Delete context "${current.name}"? Its generation log is deleted too.`)) {
                 remove.mutate(id, { onSuccess: () => navigate("/contexts") });

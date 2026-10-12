@@ -205,3 +205,17 @@ def test_pending_implicit_primary_key_resolves_on_later_import():
     )
     assert not second.pending_foreign_keys
     assert relations(second.definition) == [("orders.user_id", "users.id")]
+
+
+def test_warning_codes_preserve_legacy_messages():
+    existing = run("CREATE TABLE kept (id int)").definition
+    result = run(
+        "CREATE TABLE child (id int REFERENCES missing(id)); CREATE INDEX idx ON child(id)",
+        existing,
+    )
+    assert {w.code for w in result.warning_details} == {
+        "ignored_statement",
+        "resource_preserved",
+        "pending_foreign_key",
+    }
+    assert result.warnings == [w.message for w in result.warning_details]

@@ -15,6 +15,7 @@ from sidewit.domain.context import (
     generation_issues,
 )
 from sidewit.domain.dialect import Dialect
+from sidewit.domain.issue import Issue
 from sidewit.store import ContextRecord, Store
 from sidewit.tools.service import Revalidation, revalidate_context_tools
 
@@ -102,6 +103,7 @@ class ImportDdlResult(BaseModel):
     context_version: int
     definition: ContextDefinition
     warnings: list[str]
+    warning_details: list[Issue]
     pending_foreign_keys: list[PendingForeignKey]
 
 
@@ -252,5 +254,6 @@ async def import_context_ddl(
         context_version=record.version,
         definition=result.definition,
         warnings=result.warnings,
+        warning_details=result.warning_details,
         pending_foreign_keys=result.pending_foreign_keys,
     )

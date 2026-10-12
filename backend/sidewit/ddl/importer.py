@@ -25,6 +25,7 @@ from sidewit.domain.dialect import (
     unbounded_text,
     user_type_identity,
 )
+from sidewit.domain.issue import Issue
 from sidewit.domain.metric import metric_issues
 from sidewit.domain.params import exact_number, matches_allowed_value
 from sidewit.sql import COMPLEXITY_MESSAGE, parse_sql
@@ -53,14 +54,19 @@ class _Parsed:
     enums: dict[tuple[str, ...], list[str]] = field(default_factory=dict)
     resources: list[Resource] = field(default_factory=list)
     foreign_keys: list[PendingForeignKey] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[Issue] = field(default_factory=list)
 
 
 @dataclass
 class ImportResult:
     definition: ContextDefinition
-    warnings: list[str]
+    warning_details: list[Issue]
     pending_foreign_keys: list[PendingForeignKey] = field(default_factory=list)
+
+    @property
+    def warnings(self) -> list[str]:
+        """Legacy messages for API clients that do not consume warning_details yet."""
+        return [warning.message for warning in self.warning_details]
 
 
 def import_ddl(
@@ -121,13 +127,20 @@ def _import_ddl(
         for field_ in resource.fields:
             if field_.allowed_values and (issues := allowed_value_issues(resource, field_)):
                 warnings.append(
-                    f"allowed_values of '{resource.name}.{field_.name}' were not imported: "
-                    f"{issues[0].message}"
+                    Issue(
+                        code="allowed_values_rejected",
+                        message=f"allowed_values of '{resource.name}.{field_.name}' "
+                        "were not imported: "
+                        f"{issues[0].message}",
+                    )
                 )
                 field_.allowed_values = []
     if draft.metrics:
-        warnings.extend(f"Metric {issue.ref}: {issue.message}" for issue in metric_issues(draft))
-    return ImportResult(definition=draft, warnings=warnings, pending_foreign_keys=pending)
+        warnings.extend(
+            Issue(code="metric_invalid", message=f"Metric {issue.ref}: {issue.message}")
+            for issue in metric_issues(draft)
+        )
+    return ImportResult(definition=draft, warning_details=warnings, pending_foreign_keys=pending)
 
 
 _PSQL_META_COMMAND = re.compile(r"^\\[a-z].*$", re.MULTILINE)
@@ -162,7 +175,12 @@ def _parse(ddl: str, dialect: Dialect) -> _Parsed:
         elif isinstance(statement, exp.Alter) and statement.kind == "TABLE":
             _parse_alter_table(statement, parsed)
         else:
-            parsed.warnings.append(f"Ignored statement: {_snippet(statement, sqlglot_dialect)}")
+            parsed.warnings.append(
+                Issue(
+                    code="ignored_statement",
+                    message=f"Ignored statement: {_snippet(statement, sqlglot_dialect)}",
+                )
+            )
     return parsed
 
 
@@ -170,7 +188,12 @@ def _parse_create_table(schema: exp.Schema, parsed: _Parsed) -> None:
     table = schema.this
     name = _table_name(table, parsed)
     if any(r.name.lower() == name.lower() for r in parsed.resources):
-        parsed.warnings.append(f"Table '{name}' is defined more than once; kept the first.")
+        parsed.warnings.append(
+            Issue(
+                code="duplicate_table",
+                message=f"Table '{name}' is defined more than once; kept the first.",
+            )
+        )
         return
 
     fields: list[ContextField] = []
@@ -217,7 +240,10 @@ def _parse_column(
     name = normalized_name(column.this, parsed.dialect)
     if any(f.name.lower() == name.lower() for f in fields):
         parsed.warnings.append(
-            f"Column '{table}.{name}' is defined more than once; kept the first."
+            Issue(
+                code="duplicate_column",
+                message=f"Column '{table}.{name}' is defined more than once; kept the first.",
+            )
         )
         return None
 
@@ -271,7 +297,12 @@ def _parse_alter_table(statement: exp.Alter, parsed: _Parsed) -> None:
             found = True
             _collect_foreign_key(table, fk, parsed)
     if not found:
-        parsed.warnings.append(f"Ignored ALTER TABLE on '{table}': only FOREIGN KEY is imported.")
+        parsed.warnings.append(
+            Issue(
+                code="unsupported_alter",
+                message=f"Ignored ALTER TABLE on '{table}': only FOREIGN KEY is imported.",
+            )
+        )
 
 
 def _collect_foreign_key(table: str, fk: exp.ForeignKey, parsed: _Parsed) -> None:
@@ -282,8 +313,11 @@ def _collect_foreign_key(table: str, fk: exp.ForeignKey, parsed: _Parsed) -> Non
     ref_table, ref_columns = _reference_target(reference, parsed)
     if len(columns) != 1 or len(ref_columns) > 1:
         parsed.warnings.append(
-            f"Skipped composite foreign key on '{table}' ({', '.join(columns)}); "
-            "v0.1 relations are single-field."
+            Issue(
+                code="unsupported_composite_foreign_key",
+                message=f"Skipped composite foreign key on '{table}' ({', '.join(columns)}); "
+                "v0.1 relations are single-field.",
+            )
         )
         return
     parsed.foreign_keys.append(
@@ -305,7 +339,7 @@ def _reference_target(reference: exp.Reference, parsed: _Parsed) -> tuple[str, l
 
 
 def _resolve_foreign_key(
-    definition: ContextDefinition, fk: PendingForeignKey, warnings: list[str]
+    definition: ContextDefinition, fk: PendingForeignKey, warnings: list[Issue]
 ) -> Relation | None:
     source = f"{fk.table}.{fk.column}"
     ref_column = fk.ref_column
@@ -314,8 +348,11 @@ def _resolve_foreign_key(
         pks = [f.name for f in target.fields if f.primary_key] if target else []
         if len(pks) != 1:
             warnings.append(
-                f"Skipped foreign key '{source}' → '{fk.ref_table}': "
-                "cannot determine a single referenced primary key."
+                Issue(
+                    code="pending_foreign_key",
+                    message=f"Skipped foreign key '{source}' → '{fk.ref_table}': "
+                    "cannot determine a single referenced primary key.",
+                )
             )
             return None
         ref_column = pks[0]
@@ -323,14 +360,18 @@ def _resolve_foreign_key(
     target_ref = f"{fk.ref_table}.{ref_column}"
     if not definition.has_field(source) or not definition.has_field(target_ref):
         warnings.append(
-            f"Skipped foreign key '{source}' → '{target_ref}': endpoint is not in the context."
+            Issue(
+                code="pending_foreign_key",
+                message=f"Skipped foreign key '{source}' → '{target_ref}': "
+                "endpoint is not in the context.",
+            )
         )
         return None
     return Relation(from_=source, to=target_ref)
 
 
 def _merge_resources(
-    existing: list[Resource], parsed: list[Resource], warnings: list[str]
+    existing: list[Resource], parsed: list[Resource], warnings: list[Issue]
 ) -> list[Resource]:
     """Same-name resources/fields (case-insensitive) keep their description; the DDL wins for
     the stored name, type, primary_key and nullable, and for allowed_values when it declares
@@ -341,7 +382,12 @@ def _merge_resources(
     for old in existing:
         new = parsed_by_name.pop(old.name.lower(), None)
         if new is None:
-            warnings.append(f"Resource '{old.name}' is not in the DDL; kept as is.")
+            warnings.append(
+                Issue(
+                    code="resource_preserved",
+                    message=f"Resource '{old.name}' is not in the DDL; kept as is.",
+                )
+            )
             merged.append(old)
             continue
 
@@ -350,7 +396,12 @@ def _merge_resources(
         for old_field in old.fields:
             new_field = new_fields.pop(old_field.name.lower(), None)
             if new_field is None:
-                warnings.append(f"Field '{old.name}.{old_field.name}' is not in the DDL; kept.")
+                warnings.append(
+                    Issue(
+                        code="field_preserved",
+                        message=f"Field '{old.name}.{old_field.name}' is not in the DDL; kept.",
+                    )
+                )
                 fields.append(old_field)
             else:
                 fields.append(
@@ -389,8 +440,8 @@ def _table_name(table: exp.Expression, parsed: _Parsed) -> str:
             )
         parsed.qualified_tables[key] = qualified
         message = f"Schema qualifier removed: '{table.db}.{name}' → '{name}'."
-        if message not in parsed.warnings:
-            parsed.warnings.append(message)
+        if not any(w.message == message for w in parsed.warnings):
+            parsed.warnings.append(Issue(code="schema_qualifier_removed", message=message))
     return name
 
 
@@ -523,16 +574,22 @@ def _constrain(field: ContextField, values: list[ScalarValue], table: str, parse
     common = [v for v in field.allowed_values if any(matches_allowed_value(v, w) for w in values)]
     if not common:
         parsed.warnings.append(
-            f"CHECK constraints on '{table}.{field.name}' allow no common value; "
-            "allowed_values were not imported."
+            Issue(
+                code="conflicting_check",
+                message=f"CHECK constraints on '{table}.{field.name}' allow no common value; "
+                "allowed_values were not imported.",
+            )
         )
     field.allowed_values = common
 
 
 def _unreadable_check(table: str, column: str, parsed: _Parsed) -> None:
     parsed.warnings.append(
-        f"CHECK on '{table}.{column}' lists values that are not plain literals; its "
-        "allowed_values were not imported. Add them to the Context if they matter."
+        Issue(
+            code="unsupported_check",
+            message=f"CHECK on '{table}.{column}' lists values that are not plain literals; its "
+            "allowed_values were not imported. Add them to the Context if they matter.",
+        )
     )
 
 

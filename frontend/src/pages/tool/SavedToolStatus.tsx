@@ -1,5 +1,4 @@
 import { RefreshCw } from "lucide-react";
-import { useRefreshContract } from "@/api/queries";
 import type { Tool } from "@/api/types";
 import { ErrorAlert, IssueList, ValidationPanel } from "@/components/app/common";
 import { ToolStatusBadge } from "@/components/app/ToolStatusBadge";
@@ -11,15 +10,20 @@ export function SavedToolStatus({
   tool,
   currentContextVersion,
   dirty,
-  onRebuilt,
+  onRebuild,
+  rebuilding,
+  rebuildError,
+  busy,
 }: {
   tool: Tool;
   currentContextVersion?: number;
   /** Rebuilding replaces the form, so it waits until unsaved edits are saved or discarded. */
   dirty: boolean;
-  onRebuilt: (tool: Tool) => void;
+  onRebuild: () => void;
+  rebuilding: boolean;
+  rebuildError: unknown;
+  busy: boolean;
 }) {
-  const refresh = useRefreshContract(tool.name);
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -38,19 +42,14 @@ export function SavedToolStatus({
                 Save or discard your edits first
               </span>
             )}
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={dirty || refresh.isPending}
-              onClick={() => refresh.mutate(tool.version, { onSuccess: onRebuilt })}
-            >
-              <RefreshCw /> Rebuild from contract
+            <Button variant="outline" size="xs" disabled={dirty || busy} onClick={onRebuild}>
+              <RefreshCw /> {rebuilding ? "Rebuilding…" : "Rebuild from contract"}
             </Button>
           </span>
         )}
       </div>
       {tool.validation && <ValidationPanel result={tool.validation} label="Saved Tool checks" />}
-      <ErrorAlert error={refresh.error} title="Could not rebuild from the contract" />
+      <ErrorAlert error={rebuildError} title="Could not rebuild from the contract" />
       {tool.status === "invalid" && (
         <Alert variant="destructive">
           <AlertTitle>This tool is invalid and cannot be invoked</AlertTitle>

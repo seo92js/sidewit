@@ -3,22 +3,33 @@ import { useBeforeUnload, useBlocker } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
-export function UnsavedChangesGuard({ dirty }: { dirty: boolean }) {
+export function UnsavedChangesGuard({
+  dirty,
+  busy = false,
+  description = "Your Context edits and any DDL not yet applied will be discarded.",
+  allowNavigation,
+}: {
+  dirty: boolean;
+  busy?: boolean;
+  description?: string;
+  allowNavigation?: (pathname: string) => boolean;
+}) {
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
-      dirty &&
+      (dirty || busy) &&
+      !allowNavigation?.(nextLocation.pathname) &&
       (currentLocation.pathname !== nextLocation.pathname ||
         currentLocation.search !== nextLocation.search),
   );
   useBeforeUnload(
     useCallback(
       (event) => {
-        if (dirty) {
+        if (dirty || busy) {
           event.preventDefault();
           event.returnValue = "";
         }
       },
-      [dirty],
+      [dirty, busy],
     ),
   );
   return (
@@ -29,9 +40,9 @@ export function UnsavedChangesGuard({ dirty }: { dirty: boolean }) {
       }}
     >
       <DialogContent>
-        <DialogTitle>Leave without saving?</DialogTitle>
+        <DialogTitle>{busy ? "Request in progress" : "Leave without saving?"}</DialogTitle>
         <DialogDescription>
-          Your Context edits and any DDL not yet applied will be discarded.
+          {busy ? "Wait for the request to finish before leaving this editor." : description}
         </DialogDescription>
         <div className="flex justify-end gap-2">
           <Button
@@ -42,14 +53,16 @@ export function UnsavedChangesGuard({ dirty }: { dirty: boolean }) {
           >
             Keep editing
           </Button>
-          <Button
-            variant="destructive"
-            onClick={() => {
-              if (blocker.state === "blocked") blocker.proceed();
-            }}
-          >
-            Discard and leave
-          </Button>
+          {!busy && (
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (blocker.state === "blocked") blocker.proceed();
+              }}
+            >
+              Discard and leave
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -351,3 +351,50 @@ test("discard clears both imported edits and unapplied DDL", async () => {
   confirm.mockRestore();
   client.clear();
 });
+
+test("Context navigation cannot discard an in-flight save", async () => {
+  let resolve!: (value: unknown) => void;
+  vi.mocked(request).mockImplementation(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  let router!: ReturnType<typeof createMemoryRouter>;
+  const client = setup((value) => {
+    router = value;
+  });
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "edited" } });
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await act(async () => {
+    await router.navigate("/contexts");
+  });
+  expect(screen.getByText("Request in progress")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Discard and leave" })).toBeNull();
+  await act(async () =>
+    resolve({
+      context: { ...context, name: "edited", version: 2 },
+      revalidation: { checked: 0, valid: [], invalid: [] },
+    }),
+  );
+  client.clear();
+});
+
+test("DDL warning categories use codes even when messages change", async () => {
+  vi.mocked(request).mockResolvedValue({
+    ...preview,
+    warnings: [],
+    warning_details: [
+      { code: "ignored_statement", message: "Index omitted (new wording)" },
+      { code: "resource_preserved", message: "Existing resource preserved (new wording)" },
+      { code: "unsupported_check", message: "Check needs review" },
+    ],
+  });
+  const client = setup();
+  await startPreview();
+  expect(await screen.findByText("1 unsupported statement omitted")).toBeTruthy();
+  expect(screen.getByText("Check needs review")).toBeTruthy();
+  expect(screen.queryByText("Existing resource preserved (new wording)")).toBeNull();
+  client.clear();
+});

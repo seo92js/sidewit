@@ -296,7 +296,7 @@ created_at
 - 선택적 `base_definition`이 있으면 저장 전 초안을 기준으로 합친다. 이때 `expected_version`은 필수다. 생략하면 기존처럼 저장된 Context를 기준으로 한다. 입력과 합친 결과에 Context 크기 제한을 적용한다.
 - 선택적 `pending_foreign_keys`는 앞선 import에서 연결되지 않은 단일 컬럼 FK다. `{table, column, ref_table, ref_column}` 형태이며 `ref_column: null`이면 대상 테이블의 단일 PK를 찾는다. 다음 import에서 다시 연결하고, 여전히 연결할 수 없는 항목은 응답에 돌려준다. Context에 자동 저장하지 않는다.
 - 한 DDL에서 서로 다른 스키마의 테이블 이름이 스키마 제거 후 충돌하면 422다. 기존 Context는 원본 스키마 이름을 보관하지 않으므로 서로 다른 import 사이의 스키마 충돌은 자동 판별할 수 없다. 미리보기의 이름 변환을 확인해야 한다.
-- 응답은 `{ "context_version": 1, "definition": {...}, "warnings": ["..."], "pending_foreign_keys": [] }`이다. 클라이언트가 확인한 뒤 `PUT`으로 저장한다.
+- 응답은 `{ "context_version": 1, "definition": {...}, "warnings": ["..."], "warning_details": [{"code": "ignored_statement", "message": "...", "ref": null}], "pending_foreign_keys": [] }`이다. 클라이언트가 확인한 뒤 `PUT`으로 저장한다. 경고 분류는 `warning_details[].code`를 사용하며, 기존 `warnings` 문자열 목록은 호환성을 위해 유지한다.
 
 ### 5.2 재검증 계약
 
@@ -739,6 +739,7 @@ React SPA이며 화면은 3개다. API만으로도 모든 기능을 쓸 수 있�
 - 저장할 때 버전 표시. 재검증 결과에 invalid Tool이 있으면 경고 배너
 
 **Playground**
+- 결과 옆에 실제 제출한 질문·Context 버전·기준 시각·지표·날짜 기준을 표시한다. 입력이나 Context가 바뀌면 이전 요청의 결과임을 알리고, 초안 생성 버튼도 이전 결과 기준임을 표시한다.
 - Context 선택, 질문 입력, [Generate]. 지표가 있는 Context는 지표 선택과 **Answer only with a registered metric**(`require_metric`)을 제공한다.
 - `ok`: Monaco SQL(읽기 전용), Parameters 표, 검증 결과와 경고, 출처 배지(metric contract / model-written SQL), 실행 안전성·접근 통제·비용·업무 정확성은 보장하지 않는다는 안내, [Copy SQL] [Copy JSON] [Save as Tool] 👍👎
 - `ambiguous`: reason과 clarifications. `unanswerable`: reason.
@@ -751,6 +752,10 @@ React SPA이며 화면은 3개다. API만으로도 모든 기능을 쓸 수 있�
 - [Save]는 현재 편집 내용과 Context 버전에 대한 검증을 통과해야 활성화된다. Context 변경 후 재검증 대기·실패 중에는 이전 통과 결과로 저장을 허용하지 않는다. 다른 곳에서 Tool이 바뀌면 편집 내용을 보존한 채 알리고, 버전 충돌을 409로 받는다.
 - 지표에 묶인 Tool은 SQL과 입력 이름·타입이 읽기 전용이고 **Rebuild from contract**로 갱신한다.
 - Test invoke 패널: `example_arguments`를 기본값으로 쓰는 폼, 응답 JSON 표시
+
+- Tool 편집 중 저장·삭제·계약 재생성 요청이 진행되면 입력과 SQL 편집을 잠근다. 실패하면 입력을 유지한 채 잠금을 해제한다.
+- 미저장 Tool에서 페이지를 떠날 때 확인하며, 요청 진행 중에는 완료까지 편집 화면에 머물도록 안내한다. 저장·삭제 성공 후의 화면 이동은 별도 확인 없이 수행한다. 브라우저 닫기/새로고침은 기본 이탈 경고를 사용한다.
+- Invoke 결과의 파라미터 표는 현재 편집 폼이 아닌 응답 Operation을 기준으로 표시한다. 저장된 Tool 또는 Context 버전과 다르면 이전 결과임을 알린다.
 
 **구현 메모**
 - SQL이 실행됐다는 인상을 주는 표현(`Run Query`, `Execute SQL` 등)은 쓰지 않는다. 결과는 "SQL operation" 또는 "Resolved SQL operation"이며 "not executed by Sidewit"을 함께 표시한다.

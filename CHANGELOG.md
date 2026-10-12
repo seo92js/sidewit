@@ -17,6 +17,14 @@ Initial release candidate.
 
 ### Fixes
 
+- Ignore SQL comments and quoted contents when suggesting Tool inputs.
+- Classify DDL warnings by stable codes while retaining legacy warning messages.
+- Prevent navigation during Context saves and remove unused UI options and stale comments.
+
+- Lock Tool editing during save, delete and contract rebuild requests; preserve input on failure and confirm unsaved navigation.
+- Render invocation parameters from the returned operation, with a notice when the saved Tool has changed.
+- Show the submitted Playground question and settings, and distinguish previous results after input changes.
+
 - Merge DDL imports into the current unsaved editor contents; preserve sequential imports and descriptions.
 - Preview table/column/relation changes, separate schema replacement, and retain unresolved foreign keys for subsequent imports.
 - Keep DDL input across editor tabs and confirm navigation away from unsaved Context edits.

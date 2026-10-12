@@ -62,14 +62,17 @@ export function DdlImport({
     !!preview &&
     JSON.stringify(preview.pending_foreign_keys ?? []) !== JSON.stringify(pendingForeignKeys);
   const hasChanges = changes?.changed || pendingChanged;
-  const ignored = preview?.warnings.filter((w) => w.startsWith("Ignored statement:")) ?? [];
-  const warnings =
-    preview?.warnings.filter(
-      (w) =>
-        !w.startsWith("Ignored statement:") &&
-        !w.endsWith("kept as is.") &&
-        !w.startsWith("Skipped foreign key"),
-    ) ?? [];
+  // Older servers provide messages only: display all of them without guessing their category.
+  const details =
+    preview?.warning_details ??
+    preview?.warnings.map((message) => ({ code: "unknown", message })) ??
+    [];
+  const ignored = details.filter((w) => w.code === "ignored_statement").map((w) => w.message);
+  const warnings = details
+    .filter(
+      (w) => !["ignored_statement", "resource_preserved", "pending_foreign_key"].includes(w.code),
+    )
+    .map((w) => w.message);
 
   function reset() {
     setDdl("");

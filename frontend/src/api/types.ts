@@ -148,6 +148,7 @@ export interface ImportDdlResult {
   context_version: number;
   definition: ContextDefinition;
   warnings: string[];
+  warning_details?: Issue[];
   pending_foreign_keys?: PendingForeignKey[];
 }
 

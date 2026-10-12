@@ -12,8 +12,8 @@ import { CopyButton } from "./common";
 import { LazySqlEditor } from "./LazySqlEditor";
 
 /** A resolved SQL Operation. Sidewit never executes it; the application does. */
-export function OperationView({ operation, order }: { operation: SqlOperation; order?: string[] }) {
-  const names = order ?? Object.keys(operation.parameter_types);
+export function OperationView({ operation }: { operation: SqlOperation }) {
+  const names = Object.keys(operation.parameter_types);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
