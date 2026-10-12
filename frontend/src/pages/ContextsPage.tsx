@@ -67,6 +67,7 @@ function NewContextForm() {
       className="space-y-2 rounded-md border p-3"
       onSubmit={(e) => {
         e.preventDefault();
+        if (create.isPending || !name.trim()) return;
         create.mutate(
           { name, dialect: "postgresql", timezone },
           {
@@ -78,28 +79,34 @@ function NewContextForm() {
         );
       }}
     >
-      <div className="text-xs font-medium">New context</div>
-      <div className="space-y-1">
-        <Label htmlFor="new-name" className="text-xs">
-          Name
-        </Label>
-        <Input
-          id="new-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="commerce"
-        />
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="new-tz" className="text-xs">
-          Timezone
-        </Label>
-        <TimezoneInput id="new-tz" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-      </div>
-      <p className="text-xs text-muted-foreground">Dialect: postgresql (v0.1)</p>
-      <Button type="submit" size="sm" disabled={!name.trim() || create.isPending}>
-        <Plus /> Create
-      </Button>
+      <fieldset disabled={create.isPending} aria-busy={create.isPending} className="space-y-2">
+        <div className="text-xs font-medium">New context</div>
+        <div className="space-y-1">
+          <Label htmlFor="new-name" className="text-xs">
+            Name
+          </Label>
+          <Input
+            id="new-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="commerce"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="new-tz" className="text-xs">
+            Timezone
+          </Label>
+          <TimezoneInput
+            id="new-tz"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">Dialect: postgresql (v0.1)</p>
+        <Button type="submit" size="sm" disabled={!name.trim() || create.isPending}>
+          <Plus /> {create.isPending ? "Creating…" : "Create"}
+        </Button>
+      </fieldset>
       <ErrorAlert error={create.error} title="Could not create context" />
     </form>
   );

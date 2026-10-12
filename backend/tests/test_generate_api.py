@@ -152,7 +152,7 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
     assert record["status"] == "ok"
     assert record["attempts"] == 1
     assert record["provider"] == "fake"
-    assert record["prompt_version"] == "generate_v7"
+    assert record["prompt_version"] == "generate_v8"
     assert record["reference_time"] == "2026-10-02T00:00:00Z"
 
 
@@ -513,3 +513,59 @@ async def test_credentials_in_provider_errors_are_not_persisted(client, context,
     record = await detail(client, res.json()["details"]["generation_id"])
     assert "sk-proj-abcdef123456" not in record["reason"]
     assert "[REDACTED]" in record["reason"]
+
+
+@pytest.mark.parametrize("hybrid_mode", [False, True])
+@pytest.mark.parametrize("repair_succeeds", [False, True])
+async def test_mixed_case_sql_gets_quoting_guidance_and_is_revalidated(
+    client, fake, hybrid_mode, repair_succeeds
+):
+    from sidewit.generation.metric_plan import LLMHybridPlan
+
+    definition = {
+        "resources": [{"name": "Store", "fields": [{"name": "regionSido", "type": "text"}]}],
+        "metrics": [
+            {
+                "id": "store_count",
+                "description": "All stores",
+                "resource": "Store",
+                "aggregate": {"kind": "row_count"},
+            }
+        ]
+        if hybrid_mode
+        else [],
+    }
+    created = await client.post(
+        "/api/v1/contexts",
+        json={
+            "name": "mixed_case",
+            "dialect": "postgresql",
+            "definition": definition,
+        },
+    )
+    assert created.status_code == 201
+    params = [LLMParameter(name="region_sido", type="string", value="서울")]
+    bad_sql = "SELECT count(*) FROM Store WHERE regionSido = :region_sido"
+    good_sql = 'SELECT count(*) FROM "Store" WHERE "regionSido" = :region_sido'
+
+    def response(sql):
+        output = ok(sql, params)
+        if hybrid_mode:
+            return LLMHybridPlan(**output.model_dump(), route="sql", metric_id=None, period=None)
+        return output
+
+    provider = fake(response(bad_sql), response(good_sql if repair_succeeds else bad_sql))
+    res = await ask(client, created.json(), question="서울 매장 개수")
+    assert len(provider.calls) == 2
+    assert '"Store"."regionSido"' in provider.calls[0][0]
+    repair = provider.calls[1][1][-1].content
+    assert "unknown_resource" in repair
+    assert '"Store"."regionSido"' in repair
+    if repair_succeeds:
+        assert res.status_code == 200
+        assert res.json()["operation"]["statement"] == good_sql
+        assert res.json()["operation"]["parameters"] == {"region_sido": "서울"}
+    else:
+        assert res.status_code == 422
+        assert res.json()["error"] == "generation_invalid"
+        assert "operation" not in res.json()

@@ -15,7 +15,6 @@ import { ApiError } from "@/api/client";
 import { useContexts, useFeedback, useGenerate, useGeneration } from "@/api/queries";
 import type { GenerateRequest, GenerateResponse, OperationSource } from "@/api/types";
 import { Empty, ErrorAlert, IssueList, Loading, ValidationPanel } from "@/components/app/common";
-import { LazySqlEditor } from "@/components/app/LazySqlEditor";
 import { NativeSelect } from "@/components/app/NativeSelect";
 import { OperationView } from "@/components/app/OperationView";
 import { Badge } from "@/components/ui/badge";
@@ -432,8 +431,12 @@ function Feedback({ generationId }: { generationId: string }) {
 function GenerateError({ error }: { error: unknown }) {
   const [showSql, setShowSql] = useState(false);
   const rejected = error instanceof ApiError && error.error === "generation_invalid";
-  const generationId = rejected ? (error.details.generation_id as string) : undefined;
+  const generationId =
+    rejected && typeof error.details.generation_id === "string"
+      ? error.details.generation_id
+      : undefined;
   const log = useGeneration(showSql ? generationId : undefined);
+  const statement = log.data?.operation?.statement;
 
   if (!rejected) return <ErrorAlert error={error} title="Generation failed" />;
   return (
@@ -457,6 +460,7 @@ function GenerateError({ error }: { error: unknown }) {
         <IssueList issues={error.issues("validation_errors")} />
         <button
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          aria-expanded={showSql}
           onClick={() => setShowSql((v) => !v)}
         >
           {showSql ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -471,14 +475,21 @@ function GenerateError({ error }: { error: unknown }) {
                 or prompt.
               </span>
             </div>
-            {log.isLoading ? (
+            {!generationId ? (
+              <p>No generation log is available for this error.</p>
+            ) : log.isLoading ? (
               <Loading />
             ) : log.error ? (
               <ErrorAlert error={log.error} />
+            ) : typeof statement === "string" && statement.length > 0 ? (
+              <pre
+                aria-label="Rejected SQL"
+                className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-3 font-mono text-xs"
+              >
+                <code>{statement}</code>
+              </pre>
             ) : (
-              log.data?.operation && (
-                <LazySqlEditor value={log.data.operation.statement} readOnly height={140} />
-              )
+              <p>No rejected SQL was recorded for this generation.</p>
             )}
           </div>
         )}

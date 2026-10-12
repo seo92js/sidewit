@@ -114,8 +114,10 @@ export default function ToolEditorPage() {
   const contexts = useContexts();
 
   if (tool.isLoading || draft.isLoading || contexts.isLoading) return <Loading />;
-  if (tool.error) return <ErrorAlert error={tool.error} title={`Could not load tool ${name}`} />;
-  if (contexts.error) return <ErrorAlert error={contexts.error} title="Could not load contexts" />;
+  if (tool.error && !tool.data)
+    return <ErrorAlert error={tool.error} title={`Could not load tool ${name}`} />;
+  if (contexts.error && !contexts.data)
+    return <ErrorAlert error={contexts.error} title="Could not load contexts" />;
 
   let initial: FormState;
   if (tool.data) {
@@ -161,6 +163,11 @@ export default function ToolEditorPage() {
         </Link>{" "}
         / {tool.data ? <span className="font-mono">{tool.data.name}</span> : "New tool"}
       </div>
+      <ErrorAlert error={tool.error} title="Could not refresh tool; your edits are preserved" />
+      <ErrorAlert
+        error={contexts.error}
+        title="Could not refresh contexts; your edits are preserved"
+      />
       <ErrorAlert error={draft.error} title="Could not create a draft from this generation" />
       {draft.data && (
         <Alert>

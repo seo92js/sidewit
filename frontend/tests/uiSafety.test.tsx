@@ -8,6 +8,7 @@ import { request } from "@/api/client";
 import type { Context, Tool } from "@/api/types";
 import ToolEditorPage from "@/pages/ToolEditorPage";
 import PlaygroundPage from "@/pages/PlaygroundPage";
+import ContextsPage from "@/pages/ContextsPage";
 import { InvokePanel } from "@/pages/tool/InvokePanel";
 
 vi.mock("@/api/client", async (original) => ({
@@ -375,5 +376,171 @@ test("Playground retains the submitted request when inputs change during generat
   expect(screen.getByText("submitted question")).toBeTruthy();
   expect(screen.getByText("2026-10-01T00:00:00Z")).toBeTruthy();
   expect(screen.getByLabelText("Question")).toHaveProperty("value", "edited while waiting");
+  qc.clear();
+});
+
+test.each(["tool", "contexts"])(
+  "background %s refresh failure preserves unsaved Tool edits",
+  async (source) => {
+    vi.mocked(request).mockResolvedValue(valid);
+    const qc = client();
+    editor(qc);
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "valuable unsaved edits" },
+    });
+    await act(async () => {
+      await qc
+        .fetchQuery({
+          queryKey: source === "tool" ? ["tools", "report"] : ["contexts"],
+          queryFn: async () => {
+            throw new Error("temporary connection failure");
+          },
+          staleTime: 0,
+          retry: false,
+        })
+        .catch(() => {});
+    });
+    await screen.findByText(`Could not refresh ${source}; your edits are preserved`);
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", "valuable unsaved edits");
+    await act(async () => {
+      qc.setQueryData(
+        source === "tool" ? ["tools", "report"] : ["contexts"],
+        source === "tool" ? { ...tool } : [{ ...context }],
+      );
+    });
+    expect(await screen.findByLabelText("Description")).toHaveProperty(
+      "value",
+      "valuable unsaved edits",
+    );
+    qc.clear();
+  },
+);
+
+test("a changed boolean input displays and submits the same reset value", async () => {
+  const qc = client();
+  const inputTool: Tool = {
+    ...tool,
+    input_schema: {
+      type: "object",
+      properties: { active: { type: "string" } },
+      required: ["active"],
+      additionalProperties: false,
+    },
+  };
+  const ui = (value: Tool) => (
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <InvokePanel tool={value} dirty={false} />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const view = render(ui(inputTool));
+  fireEvent.change(screen.getByLabelText(/active/), { target: { value: "true" } });
+  view.rerender(
+    ui({
+      ...inputTool,
+      version: 2,
+      input_schema: { ...inputTool.input_schema, properties: { active: { type: "boolean" } } },
+    }),
+  );
+  expect(screen.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
+  vi.mocked(request).mockRejectedValue(new Error("stop after capturing request"));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Invoke Tool" }));
+  expect(request).toHaveBeenCalledWith("POST", "/tools/report/invoke", {
+    arguments: { active: false },
+    expected_version: 2,
+  });
+  qc.clear();
+});
+
+test.each([true, false])(
+  "Context creation locks inputs and preserves them on failure (success: %s)",
+  async (success) => {
+    const qc = client();
+    let resolve!: (value: Context) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<Context>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    vi.mocked(request).mockImplementation(async (_method, path) =>
+      path === "/contexts" ? pending : context,
+    );
+    const router = createMemoryRouter(
+      [
+        { path: "/contexts", element: <ContextsPage /> },
+        { path: "/contexts/:id", element: <div>Created context</div> },
+      ],
+      { initialEntries: ["/contexts"] },
+    );
+    render(
+      <QueryClientProvider client={qc}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "first" } });
+    const originalTimezone = (screen.getByLabelText("Timezone") as HTMLInputElement).value;
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(screen.getByLabelText("Name").matches(":disabled")).toBe(true);
+    expect(screen.getByLabelText("Timezone").matches(":disabled")).toBe(true);
+    await user.type(screen.getByLabelText("Name"), "second name typed during save");
+    expect(screen.getByLabelText("Name")).toHaveProperty("value", "first");
+    if (success) {
+      await act(async () => resolve({ ...context, name: "first" }));
+      expect(await screen.findByText("Created context")).toBeTruthy();
+    } else {
+      await act(async () => reject(new Error("Create failed")));
+      expect(await screen.findByText("Create failed")).toBeTruthy();
+      expect(screen.getByLabelText("Name")).toHaveProperty("value", "first");
+      expect(screen.getByLabelText("Timezone")).toHaveProperty("value", originalTimezone);
+      expect(screen.getByLabelText("Name").matches(":disabled")).toBe(false);
+    }
+    qc.clear();
+  },
+);
+
+test("schema changes preserve compatible values and reset removed enum choices", async () => {
+  const qc = client();
+  const inputTool: Tool = {
+    ...tool,
+    input_schema: {
+      type: "object",
+      properties: {
+        region: { type: "string" },
+        status: { type: "string", enum: ["old", "new"] },
+      },
+      required: ["region", "status"],
+      additionalProperties: false,
+    },
+  };
+  const ui = (value: Tool) => (
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <InvokePanel tool={value} dirty={false} />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const view = render(ui(inputTool));
+  fireEvent.change(screen.getByLabelText(/region/), { target: { value: "Seoul" } });
+  fireEvent.change(screen.getByLabelText(/status/), { target: { value: "0" } });
+  view.rerender(
+    ui({
+      ...inputTool,
+      version: 2,
+      input_schema: {
+        ...inputTool.input_schema,
+        properties: {
+          region: { type: "string" },
+          status: { type: "string", enum: ["new"] },
+        },
+      },
+    }),
+  );
+  expect(screen.getByLabelText(/region/)).toHaveProperty("value", "Seoul");
+  expect(screen.getByLabelText(/status/)).toHaveProperty("value", "");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Invoke Tool" }));
+  expect(screen.getByText("This input is required.")).toBeTruthy();
+  expect(request).not.toHaveBeenCalled();
   qc.clear();
 });

@@ -17,6 +17,14 @@ Initial release candidate.
 
 ### Fixes
 
+- Preserve unsaved Tool edits when background refreshes fail.
+- Reset incompatible invocation inputs when a saved Tool schema changes, keeping displayed and submitted values consistent.
+- Lock Context creation inputs while saving and retain them on failure.
+
+- Provide exact quoted SQL identifiers in generation and repair prompts for mixed-case or reserved Context names (`generate_v8`, `hybrid_v3`).
+
+- Render rejected SQL as plain text without loading Monaco; show explicit messages for missing generation logs or SQL.
+
 - Ignore SQL comments and quoted contents when suggesting Tool inputs.
 - Classify DDL warnings by stable codes while retaining legacy warning messages.
 - Prevent navigation during Context saves and remove unused UI options and stale comments.
