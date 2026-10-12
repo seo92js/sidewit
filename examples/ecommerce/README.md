@@ -24,8 +24,10 @@ This does not call an LLM. It previews the DDL, checks warnings, adds descriptio
 then saves the Context. Use [the UI flow](../../README.md#quick-start) to generate and review SQL.
 
 For manual setup, create a PostgreSQL / Asia/Seoul Context in the UI. Paste `schema.sql`
-into **Import DDL**, review **Preview import**, then **Apply to draft**. Add descriptions and
-rules from `context.json` before saving: DDL alone does not define business meaning.
+into **Schema → Import DDL**, select **Preview changes**, then add the tables. Add descriptions and
+rules from `context.json`, then select **Save changes**. You can import tables one at a time
+without saving between imports; pending relations must be resolved or explicitly excluded.
+Remember: DDL alone does not define business meaning.
 
 ## Full API walkthrough
 

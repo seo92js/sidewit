@@ -129,10 +129,27 @@ export interface ContextUpdateResult {
 
 export type ImportMode = "merge" | "replace";
 
+export interface PendingForeignKey {
+  table: string;
+  column: string;
+  ref_table: string;
+  ref_column: string | null;
+}
+
+export interface ImportDdlRequest {
+  ddl: string;
+  mode: ImportMode;
+  expected_version: number;
+  base_definition: ContextDefinition;
+  pending_foreign_keys: PendingForeignKey[];
+}
+
 export interface ImportDdlResult {
   context_version: number;
   definition: ContextDefinition;
   warnings: string[];
+  warning_details?: Issue[];
+  pending_foreign_keys?: PendingForeignKey[];
 }
 
 export interface ValidationResult {

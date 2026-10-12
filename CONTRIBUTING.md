@@ -28,8 +28,10 @@ The [CI workflow](.github/workflows/checks.yml) also builds both Docker images.
   changing contracts, and user-facing documentation when usage changes.
 - Keep provider-specific response formats inside provider adapters. Unsupported required
   validation must not silently pass.
-- Use commit messages in the form `<type>: <description>`, for example
-  `fix: reject conflicting Tool updates`.
+- Write PR titles and commit messages in English using `<type>: <description>`, for example
+  `fix: reject conflicting Tool updates`. Use `feat`, `fix`, `docs`, `refactor`, `test` or `chore`.
+- Fill in the [PR template](.github/pull_request_template.md) with a summary, validation results
+  and any breaking changes. Write `None` when there are no breaking changes.
 - Do not commit credentials, `.env`, user data, private logs, backups or internal review records.
 
 Discuss new Operation types or changes to storage and execution boundaries before implementing

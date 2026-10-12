@@ -5,7 +5,13 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ApiError } from "@/api/client";
 import { useContextDetail, useDeleteContext, useUpdateContext } from "@/api/queries";
-import type { Context, ContextDefinition, MetricDefinition, Revalidation } from "@/api/types";
+import type {
+  Context,
+  ContextDefinition,
+  MetricDefinition,
+  PendingForeignKey,
+  Revalidation,
+} from "@/api/types";
 import { ErrorAlert, IssueList, Loading } from "@/components/app/common";
 import { TimezoneInput } from "@/components/app/TimezoneInput";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -19,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { SchemaEditor } from "./context/SchemaEditor";
 import { RelationsEditor } from "./context/RelationsEditor";
 import { RulesEditor } from "./context/RulesEditor";
+import { UnsavedChangesGuard } from "@/components/app/UnsavedChangesGuard";
 import { DdlImport } from "./context/DdlImport";
 
 interface Draft {
@@ -29,6 +36,7 @@ interface Draft {
   /** Without metrics: while editing, metricsText is their only source. */
   definition: ContextDefinition;
   metricsText: string;
+  pendingForeignKeys: PendingForeignKey[];
 }
 
 function draftOf(context: Context): Draft {
@@ -38,6 +46,7 @@ function draftOf(context: Context): Draft {
     timezone: context.timezone,
     allow_generated_sql: context.allow_generated_sql,
     definition: { ...context.definition, metrics: undefined },
+    pendingForeignKeys: [],
     metricsText: JSON.stringify(context.definition.metrics ?? [], null, 2),
   };
 }
@@ -60,6 +69,9 @@ export function ContextEditor({ id }: { id: string }) {
   const update = useUpdateContext(id);
   const remove = useDeleteContext();
   const [edits, setEdits] = useState<Draft | null>(null);
+  const [importEpoch, setImportEpoch] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importHasInput, setImportHasInput] = useState(false);
   const [tab, setTab] = useState("schema");
   const [revalidation, setRevalidation] = useState<Revalidation | null>(null);
 
@@ -94,7 +106,8 @@ export function ContextEditor({ id }: { id: string }) {
   const setDefinition = (definition: ContextDefinition) => edit({ definition });
 
   const save = () => {
-    if (metricsError || valueErrors.length) return;
+    if (metricsError || valueErrors.length || draft.pendingForeignKeys.length || remoteChanged)
+      return;
     setRevalidation(null);
     const submitted = draft;
     update.mutate(
@@ -125,6 +138,10 @@ export function ContextEditor({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
+      <UnsavedChangesGuard
+        dirty={!remove.isSuccess && (dirty || importHasInput)}
+        busy={update.isPending}
+      />
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="ctx-name" className="text-xs">
@@ -162,30 +179,57 @@ export function ContextEditor({ id }: { id: string }) {
             </span>
           </span>
         </label>
-        <div className="flex items-center gap-2 pb-1.5">
+      </div>
+      <div className="sticky top-12 z-10 flex flex-wrap items-center gap-3 border-b bg-background/95 py-3 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="font-mono">
             {current.dialect}
           </Badge>
           <Badge variant="secondary" className="font-mono">
             v{current.version}
           </Badge>
-          {dirty && <Badge className="bg-amber-500 text-white">unsaved changes</Badge>}
+          {!dirty && !importHasInput && (
+            <span role="status" className="text-xs text-muted-foreground">
+              Saved
+            </span>
+          )}
+          {dirty && <Badge className="bg-amber-500 text-white">Unsaved changes</Badge>}
+          {importHasInput && <Badge variant="outline">DDL not applied</Badge>}
         </div>
         <div className="ml-auto flex gap-2">
-          <Button variant="ghost" size="sm" disabled={!dirty} onClick={() => setEdits(null)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={(!dirty && !importHasInput) || update.isPending}
+            onClick={() => {
+              if (window.confirm("Discard all unsaved Context changes and DDL input?")) {
+                setEdits(null);
+                setRevalidation(null);
+                setImportEpoch((n) => n + 1);
+                setImportHasInput(false);
+              }
+            }}
+          >
             <RotateCcw /> Discard
           </Button>
           <Button
             size="sm"
-            disabled={!dirty || !!metricsError || valueErrors.length > 0 || update.isPending}
+            disabled={
+              !dirty ||
+              !!metricsError ||
+              valueErrors.length > 0 ||
+              update.isPending ||
+              remoteChanged ||
+              draft.pendingForeignKeys.length > 0
+            }
             onClick={save}
           >
-            <Save /> {update.isPending ? "Saving…" : `Save as v${current.version + 1}`}
+            <Save /> {update.isPending ? "Saving…" : "Save changes"}
           </Button>
           <Button
             variant="destructive"
             size="sm"
-            disabled={remove.isPending}
+            disabled={remove.isPending || update.isPending}
             onClick={() => {
               if (confirm(`Delete context "${current.name}"? Its generation log is deleted too.`)) {
                 remove.mutate(id, { onSuccess: () => navigate("/contexts") });
@@ -197,6 +241,14 @@ export function ContextEditor({ id }: { id: string }) {
         </div>
       </div>
 
+      {draft.pendingForeignKeys.length > 0 && tab !== "schema" && (
+        <p role="status" className="text-sm">
+          {draft.pendingForeignKeys.length} pending relation(s) must be resolved before saving.
+          <Button size="sm" variant="link" onClick={() => setTab("schema")}>
+            Review in Schema
+          </Button>
+        </p>
+      )}
       {remoteChanged && (
         <Alert variant="destructive">
           <AlertTitle>A newer Context version is available. Your edits have been kept.</AlertTitle>
@@ -257,11 +309,80 @@ export function ContextEditor({ id }: { id: string }) {
           </TabsTrigger>
           <TabsTrigger value="rules">Business rules ({draft.definition.rules.length})</TabsTrigger>
           <TabsTrigger value="metrics">Metrics ({metrics.length})</TabsTrigger>
-          <TabsTrigger value="import">
-            <FileInput /> Import DDL
-          </TabsTrigger>
         </TabsList>
-        <TabsContent value="schema" className="pt-3">
+        <TabsContent value="schema" forceMount hidden={tab !== "schema"} className="space-y-4 pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {draft.definition.resources.length}{" "}
+              {draft.definition.resources.length === 1 ? "table" : "tables"} · add more, then save
+              when you are done.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setImportOpen((open) => !open)}
+              aria-expanded={importOpen}
+              aria-controls="ddl-import-panel"
+            >
+              <FileInput /> Import DDL
+            </Button>
+          </div>
+          <div id="ddl-import-panel" hidden={!importOpen}>
+            <DdlImport
+              key={importEpoch}
+              dirty={dirty}
+              contextId={id}
+              contextVersion={current.version}
+              draftVersion={draft.version}
+              definition={{ ...draft.definition, metrics }}
+              pendingForeignKeys={draft.pendingForeignKeys}
+              blocked={!!metricsError || valueErrors.length > 0 || update.isPending}
+              onInputChange={setImportHasInput}
+              onClose={() => setImportOpen(false)}
+              onApply={({ definition, context_version, pending_foreign_keys }) => {
+                if (context_version !== current.version || context_version !== draft.version)
+                  return;
+                edit({
+                  definition: { ...definition, metrics: undefined },
+                  pendingForeignKeys: pending_foreign_keys ?? [],
+                });
+                setRevalidation(null);
+              }}
+            />
+          </div>
+          {draft.pendingForeignKeys.length > 0 && (
+            <Alert>
+              <AlertTitle>Resolve pending relations before saving</AlertTitle>
+              <AlertDescription>
+                <p>
+                  Import the referenced tables to connect these relations, or explicitly exclude
+                  each one.
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {draft.pendingForeignKeys.map((fk, index) => (
+                    <li key={index} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {fk.table}.{fk.column} → {fk.ref_table}.{fk.ref_column ?? "(primary key)"}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          edit({
+                            pendingForeignKeys: draft.pendingForeignKeys.filter(
+                              (_, i) => i !== index,
+                            ),
+                          })
+                        }
+                      >
+                        Exclude relation
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
           <SchemaEditor definition={draft.definition} onChange={setDefinition} />
         </TabsContent>
         <TabsContent value="relations" className="pt-3">
@@ -296,20 +417,6 @@ export function ContextEditor({ id }: { id: string }) {
             · See docs/METRIC_CONTRACTS.md for joins, fixed filters and inputs. The server checks
             each contract on save. Removing or changing a contract revalidates its saved Tools.
           </p>
-        </TabsContent>
-        <TabsContent value="import" className="pt-3">
-          <DdlImport
-            contextId={id}
-            contextVersion={current.version}
-            draftVersion={draft.version}
-            dirty={dirty}
-            onApply={({ definition, context_version }) => {
-              if (context_version !== current.version || context_version !== draft.version) return;
-              // The preview carries the saved metrics; the Metrics tab text stays authoritative.
-              edit({ version: context_version, definition: { ...definition, metrics: undefined } });
-              setTab("schema");
-            }}
-          />
         </TabsContent>
       </Tabs>
     </div>

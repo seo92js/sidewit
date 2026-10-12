@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiError, request } from "@/api/client";
 import type { Context, Tool, ValidationResult } from "@/api/types";
@@ -65,11 +65,11 @@ test("server refetch preserves edits and the editor's original version", async (
   client.setQueryData(["tools", tool.name], tool);
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/tools/report"]}>
-        <Routes>
-          <Route path="/tools/:name" element={<ToolEditorPage />} />
-        </Routes>
-      </MemoryRouter>
+      <RouterProvider
+        router={createMemoryRouter([{ path: "/tools/:name", element: <ToolEditorPage /> }], {
+          initialEntries: ["/tools/report"],
+        })}
+      />
     </QueryClientProvider>,
   );
   fireEvent.change(screen.getByLabelText("Description"), { target: { value: "my unsaved edits" } });
@@ -135,11 +135,11 @@ test.each(["valid", "invalid", "error"] as const)(
     client.setQueryData(["tools", tool.name], tool);
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/tools/report"]}>
-          <Routes>
-            <Route path="/tools/:name" element={<ToolEditorPage />} />
-          </Routes>
-        </MemoryRouter>
+        <RouterProvider
+          router={createMemoryRouter([{ path: "/tools/:name", element: <ToolEditorPage /> }], {
+            initialEntries: ["/tools/report"],
+          })}
+        />
       </QueryClientProvider>,
     );
     fireEvent.change(screen.getByLabelText("Description"), { target: { value: "my edits" } });

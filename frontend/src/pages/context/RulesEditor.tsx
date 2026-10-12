@@ -205,8 +205,3 @@ function RuleConditionEditor({
     </div>
   );
 }
-
-/**
- * Keeps the typed text, so "0." or "1e5" are never rewritten. While typing, only text that
- * parses back to itself is committed as a number; after an edit, blur commits any valid number.
- */

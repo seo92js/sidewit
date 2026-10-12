@@ -13,7 +13,7 @@ import { Link, useNavigate } from "react-router";
 
 import { ApiError } from "@/api/client";
 import { useContexts, useFeedback, useGenerate, useGeneration } from "@/api/queries";
-import type { GenerateResponse, OperationSource } from "@/api/types";
+import type { GenerateRequest, GenerateResponse, OperationSource } from "@/api/types";
 import { Empty, ErrorAlert, IssueList, Loading, ValidationPanel } from "@/components/app/common";
 import { LazySqlEditor } from "@/components/app/LazySqlEditor";
 import { NativeSelect } from "@/components/app/NativeSelect";
@@ -39,6 +39,10 @@ export default function PlaygroundPage() {
   const [metricId, setMetricId] = useState("");
   const [dateField, setDateField] = useState("");
   const [requireMetric, setRequireMetric] = useState(false);
+  const [submittedContext, setSubmittedContext] = useState<{
+    name: string;
+    version: number;
+  } | null>(null);
 
   // Fall back to the first context when the stored one no longer exists.
   const selected =
@@ -53,16 +57,23 @@ export default function PlaygroundPage() {
   const canRequireMetric = metrics.length > 0 && !!selected?.allow_generated_sql;
   const metric = metrics.find((m) => m.id === metricId);
 
+  const requestPayload: GenerateRequest = {
+    context_id: contextId,
+    question,
+    ...(referenceTime.trim() ? { reference_time: referenceTime.trim() } : {}),
+    ...(metric ? { metric_id: metric.id } : {}),
+    ...(metric?.time_fields?.includes(dateField) ? { date_field: dateField } : {}),
+    ...(canRequireMetric && requireMetric ? { require_metric: true } : {}),
+  };
+  const resultVersion = generate.data?.context_version ?? submittedContext?.version;
+  const inputsChanged =
+    !!generate.variables &&
+    (JSON.stringify(generate.variables) !== JSON.stringify(requestPayload) ||
+      resultVersion !== selected?.version);
   const submit = () => {
-    if (!contextId || !question.trim() || generate.isPending) return;
-    generate.mutate({
-      context_id: contextId,
-      question,
-      ...(referenceTime.trim() ? { reference_time: referenceTime.trim() } : {}),
-      ...(metric ? { metric_id: metric.id } : {}),
-      ...(metric?.time_fields?.includes(dateField) ? { date_field: dateField } : {}),
-      ...(canRequireMetric && requireMetric ? { require_metric: true } : {}),
-    });
+    if (!selected || !question.trim() || generate.isPending) return;
+    setSubmittedContext({ name: selected.name, version: selected.version });
+    generate.mutate(requestPayload);
   };
 
   if (contexts.isLoading) return <Loading />;
@@ -101,6 +112,7 @@ export default function PlaygroundPage() {
               setMetricId("");
               setDateField("");
               generate.reset();
+              setSubmittedContext(null);
             }}
           >
             {contexts.data.map((c) => (
@@ -210,10 +222,44 @@ export default function PlaygroundPage() {
         <span className="ml-2 text-xs text-muted-foreground">⌘/Ctrl + Enter</span>
       </section>
 
-      <section className="min-w-0">
+      <section className="min-w-0 space-y-3">
+        {generate.variables && submittedContext && (
+          <div className="space-y-2 rounded-md border p-3 text-sm" aria-label="Submitted request">
+            <p className="font-medium">
+              {generate.isPending ? "Request in progress" : "Request for this result"}
+            </p>
+            <p className="whitespace-pre-wrap break-words">{generate.variables.question}</p>
+            <p className="text-xs text-muted-foreground">
+              Context: {submittedContext.name} · v{resultVersion}
+            </p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+              <dt>Reference time</dt>
+              <dd className="break-words">
+                {generate.variables.reference_time ?? "Server time when this request was made"}
+              </dd>
+              <dt>Metric</dt>
+              <dd>
+                {generate.variables.metric_id ??
+                  (generate.variables.require_metric
+                    ? "Registered metrics only"
+                    : "Automatic selection")}
+              </dd>
+              <dt>Date basis</dt>
+              <dd>{generate.variables.date_field ?? "Question or contract default"}</dd>
+            </dl>
+            {inputsChanged && (
+              <p role="status" className="text-amber-800">
+                Inputs or Context changed since this request. The result belongs to the request
+                shown here. Generate again to use your current inputs.
+              </p>
+            )}
+          </div>
+        )}
         {generate.isPending && <Loading label="Generating and validating…" />}
         {!generate.isPending && generate.error && <GenerateError error={generate.error} />}
-        {!generate.isPending && generate.data && <GenerateResult result={generate.data} />}
+        {!generate.isPending && generate.data && (
+          <GenerateResult result={generate.data} inputsChanged={inputsChanged} />
+        )}
         {!generate.isPending && !generate.data && !generate.error && (
           <Empty>
             The generated operation, or why Sidewit could not produce one, appears here.
@@ -250,7 +296,13 @@ function StatusHeader({
   );
 }
 
-function GenerateResult({ result }: { result: GenerateResponse }) {
+function GenerateResult({
+  result,
+  inputsChanged,
+}: {
+  result: GenerateResponse;
+  inputsChanged: boolean;
+}) {
   const navigate = useNavigate();
   if (result.status === "ambiguous") {
     return (
@@ -335,7 +387,7 @@ function GenerateResult({ result }: { result: GenerateResponse }) {
         />
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
-            <Wrench /> Create Tool draft
+            <Wrench /> {inputsChanged ? "Create draft from previous result" : "Create Tool draft"}
           </Button>
           {result.tool_suggestion && (
             <span className="text-xs text-muted-foreground">

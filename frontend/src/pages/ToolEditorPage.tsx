@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import {
   useContexts,
@@ -9,6 +9,7 @@ import {
   useTool,
   useToolDraft,
   useUpdateTool,
+  useRefreshContract,
   validate,
 } from "@/api/queries";
 import type { InputProperty, InputSchema, MetricBinding, ParamType, Tool } from "@/api/types";
@@ -36,8 +37,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { placeholders } from "./tool/placeholders";
 import { orderedInputs, paramType } from "./tool/inputSchema";
 import { SavedToolStatus } from "./tool/SavedToolStatus";
+import { UnsavedChangesGuard } from "@/components/app/UnsavedChangesGuard";
 import { InvokePanel } from "./tool/InvokePanel";
 
 const PARAM_TYPES: ParamType[] = ["string", "integer", "number", "boolean", "date", "date-time"];
@@ -91,13 +94,6 @@ function schemaFromRows(rows: ParamRow[]): InputSchema {
     required: rows.map((r) => r.name),
     additionalProperties: false,
   };
-}
-
-/** Named placeholders in the statement, ignoring string literals (editor hint only). */
-function placeholders(sql: string): string[] {
-  const withoutStrings = sql.replace(/'(?:[^']|'')*'/g, "''");
-  const found = withoutStrings.matchAll(/(?<![:\w]):([a-z][a-z0-9_]*)/g);
-  return [...new Set([...found].map((m) => m[1]))];
 }
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -192,6 +188,13 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const create = useCreateTool();
   const update = useUpdateTool(saved?.name ?? "");
   const remove = useDeleteTool();
+  const refresh = useRefreshContract(saved?.name ?? "");
+  const busy = create.isPending || update.isPending || refresh.isPending || remove.isPending;
+  const allowedNavigation = useRef<string | null>(null);
+  const goAfterWrite = (path: string, state?: object) => {
+    allowedNavigation.current = path;
+    navigate(path, { replace: true, state });
+  };
   const [form, setForm] = useState(initial);
   const [baseVersion, setBaseVersion] = useState(saved?.version);
   const reload = (tool: Tool) => {
@@ -204,7 +207,9 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     }));
     setBaseVersion(tool.version);
   };
-  const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
+  const set = (patch: Partial<FormState>) => {
+    if (!busy) setForm((f) => ({ ...f, ...patch }));
+  };
   // Metric-bound: SQL and input names/types are owned by the contract.
   const bound = !!form.metricBinding;
 
@@ -260,6 +265,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const saveError = saved ? update.error : create.error;
 
   const save = () => {
+    if (!canSave || busy) return;
     const body = {
       description: form.description.trim(),
       input_schema: inputSchema,
@@ -281,10 +287,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
         },
         {
           onSuccess: (tool) =>
-            navigate(`/tools/${tool.name}`, {
-              replace: true,
-              state: { exampleArguments: form.exampleArguments },
-            }),
+            goAfterWrite(`/tools/${tool.name}`, { exampleArguments: form.exampleArguments }),
         },
       );
     }
@@ -299,314 +302,347 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     set({ rows });
   };
 
+  const hasUnsavedEdits = saved
+    ? dirty
+    : !!(form.name || form.description || form.statement || form.rows.length);
   return (
-    <div className="grid gap-5 xl:grid-cols-[3fr_2fr]">
-      <div className="min-w-0 space-y-4">
-        {saved && (
-          <SavedToolStatus
-            tool={saved}
-            currentContextVersion={context?.version}
-            dirty={dirty}
-            onRebuilt={reload}
-          />
-        )}
-        {saved && saved.version !== baseVersion && (
-          <Alert>
-            <AlertTitle>Tool changed on the server</AlertTitle>
-            <AlertDescription>
-              Your edits are preserved. Reset to the latest version before saving again.
-            </AlertDescription>
-          </Alert>
-        )}
-        {form.metricBinding && (
-          <Alert>
-            <AlertTitle>Bound to metric {form.metricBinding.metric_id}</AlertTitle>
-            <AlertDescription>
-              The SQL and the input names and types come from this contract and are read-only.
-              Change the contract in the Context, then rebuild the Tool from it. Descriptions and
-              allowed values stay editable.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="tool-name" className="text-xs">
-              Name
-            </Label>
-            <Input
-              id="tool-name"
-              className="font-mono"
-              value={form.name}
-              disabled={!!saved}
-              onChange={(e) => set({ name: e.target.value })}
-              placeholder="regional_revenue"
-            />
-            {!saved && form.name && !nameValid && (
-              <p className="text-xs text-destructive">
-                snake_case: lowercase letters, digits and “_”, starting with a letter (max 64).
-              </p>
-            )}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="tool-context" className="text-xs">
-              Context
-            </Label>
-            {saved ? (
-              <div className="flex h-8 items-center gap-2 text-sm">
-                {context?.name ?? saved.context_id}
-                <span className="font-mono text-xs text-muted-foreground">v{context?.version}</span>
-              </div>
-            ) : (
-              <NativeSelect
-                id="tool-context"
-                className="w-full"
-                value={form.contextId}
-                onChange={(e) => set({ contextId: e.target.value })}
-              >
-                {contexts.data?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} (v{c.version})
-                  </option>
-                ))}
-              </NativeSelect>
-            )}
-          </div>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="tool-description" className="text-xs">
-            Description
-          </Label>
-          <Textarea
-            id="tool-description"
-            rows={2}
-            value={form.description}
-            onChange={(e) => set({ description: e.target.value })}
-            placeholder="What this tool returns, for humans and for future tool calling."
-          />
-        </div>
-
-        <div>
-          <SectionTitle
-            action={
-              !bound &&
-              missing.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() =>
-                    set({
-                      rows: [
-                        ...form.rows,
-                        ...missing.map((n) => ({
-                          name: n,
-                          type: "string" as ParamType,
-                          description: "",
-                          enum: [],
-                        })),
-                      ],
-                    })
-                  }
-                >
-                  <Plus /> Add inputs for {missing.map((m) => `:${m}`).join(", ")}
-                </Button>
-              )
-            }
-          >
-            Inputs (input_schema)
-          </SectionTitle>
-          <p className="mb-2 text-xs text-muted-foreground">
-            v0.1: every input is required; no defaults, optional inputs or arrays. Each input must
-            appear in the SQL as <code>:name</code>.
-          </p>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-44">Name</TableHead>
-                <TableHead className="w-32">Type</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-40">Allowed values</TableHead>
-                <TableHead className="w-24" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {form.rows.map((row, index) => (
-                <TableRow key={index}>
-                  <TableCell>
-                    <Input
-                      className="h-7 font-mono"
-                      aria-label="Input name"
-                      disabled={bound}
-                      value={row.name}
-                      onChange={(e) => setRow(index, { name: e.target.value })}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <NativeSelect
-                      className="h-7 w-full"
-                      aria-label="Input type"
-                      disabled={bound}
-                      value={row.type}
-                      onChange={(e) => setRow(index, { type: e.target.value as ParamType })}
-                    >
-                      {PARAM_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </NativeSelect>
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      className="h-7"
-                      aria-label="Input description"
-                      value={row.description}
-                      onChange={(e) => setRow(index, { description: e.target.value })}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <ValueListInput
-                      label="Allowed value"
-                      type="string"
-                      disabled={row.type !== "string"}
-                      values={row.enum}
-                      onChange={(values) => setRow(index, { enum: values.map(String) })}
-                    />
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="Move up"
-                      disabled={bound || index === 0}
-                      onClick={() => moveRow(index, -1)}
-                    >
-                      <ArrowUp />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="Move down"
-                      disabled={bound || index === form.rows.length - 1}
-                      onClick={() => moveRow(index, 1)}
-                    >
-                      <ArrowDown />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="Remove input"
-                      disabled={bound}
-                      onClick={() => set({ rows: form.rows.filter((_, i) => i !== index) })}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="mt-1"
-            disabled={bound}
-            onClick={() =>
-              set({
-                rows: [
-                  ...form.rows,
-                  {
-                    name: `input_${form.rows.length + 1}`,
-                    type: "string",
-                    description: "",
-                    enum: [],
-                  },
-                ],
-              })
-            }
-          >
-            <Plus /> Add input
-          </Button>
-        </div>
-
-        <div>
-          <SectionTitle>SQL statement</SectionTitle>
-          <LazySqlEditor
-            value={form.statement}
-            onChange={bound ? undefined : (statement) => set({ statement })}
-            readOnly={bound}
-            height={240}
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Placeholders found: {used.length ? used.map((p) => `:${p}`).join(", ") : "none"}
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          {!form.statement.trim() ? (
-            <p className="text-xs text-muted-foreground">Write a statement to validate it.</p>
-          ) : !context ? (
-            <p className="text-xs text-muted-foreground">
-              Select an available context to validate.
-            </p>
-          ) : validation.error ? (
-            <ErrorAlert error={validation.error} title="Validation request failed" />
-          ) : validationCurrent && validation.data ? (
-            <ValidationPanel
-              result={validation.data}
-              label={validation.data.valid ? "Tool validated" : "Tool validation failed"}
-            />
-          ) : (
-            <Loading label="Validating…" />
-          )}
-          <p className="text-xs text-muted-foreground">
-            Tool validation uses the default policy: relative time functions such as{" "}
-            <code>NOW()</code> are allowed in tools. This is not a Generate-compatibility check.
-          </p>
-        </div>
-
-        <ErrorAlert error={saveError} title="Could not save tool" />
-        <ErrorAlert error={remove.error} title="Could not delete tool" />
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={save} disabled={!canSave || create.isPending || update.isPending}>
-            <Save />{" "}
-            {saved ? (dirty ? `Save as v${saved.version + 1}` : "No changes") : "Save tool"}
-          </Button>
-          {saved && dirty && (
-            <Button variant="ghost" onClick={() => reload(saved)}>
-              <RotateCcw /> Discard
-            </Button>
-          )}
+    <>
+      <UnsavedChangesGuard
+        dirty={hasUnsavedEdits}
+        busy={busy}
+        description="Your unsaved Tool name, description, inputs and SQL will be discarded."
+        allowNavigation={(path) => allowedNavigation.current === path}
+      />
+      {busy && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {refresh.isPending
+            ? "Rebuilding from contract…"
+            : remove.isPending
+              ? "Deleting Tool…"
+              : "Saving Tool…"}{" "}
+          Editing is temporarily locked.
+        </p>
+      )}
+      <div className="grid gap-5 xl:grid-cols-[3fr_2fr]">
+        <fieldset
+          disabled={busy}
+          aria-label="Tool editor"
+          aria-busy={busy}
+          className="min-w-0 space-y-4"
+        >
           {saved && (
-            <Button
-              variant="destructive"
-              disabled={remove.isPending}
-              onClick={() =>
-                confirm(`Delete tool "${saved.name}"?`) &&
-                remove.mutate(saved.name, { onSuccess: () => navigate("/tools") })
+            <SavedToolStatus
+              tool={saved}
+              currentContextVersion={context?.version}
+              dirty={dirty}
+              busy={busy}
+              rebuilding={refresh.isPending}
+              rebuildError={refresh.error}
+              onRebuild={() => {
+                if (!busy && !dirty && saved) refresh.mutate(saved.version, { onSuccess: reload });
+              }}
+            />
+          )}
+          {saved && saved.version !== baseVersion && (
+            <Alert>
+              <AlertTitle>Tool changed on the server</AlertTitle>
+              <AlertDescription>
+                Your edits are preserved. Reset to the latest version before saving again.
+              </AlertDescription>
+            </Alert>
+          )}
+          {form.metricBinding && (
+            <Alert>
+              <AlertTitle>Bound to metric {form.metricBinding.metric_id}</AlertTitle>
+              <AlertDescription>
+                The SQL and the input names and types come from this contract and are read-only.
+                Change the contract in the Context, then rebuild the Tool from it. Descriptions and
+                allowed values stay editable.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="tool-name" className="text-xs">
+                Name
+              </Label>
+              <Input
+                id="tool-name"
+                className="font-mono"
+                value={form.name}
+                disabled={!!saved}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="regional_revenue"
+              />
+              {!saved && form.name && !nameValid && (
+                <p className="text-xs text-destructive">
+                  snake_case: lowercase letters, digits and “_”, starting with a letter (max 64).
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="tool-context" className="text-xs">
+                Context
+              </Label>
+              {saved ? (
+                <div className="flex h-8 items-center gap-2 text-sm">
+                  {context?.name ?? saved.context_id}
+                  <span className="font-mono text-xs text-muted-foreground">
+                    v{context?.version}
+                  </span>
+                </div>
+              ) : (
+                <NativeSelect
+                  id="tool-context"
+                  className="w-full"
+                  value={form.contextId}
+                  onChange={(e) => set({ contextId: e.target.value })}
+                >
+                  {contexts.data?.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} (v{c.version})
+                    </option>
+                  ))}
+                </NativeSelect>
+              )}
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="tool-description" className="text-xs">
+              Description
+            </Label>
+            <Textarea
+              id="tool-description"
+              rows={2}
+              value={form.description}
+              onChange={(e) => set({ description: e.target.value })}
+              placeholder="What this tool returns, for humans and for future tool calling."
+            />
+          </div>
+
+          <div>
+            <SectionTitle
+              action={
+                !bound &&
+                missing.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() =>
+                      set({
+                        rows: [
+                          ...form.rows,
+                          ...missing.map((n) => ({
+                            name: n,
+                            type: "string" as ParamType,
+                            description: "",
+                            enum: [],
+                          })),
+                        ],
+                      })
+                    }
+                  >
+                    <Plus /> Add inputs for {missing.map((m) => `:${m}`).join(", ")}
+                  </Button>
+                )
               }
             >
-              <Trash2 /> Delete
+              Inputs (input_schema)
+            </SectionTitle>
+            <p className="mb-2 text-xs text-muted-foreground">
+              v0.1: every input is required; no defaults, optional inputs or arrays. Each input must
+              appear in the SQL as <code>:name</code>.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-44">Name</TableHead>
+                  <TableHead className="w-32">Type</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="w-40">Allowed values</TableHead>
+                  <TableHead className="w-24" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {form.rows.map((row, index) => (
+                  <TableRow key={index}>
+                    <TableCell>
+                      <Input
+                        className="h-7 font-mono"
+                        aria-label="Input name"
+                        disabled={bound}
+                        value={row.name}
+                        onChange={(e) => setRow(index, { name: e.target.value })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <NativeSelect
+                        className="h-7 w-full"
+                        aria-label="Input type"
+                        disabled={bound}
+                        value={row.type}
+                        onChange={(e) => setRow(index, { type: e.target.value as ParamType })}
+                      >
+                        {PARAM_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        className="h-7"
+                        aria-label="Input description"
+                        value={row.description}
+                        onChange={(e) => setRow(index, { description: e.target.value })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <ValueListInput
+                        label="Allowed value"
+                        type="string"
+                        disabled={row.type !== "string"}
+                        values={row.enum}
+                        onChange={(values) => setRow(index, { enum: values.map(String) })}
+                      />
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Move up"
+                        disabled={bound || index === 0}
+                        onClick={() => moveRow(index, -1)}
+                      >
+                        <ArrowUp />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Move down"
+                        disabled={bound || index === form.rows.length - 1}
+                        onClick={() => moveRow(index, 1)}
+                      >
+                        <ArrowDown />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Remove input"
+                        disabled={bound}
+                        onClick={() => set({ rows: form.rows.filter((_, i) => i !== index) })}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <Button
+              variant="ghost"
+              size="xs"
+              className="mt-1"
+              disabled={bound}
+              onClick={() =>
+                set({
+                  rows: [
+                    ...form.rows,
+                    {
+                      name: `input_${form.rows.length + 1}`,
+                      type: "string",
+                      description: "",
+                      enum: [],
+                    },
+                  ],
+                })
+              }
+            >
+              <Plus /> Add input
             </Button>
+          </div>
+
+          <div>
+            <SectionTitle>SQL statement</SectionTitle>
+            <LazySqlEditor
+              value={form.statement}
+              onChange={bound || busy ? undefined : (statement) => set({ statement })}
+              readOnly={bound || busy}
+              height={240}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Placeholders found: {used.length ? used.map((p) => `:${p}`).join(", ") : "none"}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {!form.statement.trim() ? (
+              <p className="text-xs text-muted-foreground">Write a statement to validate it.</p>
+            ) : !context ? (
+              <p className="text-xs text-muted-foreground">
+                Select an available context to validate.
+              </p>
+            ) : validation.error ? (
+              <ErrorAlert error={validation.error} title="Validation request failed" />
+            ) : validationCurrent && validation.data ? (
+              <ValidationPanel
+                result={validation.data}
+                label={validation.data.valid ? "Tool validated" : "Tool validation failed"}
+              />
+            ) : (
+              <Loading label="Validating…" />
+            )}
+            <p className="text-xs text-muted-foreground">
+              Tool validation uses the default policy: relative time functions such as{" "}
+              <code>NOW()</code> are allowed in tools. This is not a Generate-compatibility check.
+            </p>
+          </div>
+
+          <ErrorAlert error={saveError} title="Could not save tool" />
+          <ErrorAlert error={remove.error} title="Could not delete tool" />
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={save} disabled={!canSave || create.isPending || update.isPending}>
+              <Save />{" "}
+              {saved ? (dirty ? `Save as v${saved.version + 1}` : "No changes") : "Save tool"}
+            </Button>
+            {saved && dirty && (
+              <Button variant="ghost" onClick={() => reload(saved)}>
+                <RotateCcw /> Discard
+              </Button>
+            )}
+            {saved && (
+              <Button
+                variant="destructive"
+                disabled={remove.isPending}
+                onClick={() =>
+                  confirm(`Delete tool "${saved.name}"?`) &&
+                  remove.mutate(saved.name, { onSuccess: () => goAfterWrite("/tools") })
+                }
+              >
+                <Trash2 /> Delete
+              </Button>
+            )}
+          </div>
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground">input_schema JSON</summary>
+            <JsonBlock value={inputSchema} />
+          </details>
+        </fieldset>
+
+        <div className="min-w-0">
+          {saved ? (
+            <InvokePanel tool={saved} dirty={dirty} />
+          ) : (
+            <Card>
+              <CardContent className="pt-6 text-sm text-muted-foreground">
+                Save the tool to invoke it.
+              </CardContent>
+            </Card>
           )}
         </div>
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground">input_schema JSON</summary>
-          <JsonBlock value={inputSchema} />
-        </details>
       </div>
-
-      <div className="min-w-0">
-        {saved ? (
-          <InvokePanel tool={saved} dirty={dirty} />
-        ) : (
-          <Card>
-            <CardContent className="pt-6 text-sm text-muted-foreground">
-              Save the tool to invoke it.
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    </div>
+    </>
   );
 }

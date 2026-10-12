@@ -180,7 +180,14 @@ export function InvokePanel({ tool, dirty }: { tool: Tool; dirty: boolean }) {
               your application's database driver, binding parameters by name.
             </p>
             <ValidationPanel result={invoke.data.validation} label="Saved Tool checks" />
-            <OperationView operation={invoke.data.operation} order={inputs} />
+            {(invoke.data.tool_version !== tool.version ||
+              invoke.data.context_version !== tool.context_version) && (
+              <p role="status" className="text-sm text-amber-800">
+                This result is from an earlier Tool or Context version. Invoke again to use the
+                current saved version.
+              </p>
+            )}
+            <OperationView operation={invoke.data.operation} />
           </div>
         )}
       </CardContent>
