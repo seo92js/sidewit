@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
@@ -36,21 +36,23 @@ class DdlParseError(Exception):
     pass
 
 
-@dataclass
-class _ForeignKey:
-    table: str
-    column: str
-    ref_table: str
-    ref_column: str | None  # None: references the target's primary key
+class PendingForeignKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    table: str = Field(min_length=1, max_length=256)
+    column: str = Field(min_length=1, max_length=256)
+    ref_table: str = Field(min_length=1, max_length=256)
+    ref_column: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 @dataclass
 class _Parsed:
     dialect: Dialect
+    qualified_tables: dict[str, str] = field(default_factory=dict)
     # Enum type name (as stored) -> its labels, from CREATE TYPE ... AS ENUM.
     enums: dict[tuple[str, ...], list[str]] = field(default_factory=dict)
     resources: list[Resource] = field(default_factory=list)
-    foreign_keys: list[_ForeignKey] = field(default_factory=list)
+    foreign_keys: list[PendingForeignKey] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -58,19 +60,28 @@ class _Parsed:
 class ImportResult:
     definition: ContextDefinition
     warnings: list[str]
+    pending_foreign_keys: list[PendingForeignKey] = field(default_factory=list)
 
 
 def import_ddl(
-    existing: ContextDefinition, ddl: str, dialect: Dialect, mode: ImportMode
+    existing: ContextDefinition,
+    ddl: str,
+    dialect: Dialect,
+    mode: ImportMode,
+    pending_foreign_keys: list[PendingForeignKey] | None = None,
 ) -> ImportResult:
     try:
-        return _import_ddl(existing, ddl, dialect, mode)
+        return _import_ddl(existing, ddl, dialect, mode, pending_foreign_keys)
     except RecursionError:
         raise DdlParseError(COMPLEXITY_MESSAGE) from None
 
 
 def _import_ddl(
-    existing: ContextDefinition, ddl: str, dialect: Dialect, mode: ImportMode
+    existing: ContextDefinition,
+    ddl: str,
+    dialect: Dialect,
+    mode: ImportMode,
+    pending_foreign_keys: list[PendingForeignKey] | None = None,
 ) -> ImportResult:
     try:
         parsed = _parse(ddl, dialect)
@@ -97,10 +108,13 @@ def _import_ddl(
         rules=existing.rules,
         metrics=existing.metrics,
     )
-    for fk in parsed.foreign_keys:
+    pending: list[PendingForeignKey] = []
+    for fk in [*(pending_foreign_keys or []), *parsed.foreign_keys]:
         relation = _resolve_foreign_key(draft, fk, warnings)
         if relation is not None and not _has_relation(draft.relations, relation):
             draft.relations.append(relation)
+        if relation is None and fk not in pending:
+            pending.append(fk)
 
     # The preview must be savable: a list the Context would reject is dropped, with a reason.
     for resource in draft.resources:
@@ -113,7 +127,7 @@ def _import_ddl(
                 field_.allowed_values = []
     if draft.metrics:
         warnings.extend(f"Metric {issue.ref}: {issue.message}" for issue in metric_issues(draft))
-    return ImportResult(definition=draft, warnings=warnings)
+    return ImportResult(definition=draft, warnings=warnings, pending_foreign_keys=pending)
 
 
 _PSQL_META_COMMAND = re.compile(r"^\\[a-z].*$", re.MULTILINE)
@@ -228,7 +242,12 @@ def _parse_column(
         elif isinstance(ckind, exp.Reference):
             ref_table, ref_columns = _reference_target(ckind, parsed)
             parsed.foreign_keys.append(
-                _ForeignKey(table, name, ref_table, ref_columns[0] if ref_columns else None)
+                PendingForeignKey(
+                    table=table,
+                    column=name,
+                    ref_table=ref_table,
+                    ref_column=ref_columns[0] if ref_columns else None,
+                )
             )
         elif isinstance(ckind, exp.CheckColumnConstraint):
             found = _check_values(ckind.this, parsed)
@@ -268,7 +287,12 @@ def _collect_foreign_key(table: str, fk: exp.ForeignKey, parsed: _Parsed) -> Non
         )
         return
     parsed.foreign_keys.append(
-        _ForeignKey(table, columns[0], ref_table, ref_columns[0] if ref_columns else None)
+        PendingForeignKey(
+            table=table,
+            column=columns[0],
+            ref_table=ref_table,
+            ref_column=ref_columns[0] if ref_columns else None,
+        )
     )
 
 
@@ -281,7 +305,7 @@ def _reference_target(reference: exp.Reference, parsed: _Parsed) -> tuple[str, l
 
 
 def _resolve_foreign_key(
-    definition: ContextDefinition, fk: _ForeignKey, warnings: list[str]
+    definition: ContextDefinition, fk: PendingForeignKey, warnings: list[str]
 ) -> Relation | None:
     source = f"{fk.table}.{fk.column}"
     ref_column = fk.ref_column
@@ -355,6 +379,15 @@ def _has_relation(relations: list[Relation], relation: Relation) -> bool:
 def _table_name(table: exp.Expression, parsed: _Parsed) -> str:
     name = _name(table.this, parsed) if isinstance(table, exp.Table) else table.name
     if isinstance(table, exp.Table) and table.args.get("db") is not None:
+        qualified = f"{table.db}.{name}"
+        key = name.lower()
+        previous = parsed.qualified_tables.get(key)
+        if previous is not None and previous != qualified:
+            raise DdlParseError(
+                f"Tables '{previous}' and '{qualified}' collapse to the same Context name. "
+                "Import them into separate Contexts."
+            )
+        parsed.qualified_tables[key] = qualified
         message = f"Schema qualifier removed: '{table.db}.{name}' → '{name}'."
         if message not in parsed.warnings:
             parsed.warnings.append(message)

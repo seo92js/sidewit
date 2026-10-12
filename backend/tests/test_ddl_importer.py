@@ -186,3 +186,22 @@ def test_replace_discards_existing_schema_but_keeps_rules():
     assert [r.name for r in d.resources] == ["customers", "orders", "payments"]
     assert field(d, "orders.amount").description is None
     assert d.rules == EXISTING.rules
+
+
+def test_qualified_table_collision_is_not_silently_merged():
+    with pytest.raises(DdlParseError, match="collapse to the same Context name"):
+        run("CREATE TABLE sales.items (id int); CREATE TABLE archive.items (id int);")
+
+
+def test_pending_implicit_primary_key_resolves_on_later_import():
+    first = run("CREATE TABLE orders (user_id int REFERENCES users)")
+    assert len(first.pending_foreign_keys) == 1
+    second = import_ddl(
+        first.definition,
+        "CREATE TABLE users (id int PRIMARY KEY)",
+        "postgresql",
+        "merge",
+        first.pending_foreign_keys,
+    )
+    assert not second.pending_foreign_keys
+    assert relations(second.definition) == [("orders.user_id", "users.id")]

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from sidewit.api.errors import ApiError
 from sidewit.api.state import HistoryDep, StoreDep
-from sidewit.ddl.importer import DdlParseError, ImportMode, import_ddl
+from sidewit.ddl.importer import DdlParseError, ImportMode, PendingForeignKey, import_ddl
 from sidewit.domain.context import (
     ContextDefinition,
     check_context_size,
@@ -85,12 +85,24 @@ class ImportDdlRequest(BaseModel):
     ddl: str = Field(min_length=1, max_length=256000)
     mode: ImportMode = "merge"
     expected_version: int | None = Field(default=None, ge=1)
+    # UI previews merge against the current unsaved draft; callers omitting it use storage.
+    base_definition: ContextDefinition | None = None
+    pending_foreign_keys: list[PendingForeignKey] = Field(default_factory=list, max_length=1000)
+
+    @model_validator(mode="after")
+    def _bounded_base(self):
+        if self.base_definition is not None:
+            if self.expected_version is None:
+                raise ValueError("expected_version is required with base_definition")
+            check_context_size(self.base_definition)
+        return self
 
 
 class ImportDdlResult(BaseModel):
     context_version: int
     definition: ContextDefinition
     warnings: list[str]
+    pending_foreign_keys: list[PendingForeignKey]
 
 
 def _out(record: ContextRecord) -> ContextOut:
@@ -228,11 +240,17 @@ async def import_context_ddl(
             "Context changed before the DDL preview was created.",
             {"current_version": record.version, "expected_version": body.expected_version},
         )
-    existing = ContextDefinition.model_validate(record.definition)
+    existing = body.base_definition or ContextDefinition.model_validate(record.definition)
     try:
-        result = import_ddl(existing, body.ddl, record.dialect, body.mode)
-    except DdlParseError as e:
+        result = import_ddl(
+            existing, body.ddl, record.dialect, body.mode, body.pending_foreign_keys
+        )
+        check_context_size(result.definition)
+    except (DdlParseError, ValueError) as e:
         raise ApiError(422, "ddl_parse_error", "Could not parse DDL.", {"reason": str(e)}) from e
     return ImportDdlResult(
-        context_version=record.version, definition=result.definition, warnings=result.warnings
+        context_version=record.version,
+        definition=result.definition,
+        warnings=result.warnings,
+        pending_foreign_keys=result.pending_foreign_keys,
     )

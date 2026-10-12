@@ -137,3 +137,81 @@ async def test_ddl_and_generation_sql_never_leak_through_dependency_logs(client,
     assert any(r.name == "sqlglot" for r in caplog.records)
     for private in ("REVIEW_PRIVATE_VALUE", "private_table", "private_policy", "CREATE POLICY"):
         assert private not in caplog.text
+
+
+async def test_sequential_ddl_uses_unsaved_base_and_resolves_pending_relations(client):
+    context = await create(client)
+    path = f"/api/v1/contexts/{context['id']}"
+    base = ContextDefinition().model_dump(mode="json")
+    first = await client.post(
+        path + "/import-ddl",
+        json={
+            "ddl": "CREATE TABLE orders (id int PRIMARY KEY, user_id int REFERENCES users(id))",
+            "expected_version": 1,
+            "base_definition": base,
+        },
+    )
+    assert first.status_code == 200
+    first = first.json()
+    assert len(first["pending_foreign_keys"]) == 1
+    draft = first["definition"]
+    draft["resources"][0]["description"] = "User-written description, not saved"
+    second = await client.post(
+        path + "/import-ddl",
+        json={
+            "ddl": "CREATE TABLE users (id int PRIMARY KEY)",
+            "expected_version": 1,
+            "base_definition": draft,
+            "pending_foreign_keys": first["pending_foreign_keys"],
+        },
+    )
+    assert second.status_code == 200
+    second = second.json()
+    assert [r["name"] for r in second["definition"]["resources"]] == ["orders", "users"]
+    assert (
+        second["definition"]["resources"][0]["description"] == draft["resources"][0]["description"]
+    )
+    assert second["definition"]["relations"] == [{"from": "orders.user_id", "to": "users.id"}]
+    assert second["pending_foreign_keys"] == []
+    # Preview never writes; one final save persists the combined draft.
+    assert (await client.get(path)).json() == context
+    saved = await client.put(path, json=update_body(context, definition=second["definition"]))
+    assert saved.status_code == 200
+    repeated = await client.post(
+        path + "/import-ddl",
+        json={
+            "ddl": "CREATE TABLE users (id int PRIMARY KEY)",
+            "expected_version": 2,
+            "base_definition": second["definition"],
+        },
+    )
+    assert repeated.json()["definition"] == second["definition"]
+    stale = await client.post(
+        path + "/import-ddl",
+        json={
+            "ddl": "CREATE TABLE other (id int)",
+            "expected_version": 1,
+            "base_definition": second["definition"],
+        },
+    )
+    assert stale.status_code == 409
+
+
+async def test_draft_preview_requires_version_and_bounds_combined_schema(client):
+    context = await create(client)
+    path = f"/api/v1/contexts/{context['id']}/import-ddl"
+    base = ContextDefinition().model_dump(mode="json")
+    response = await client.post(
+        path, json={"ddl": "CREATE TABLE t (id int)", "base_definition": base}
+    )
+    assert response.status_code == 422
+    base["resources"] = [{"name": f"t{i}", "fields": []} for i in range(100)]
+    response = await client.post(
+        path,
+        json={
+            "ddl": "CREATE TABLE extra (id int)",
+            "base_definition": base,
+            "expected_version": 1,
+        },
+    )
+    assert response.status_code == 422
