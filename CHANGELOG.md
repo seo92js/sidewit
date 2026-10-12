@@ -17,6 +17,10 @@ Initial release candidate.
 
 ### Fixes
 
+- Merge DDL imports into the current unsaved editor contents; preserve sequential imports and descriptions.
+- Preview table/column/relation changes, separate schema replacement, and retain unresolved foreign keys for subsequent imports.
+- Keep DDL input across editor tabs and confirm navigation away from unsaved Context edits.
+
 - Reject browser JSON numbers that would lose precision, including API responses and metric edits.
 - Tie DDL previews to their source Context version and prevent stale preview application.
 - Remove SQL and private values from SQLGlot diagnostic logs.

@@ -293,7 +293,10 @@ created_at
   - 정확히 표현할 수 없는 숫자 CHECK 값(§6.2의 `exact_number` 규칙)은 422 `ddl_parse_error`다.
 - Context 이름 규칙에 맞지 않는 DDL 식별자는 422 `ddl_parse_error`이며 저장된 Context를 바꾸지 않는다.
 - `merge` 모드에서는 이름이 같은 resource와 field의 기존 `description`을 유지한다. `allowed_values`는 DDL이 ENUM/CHECK로 선언하면 DDL 값을, 아니면 기존 값을 쓴다. 새로 생긴 것은 추가하고, DDL에 없는 기존 항목은 유지하되 warning으로 알린다.
-- 응답은 `{ "context_version": 1, "definition": {...}, "warnings": ["..."] }`이다. 클라이언트가 확인한 뒤 `PUT`으로 저장한다.
+- 선택적 `base_definition`이 있으면 저장 전 초안을 기준으로 합친다. 이때 `expected_version`은 필수다. 생략하면 기존처럼 저장된 Context를 기준으로 한다. 입력과 합친 결과에 Context 크기 제한을 적용한다.
+- 선택적 `pending_foreign_keys`는 앞선 import에서 연결되지 않은 단일 컬럼 FK다. `{table, column, ref_table, ref_column}` 형태이며 `ref_column: null`이면 대상 테이블의 단일 PK를 찾는다. 다음 import에서 다시 연결하고, 여전히 연결할 수 없는 항목은 응답에 돌려준다. Context에 자동 저장하지 않는다.
+- 한 DDL에서 서로 다른 스키마의 테이블 이름이 스키마 제거 후 충돌하면 422다. 기존 Context는 원본 스키마 이름을 보관하지 않으므로 서로 다른 import 사이의 스키마 충돌은 자동 판별할 수 없다. 미리보기의 이름 변환을 확인해야 한다.
+- 응답은 `{ "context_version": 1, "definition": {...}, "warnings": ["..."], "pending_foreign_keys": [] }`이다. 클라이언트가 확인한 뒤 `PUT`으로 저장한다.
 
 ### 5.2 재검증 계약
 
@@ -725,7 +728,11 @@ React SPA이며 화면은 3개다. API만으로도 모든 기능을 쓸 수 있�
 
 **Context**
 - 목록과 생성
-- DDL 붙여넣기 → import 미리보기(merge/replace) → 적용
+- Schema 안의 Import DDL 패널: 붙여넣기 → Preview changes → 테이블 추가/변경 적용. 현재 초안을 기준으로 하므로 저장 없이 연속 import할 수 있다.
+- 추가·수정·삭제와 관계 변경을 미리 표시한다. 기본은 추가/병합이며 전체 교체는 Advanced의 별도 작업으로 미리보기 확인을 요구한다.
+- 미리보기 후 DDL·초안·보류 FK·서버 버전이 바뀌면 적용을 막는다. 같은 DDL 재적용은 변경 없음으로 표시한다.
+- 미해결 FK는 편집 세션에서 유지하며, 다음 import로 연결하거나 명시적으로 제외하기 전에는 저장하지 못한다.
+- DDL 입력은 탭/패널 전환 시 유지한다. Context와 DDL의 미저장 내용이 있으면 페이지 이탈을 확인하고, 저장 실패 시 편집 내용을 유지한다.
 - Resource/Field 편집(description, allowed_values는 enum 성격 field만)
 - Relations, Business Rules(선택적 constant: field·연산자·값), Metrics JSON 편집
 - **Allow model-written SQL**(`allow_generated_sql`)

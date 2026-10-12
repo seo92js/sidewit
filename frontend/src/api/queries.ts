@@ -11,7 +11,7 @@ import type {
   GenerationDetail,
   Health,
   ImportDdlResult,
-  ImportMode,
+  ImportDdlRequest,
   InvokeResult,
   ListResponse,
   Tool,
@@ -93,7 +93,7 @@ export function useDeleteContext() {
 
 export function useImportDdl(id: string) {
   return useMutation({
-    mutationFn: (body: { ddl: string; mode: ImportMode; expected_version: number }) =>
+    mutationFn: (body: ImportDdlRequest) =>
       request<ImportDdlResult>("POST", `/contexts/${id}/import-ddl`, body),
   });
 }
