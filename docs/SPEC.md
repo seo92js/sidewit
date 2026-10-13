@@ -833,6 +833,12 @@ The UI is a React SPA with three screens. Every function is available through th
 - Show versions when saving and a warning banner when revalidation finds invalid Tools.
 
 **Playground**
+- Keep Context and question visible by default. Metric/date settings and reference time live
+  under collapsed **Additional options**; its summary shows active overrides even when closed.
+- Keep validation badges, errors and warnings visible. Put check names and validation limits
+  under **Validation details and limits** rather than repeating the full explanation per step.
+- Show previous clarification answers as summaries with **Edit answer** controls. New questions
+  remain expanded; submission and length/count checks include all previous answers.
 - Show the submitted question, Context version, reference time, metric and date basis beside the result. Warn when inputs or Context change; label draft creation as using the previous result when appropriate.
 - Select Context, enter a question and generate. Contexts with metrics offer metric selection and, when model-written SQL is allowed, **Answer only with a registered metric** (`require_metric`).
 - `ok`: read-only Monaco SQL, a Parameters table, validation results/warnings, provenance badge (saved Tool / metric contract / model-written SQL), and an explanation that execution safety, access control, cost and business correctness are not guaranteed. Provide [Copy SQL], [Copy JSON] and [Copy API request]. New results offer [Create Tool draft]; reused Tools link to their name/version instead. No feedback buttons are shown.

@@ -6,6 +6,10 @@ Initial release candidate.
 
 ### Features
 
+- Simplify the Playground with collapsed advanced options and visible active settings.
+  Summarize previous clarification answers while keeping them editable. Collapse validation
+  explanations and check lists while leaving errors and warnings visible.
+
 - Reuse saved Tools and generate uncovered SQL/metric tasks in one independent plan. Reuse
   normal validation/repair, preserve original request values, and recheck versions after
   generation. No partial operations are returned on failure or clarification.

@@ -2,7 +2,8 @@
 
 Sidewit handles clarification through stateless API requests. Your application displays clarification
 questions, collects answers and resubmits the original request. The Playground implements the
-same flow. Neither step executes SQL.
+same flow, showing previous answers as summaries with an **Edit answer** control and keeping
+new questions expanded. Editing an earlier answer preserves its ID. Neither step executes SQL.
 
 ## 1. Submit a question
 

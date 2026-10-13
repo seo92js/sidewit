@@ -17,9 +17,7 @@ export function ToolPlanView({ result }: { result: GeneratePlan }) {
           generation {result.generation_id.slice(0, 8)} · context v{result.context_version}
         </p>
         <p className="text-sm text-muted-foreground">
-          Every operation passed validation. Review that the operations and arguments answer the
-          whole question. These operations are independent; Sidewit has not executed them or
-          combined their results. Your application controls execution and presentation.
+          Review each operation before use. Operations are independent and have not been executed.
         </p>
         <CopyButton label="Copy plan JSON" text={JSON.stringify(result, null, 2)} />
       </CardHeader>

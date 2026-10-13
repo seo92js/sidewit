@@ -140,8 +140,7 @@ export default function PlaygroundPage() {
         <div>
           <h1 className="text-lg font-semibold">Playground</h1>
           <p className="text-sm text-muted-foreground">
-            Ask in natural language. Sidewit selects one or more matching saved Tools, and creates
-            SQL drafts for any remaining parts. It never runs SQL; your application does.
+            Describe what you need. Review the returned operations; your application runs them.
           </p>
         </div>
 
@@ -156,6 +155,7 @@ export default function PlaygroundPage() {
               setContextId(e.target.value);
               setMetricId("");
               setDateField("");
+              setRequireMetric(false);
               generate.reset();
               setSubmittedContext(null);
               setContinuation(null);
@@ -171,69 +171,10 @@ export default function PlaygroundPage() {
           {selected && (
             <p className="text-xs text-muted-foreground">
               {selected.definition.resources.length} resources · {selected.definition.rules.length}{" "}
-              business rules · timezone {selected.timezone} · saved Tools first, then{" "}
-              {metrics.length === 0
-                ? "model-written SQL"
-                : selected.allow_generated_sql
-                  ? `${metrics.length} metrics first, then model-written SQL`
-                  : `${metrics.length} metrics only`}
+              business rules · {selected.timezone}
             </p>
           )}
         </div>
-
-        {metrics.length > 0 && (
-          <div className="space-y-2">
-            <Label htmlFor="metric">Metric contract</Label>
-            <NativeSelect
-              id="metric"
-              className="w-full"
-              value={metric?.id ?? ""}
-              onChange={(e) => {
-                setMetricId(e.target.value);
-                setDateField("");
-              }}
-            >
-              <option value="">Automatic (saved Tool, metric, or SQL if allowed)</option>
-              {metrics.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id} — {m.description}
-                </option>
-              ))}
-            </NativeSelect>
-            <p className="text-xs text-muted-foreground">
-              Choosing a metric pins this request to it; the server builds the SQL from the
-              contract. Review the model's inputs and period.
-            </p>
-            {canRequireMetric && !metric && (
-              <label className="flex items-center gap-2 text-xs">
-                <Checkbox
-                  id="require-metric"
-                  checked={requireMetric}
-                  onCheckedChange={(v) => setRequireMetric(v === true)}
-                />
-                Answer only with a registered metric (no model-written SQL)
-              </label>
-            )}
-            {!!metric?.time_fields?.length && (
-              <>
-                <Label htmlFor="date-field">Date basis (for period questions)</Label>
-                <NativeSelect
-                  id="date-field"
-                  className="w-full"
-                  value={dateField}
-                  onChange={(e) => setDateField(e.target.value)}
-                >
-                  <option value="">Explicit field in question or contract default</option>
-                  {metric.time_fields.map((ref) => (
-                    <option key={ref} value={ref}>
-                      {ref}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </>
-            )}
-          </div>
-        )}
 
         <div className="space-y-1.5">
           <Label htmlFor="question">Question</Label>
@@ -249,19 +190,95 @@ export default function PlaygroundPage() {
           />
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="reference-time">Reference time (optional)</Label>
-          <Input
-            id="reference-time"
-            placeholder="now · e.g. 2026-10-02T09:00:00+09:00"
-            value={referenceTime}
-            onChange={(e) => setReferenceTime(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Resolves relative periods (“last 30 days”) into absolute parameters. ISO 8601 with UTC
-            offset. Empty means the server's current time in the context timezone.
-          </p>
-        </div>
+        <details className="rounded-md border p-3">
+          <summary className="cursor-pointer text-sm break-words">
+            Additional options
+            {(metric || (canRequireMetric && requireMetric) || referenceTime.trim()) && (
+              <span className="ml-2 text-xs text-muted-foreground">
+                ·{" "}
+                {[
+                  metric
+                    ? `Metric: ${metric.id}`
+                    : canRequireMetric && requireMetric
+                      ? "Metrics only"
+                      : null,
+                  metric?.time_fields?.includes(dateField) ? `Date: ${dateField}` : null,
+                  referenceTime.trim() ? `Time: ${referenceTime.trim()}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
+          </summary>
+          <fieldset disabled={generate.isPending} className="mt-3 space-y-4">
+            {metrics.length > 0 && (
+              <div className="space-y-2">
+                <Label htmlFor="metric">Metric contract</Label>
+                <NativeSelect
+                  id="metric"
+                  className="w-full"
+                  value={metric?.id ?? ""}
+                  onChange={(e) => {
+                    setMetricId(e.target.value);
+                    setDateField("");
+                  }}
+                >
+                  <option value="">Automatic (saved Tool, metric, or SQL if allowed)</option>
+                  {metrics.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id} — {m.description}
+                    </option>
+                  ))}
+                </NativeSelect>
+                <p className="text-xs text-muted-foreground">
+                  Choosing a metric pins this request to it; the server builds the SQL from the
+                  contract. Review the model's inputs and period.
+                </p>
+                {canRequireMetric && !metric && (
+                  <label className="flex items-center gap-2 text-xs">
+                    <Checkbox
+                      id="require-metric"
+                      checked={requireMetric}
+                      onCheckedChange={(v) => setRequireMetric(v === true)}
+                    />
+                    Answer only with a registered metric (no model-written SQL)
+                  </label>
+                )}
+                {!!metric?.time_fields?.length && (
+                  <>
+                    <Label htmlFor="date-field">Date basis (for period questions)</Label>
+                    <NativeSelect
+                      id="date-field"
+                      className="w-full"
+                      value={dateField}
+                      onChange={(e) => setDateField(e.target.value)}
+                    >
+                      <option value="">Explicit field in question or contract default</option>
+                      {metric.time_fields.map((ref) => (
+                        <option key={ref} value={ref}>
+                          {ref}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </>
+                )}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor="reference-time">Reference time (optional)</Label>
+              <Input
+                id="reference-time"
+                placeholder="now · e.g. 2026-10-02T09:00:00+09:00"
+                value={referenceTime}
+                onChange={(e) => setReferenceTime(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Resolves relative periods (“last 30 days”) into absolute parameters. ISO 8601 with
+                UTC offset. Empty means the server's current time in the context timezone.
+              </p>
+            </div>
+          </fieldset>
+        </details>
 
         <Button onClick={submit} disabled={!contextId || !question.trim() || generate.isPending}>
           <Sparkles /> {generate.isPending ? "Generating…" : "Generate operation"}

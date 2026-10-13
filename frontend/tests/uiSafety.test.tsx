@@ -955,3 +955,31 @@ test("Default plan clarification preserves request and prevents continuation aft
   );
   qc.clear();
 });
+
+test("additional options default closed, show active values, and preserve the API request", async () => {
+  vi.mocked(request).mockResolvedValue(toolPlanResult);
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  const summary = screen.getByText("Additional options");
+  const details = summary.closest("details")!;
+  expect(details.open).toBe(false);
+  await user.click(summary);
+  fireEvent.change(screen.getByLabelText("Reference time (optional)"), {
+    target: { value: "2026-10-14T09:00:00+09:00" },
+  });
+  await user.click(summary);
+  expect(details.open).toBe(false);
+  expect(summary.textContent).toContain("2026-10-14T09:00:00+09:00");
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Count stores" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  await screen.findByText("Saved Tool plan · 2 operations");
+  expect(request).toHaveBeenCalledWith(
+    "POST",
+    "/generate",
+    expect.objectContaining({
+      reference_time: "2026-10-14T09:00:00+09:00",
+    }),
+  );
+  qc.clear();
+});

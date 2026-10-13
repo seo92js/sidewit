@@ -150,7 +150,6 @@ export function ValidationPanel({ result, label }: { result: ValidationResult; l
         ) : (
           <Badge variant="destructive">✗ {label}</Badge>
         )}
-        <span className="text-xs text-muted-foreground">checks: {result.checks.join(", ")}</span>
       </div>
       <IssueList issues={result.errors} />
       {result.warnings.length > 0 && (
@@ -159,11 +158,17 @@ export function ValidationPanel({ result, label }: { result: ValidationResult; l
           <IssueList issues={result.warnings} tone="warning" />
         </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        Structural validation only: syntax, statement policy, resources/fields and the parameter
-        contract. SELECT statements can still have side effects. These checks do not establish
-        execution safety, access permissions, query cost or business correctness.
-      </p>
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer">Validation details and limits</summary>
+        <div className="mt-2 space-y-2">
+          <p className="break-words">Checks: {result.checks.join(", ") || "None"}</p>
+          <p className="text-xs text-muted-foreground">
+            Structural validation only: syntax, statement policy, resources/fields and the parameter
+            contract. SELECT statements can still have side effects. These checks do not establish
+            execution safety, access permissions, query cost or business correctness.
+          </p>
+        </div>
+      </details>
     </div>
   );
 }
