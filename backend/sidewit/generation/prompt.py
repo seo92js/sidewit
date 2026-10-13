@@ -6,9 +6,10 @@ from sidewit.domain.context import ContextDefinition, ContextField, Rule
 from sidewit.domain.dialect import Dialect, identifier, to_sqlglot
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
+from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS
 from sidewit.generation.prompts import template
 
-PROMPT_VERSION = "generate_v8"
+PROMPT_VERSION = "generate_v9"
 # Bookkeeping timestamps rarely define a business period; they never make a period ambiguous.
 _AUDIT_FIELD = re.compile(r"(^|_)(updated|modified|deleted|synced|archived)(_at|_on)?$", re.I)
 
@@ -18,6 +19,7 @@ def render_system_prompt(
 ) -> str:
     local = reference_time.astimezone(ZoneInfo(timezone))
     return template(PROMPT_VERSION).substitute(
+        clarification_instructions=CLARIFICATION_INSTRUCTIONS,
         dialect=dialect,
         timezone=timezone,
         reference_time=local.isoformat(),
@@ -67,13 +69,13 @@ def render_context(definition: ContextDefinition) -> str:
     return "\n".join(lines)
 
 
-HYBRID_PROMPT_VERSION = "hybrid_v3"
+HYBRID_PROMPT_VERSION = "hybrid_v4"
 
 
 def render_hybrid_prompt(
     definition: ContextDefinition, dialect: Dialect, timezone: str, reference_time: datetime
 ) -> str:
-    """generate_v8 (the SQL route) followed by the registered metrics and routing rules."""
+    """generate_v9 (the SQL route) followed by the registered metrics and routing rules."""
     return render_system_prompt(definition, dialect, timezone, reference_time) + template(
         HYBRID_PROMPT_VERSION
     ).substitute(metrics=render_metrics(definition))

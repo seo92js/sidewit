@@ -17,7 +17,9 @@ def output(case):
     return LLMGenerationOutput(
         status=case.expect.status,
         reason=None if reference else "Fixture reason",
-        clarifications=["Which metric?"] if case.expect.status == "ambiguous" else [],
+        clarifications=[{"question": "Which metric?", "options": []}]
+        if case.expect.status == "ambiguous"
+        else [],
         statement=reference.statement if reference else None,
         parameters=[
             LLMParameter(

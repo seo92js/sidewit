@@ -430,7 +430,7 @@ def generation_output(status="ok"):
         return LLMGenerationOutput(
             status=status,
             reason="r",
-            clarifications=["q?"] if status == "ambiguous" else [],
+            clarifications=[{"question": "q?", "options": []}] if status == "ambiguous" else [],
             statement=None,
             parameters=[],
             tool_suggestion=None,

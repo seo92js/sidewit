@@ -69,23 +69,23 @@ def definition():
     return ContextDefinition.model_validate(copy.deepcopy(DEFINITION))
 
 
-def plan(metric_id="orders_count", parameters=(), period=None):
+def plan(metric_id="orders_count", parameters=(), period=None, *, date_field=None):
     return LLMMetricPlan(
         status="ok",
         reason=None,
         clarifications=[],
         metric_id=metric_id,
+        date_field=date_field,
         parameters=list(parameters),
         period=period,
         tool_suggestion=None,
     )
 
 
-def compile_(output=None, context=None, question="All order rows", **kwargs):
+def compile_(output=None, context=None, **kwargs):
     return compile_plan(
         output or plan(),
         context or definition(),
-        question,
         REFERENCE,
         "Asia/Seoul",
         dialect="postgresql",
@@ -113,6 +113,7 @@ def test_fixed_rule_and_dates_are_not_model_parameters():
         "regional_revenue",
         [LLMParameter(name="region", type="string", value="부산")],
         LLMPeriod(kind="rolling_days", days=30),
+        date_field="orders.paid_at",
     )
     result = compile_(output)
     operation = result.operation
@@ -152,47 +153,31 @@ def test_no_date_basis_asks_only_when_needed():
     result = compile_(output)
     assert result.operation is None and result.clarifications and not result.errors
     assert compile_().operation is not None
-    assert (
-        compile_(output, question="orders.ordered_at last month").binding.time_field
-        == "orders.ordered_at"
-    )
     assert compile_(output, date_field="orders.paid_at").binding.time_field == "orders.paid_at"
     assert compile_(output, date_field="orders.id").errors
-    assert compile_(output, question="paid_at and ordered_at last month").clarifications
 
 
-def test_explicit_field_precedes_default_and_override_precedes_field():
+def test_model_date_choice_is_validated_and_override_takes_precedence():
+    output = plan(
+        period=LLMPeriod(kind="previous_month", days=None), date_field="orders.ordered_at"
+    )
+    assert compile_(output).binding.time_field == "orders.ordered_at"
+    assert compile_(output, date_field="orders.paid_at").binding.time_field == "orders.paid_at"
+    assert compile_(output, date_field="ORDERS.PAID_AT").binding.time_field == "orders.paid_at"
+    for field in ["orders.id", "other_orders.ordered_at", "ordered_at", "unknown"]:
+        output.date_field = field
+        result = compile_(output)
+        assert result.errors and result.operation is None
+
+
+def test_unresolved_model_choice_does_not_fall_back_to_default():
     output = plan(
         "regional_revenue",
         [LLMParameter(name="region", type="string", value="서울")],
         LLMPeriod(kind="previous_month", days=None),
     )
-    assert (
-        compile_(output, question="ordered_at last month").binding.time_field == "orders.ordered_at"
-    )
-    assert (
-        compile_(
-            output, question="ordered_at last month", date_field="orders.paid_at"
-        ).binding.time_field
-        == "orders.paid_at"
-    )
-
-
-@pytest.mark.parametrize(
-    "question,expected",
-    [
-        ("orders.ordered_at을 기준으로 최근 14일 주문 건수", "orders.ordered_at"),
-        ("paid_at으로 계산한 최근 14일 주문 건수", "orders.paid_at"),
-        ("other_orders.ordered_at recent orders", None),
-        ("ordered_at_archive recent orders", None),
-    ],
-)
-def test_explicit_fields_allow_korean_particles_but_not_other_identifiers(question, expected):
-    result = compile_(plan(period=LLMPeriod(kind="rolling_days", days=14)), question=question)
-    if expected:
-        assert result.binding.time_field == expected
-    else:
-        assert result.clarifications and result.operation is None
+    result = compile_(output)
+    assert result.clarifications and result.operation is None
 
 
 def test_fixed_values_and_input_values_cannot_escape_sql():
@@ -325,6 +310,7 @@ def test_tampered_fixed_filter_and_date_are_rejected():
             "regional_revenue",
             [LLMParameter(name="region", type="string", value="서울")],
             LLMPeriod(kind="previous_month", days=None),
+            date_field="orders.paid_at",
         )
     )
     op, binding = result.operation, result.binding

@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
 from sidewit.api.errors import ApiError
 from sidewit.api.state import HistoryDep, StoreDep
@@ -13,6 +13,7 @@ from sidewit.config import get_settings
 from sidewit.domain.context import ContextDefinition, check_context_size
 from sidewit.domain.metric import MetricBinding, Period
 from sidewit.domain.operation import SqlOperation
+from sidewit.generation.clarification import ClarificationAnswer, ClarificationQuestion
 from sidewit.generation.history import GenerationRecord
 from sidewit.generation.planners import GenerationInput, InvalidGenerateRequest, MetricOptions
 from sidewit.generation.providers import build_provider
@@ -38,11 +39,32 @@ class GenerateRequest(BaseModel):
     context_id: uuid.UUID
     question: str = Field(min_length=1, max_length=8000)
     reference_time: AwareDatetime | None = None
+    expected_context_version: int | None = Field(default=None, ge=1)
+    clarification_answers: list[ClarificationAnswer] = Field(default_factory=list, max_length=24)
+
     metric_id: str | None = None
     date_field: str | None = None
     period: Period | None = None
     # Answer only with a registered metric (never model-written SQL) for this request.
     require_metric: bool = False
+
+    @model_validator(mode="after")
+    def _continuation(self):
+        if self.clarification_answers:
+            if self.reference_time is None or self.expected_context_version is None:
+                raise ValueError(
+                    "Clarification answers require reference_time and expected_context_version."
+                )
+            ids = [a.id for a in self.clarification_answers]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Clarification answer IDs must be unique.")
+            if (
+                len(self.question)
+                + sum(len(a.question) + len(a.answer) for a in self.clarification_answers)
+                > 16000
+            ):
+                raise ValueError("Question and clarification answers exceed 16000 characters.")
+        return self
 
     @field_validator("question")
     @classmethod
@@ -92,6 +114,8 @@ class GenerateAmbiguous(BaseModel):
     status: Literal["ambiguous"] = "ambiguous"
     reason: str
     clarifications: list[str]
+    clarification_questions: list[ClarificationQuestion]
+    reference_time: datetime
 
 
 class GenerateUnanswerable(BaseModel):
@@ -120,6 +144,16 @@ async def _generate_operation(
     context = store.context(body.context_id)
     if context is None:
         raise ApiError(404, "context_not_found", f"Context '{body.context_id}' does not exist.")
+    if (
+        body.expected_context_version is not None
+        and body.expected_context_version != context.version
+    ):
+        raise ApiError(
+            409,
+            "context_changed",
+            "Context changed. Start a new request.",
+            {"expected_version": body.expected_context_version, "current_version": context.version},
+        )
     definition = ContextDefinition.model_validate(context.definition)
     try:
         check_context_size(definition)
@@ -134,6 +168,8 @@ async def _generate_operation(
 
     request = GenerationInput(
         question=body.question,
+        clarification_answers=tuple(body.clarification_answers),
+        expected_context_version=body.expected_context_version,
         reference_time=body.reference_time or datetime.now(ZoneInfo(context.timezone)),
         options=MetricOptions(
             metric_id=body.metric_id,
@@ -177,7 +213,11 @@ async def _generate_operation(
             )
         case "ambiguous":
             return GenerateAmbiguous(
-                **common, reason=record.reason, clarifications=record.clarifications or []
+                **common,
+                reason=record.reason,
+                clarifications=record.clarifications or [],
+                clarification_questions=record.clarification_questions,
+                reference_time=record.reference_time,
             )
         case "unanswerable":
             return GenerateUnanswerable(**common, reason=record.reason)
@@ -223,6 +263,8 @@ class GenerationDetail(GenerationSummary):
     operation: SqlOperation | None
     reason: str | None
     clarifications: list[str] | None
+    clarification_questions: list[ClarificationQuestion]
+    clarification_answers: list[ClarificationAnswer]
     tool_suggestion: ToolSuggestion | None
     validation: ValidationResult | None
     input_tokens: int | None

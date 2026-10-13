@@ -83,7 +83,7 @@ async def test_bound_end_to_end_and_deterministic_invoke(client, metric_context)
         }
     )
     detail = (await client.get(f"/api/v1/generations/{generation['generation_id']}")).json()
-    assert detail["prompt_version"] == "metric_plan_v2"
+    assert detail["prompt_version"] == "metric_plan_v3"
     provider = install()  # any call would fail
     first = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
     second = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
@@ -163,7 +163,13 @@ async def test_date_ambiguity_is_server_owned_and_does_not_repair(client, metric
 
 
 async def test_forced_metric_and_period_override(client, metric_context):
-    install(plan("regional_revenue", [LLMParameter(name="region", type="string", value="서울")]))
+    install(
+        plan(
+            "regional_revenue",
+            [LLMParameter(name="region", type="string", value="서울")],
+            date_field="orders.paid_at",
+        )
+    )
     res = await ask(
         client, metric_context, metric_id="regional_revenue", period={"kind": "previous_month"}
     )
@@ -350,6 +356,7 @@ async def test_refresh_contract_keeps_input_descriptions(client, metric_context)
             "regional_revenue",
             [LLMParameter(name="region", type="string", value="서울")],
             LLMPeriod(kind="rolling_days", days=7),
+            date_field="orders.paid_at",
         )
     )
     generation = (await ask(client, metric_context)).json()

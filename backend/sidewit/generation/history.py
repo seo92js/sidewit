@@ -28,6 +28,8 @@ class GenerationRecord:
     operation: dict[str, Any] | None = None
     reason: str | None = None
     clarifications: list[str] | None = None
+    clarification_questions: list[dict[str, Any]] = field(default_factory=list)
+    clarification_answers: list[dict[str, str]] = field(default_factory=list)
     tool_suggestion: dict[str, Any] | None = None
     validation: dict[str, Any] | None = None
     tool_selection: dict[str, Any] | None = None

@@ -81,3 +81,28 @@ Using `gemini-3.5-flash-lite` with `tool_selection_v1` and one synthetic
 All four requests returned HTTP 200 with the expected route. This is a small synthetic smoke
 check, not a routing accuracy benchmark. OpenAI Tool selection has not been tested with a real
 provider. Selection correctness and argument meaning still require application review.
+
+### Stateless clarification smoke check (2026-10-13)
+
+A real `gemini-3.5-flash-lite` check used a temporary synthetic Store Context with region values
+`서울`/`부산`, two timestamp fields (`opened_at`, `closed_at`) and a saved region-count Tool.
+No application database was connected and no SQL was executed.
+
+- `그 지역 매장 개수` returned Korean clarification choices `서울` and `부산`.
+  Answering `서울` reused the saved Tool with that exact bound argument.
+- `지난달 매장 개수` asked which date to use. Answering `Store.opened_at 기준, 지역 조건 없이 전체 매장`
+  produced new SQL using `opened_at` and the range September 1 inclusive to October 1 exclusive
+  in Asia/Seoul, with an October 13 reference time.
+- Generation history was cleared between each question and answer. Both continuations still
+  succeeded using the original request, answers, reference time and expected Context version.
+
+This is a small smoke check, not a routing-accuracy benchmark. Regression tests additionally
+cover accumulated answers, metric date choices, request-literal validation, stale Contexts,
+input limits and Playground failure/retry behavior. Real OpenAI continuation calls were not run.
+
+The follow-up Metric date-choice review also used real `gemini-3.5-flash-lite` calls with a
+synthetic order-count metric, `paid_at` as its default, and descriptions for `paid_at` and
+`ordered_at`. In both metric-only and hybrid modes, `주문 생성일 기준` and
+`orders.paid_at은 사용하지 마세요` selected `orders.ordered_at` (four successful requests).
+The compiler now validates structured date intent instead of extracting names from answer text.
+These observations do not guarantee semantic accuracy for arbitrary phrasing or other models.

@@ -172,10 +172,24 @@ export interface ToolSuggestion {
   description: string;
 }
 
+export interface ClarificationQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+export interface ClarificationAnswer {
+  id: string;
+  question: string;
+  answer: string;
+}
+
 export interface GenerateRequest {
   context_id: string;
   question: string;
   reference_time?: string;
+  expected_context_version?: number;
+  clarification_answers?: ClarificationAnswer[];
   metric_id?: string;
   date_field?: string;
   /** Answer only with a registered metric for this request. */
@@ -200,6 +214,8 @@ export type GenerateResponse =
       context_version: number;
       reason: string;
       clarifications: string[];
+      clarification_questions?: ClarificationQuestion[];
+      reference_time?: string;
     }
   | {
       status: "unanswerable";
@@ -227,6 +243,8 @@ export interface GenerationDetail {
   operation: SqlOperation | null;
   reason: string | null;
   clarifications: string[] | null;
+  clarification_questions?: ClarificationQuestion[];
+  clarification_answers?: ClarificationAnswer[];
   tool_suggestion: ToolSuggestion | null;
   validation: ValidationResult | null;
   input_tokens: number | null;

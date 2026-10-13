@@ -66,7 +66,9 @@ def not_ok(status, reason, clarifications=(), statement=None):
     return LLMGenerationOutput(
         status=status,
         reason=reason,
-        clarifications=list(clarifications),
+        clarifications=[
+            {"question": q, "options": []} if isinstance(q, str) else q for q in clarifications
+        ],
         statement=statement,
         parameters=[],
         tool_suggestion=None,
@@ -153,7 +155,7 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
     assert record["status"] == "ok"
     assert record["attempts"] == 1
     assert record["provider"] == "fake"
-    assert record["prompt_version"] == "generate_v8"
+    assert record["prompt_version"] == "generate_v9"
     assert record["reference_time"] == "2026-10-02T00:00:00Z"
 
 
@@ -232,6 +234,8 @@ async def test_ambiguous_returns_clarifications_without_sql(client, context, fak
         "context_version": 1,
         "status": "ambiguous",
         "reason": "Several date fields could define the period.",
+        "reference_time": body["reference_time"],
+        "clarification_questions": body["clarification_questions"],
         "clarifications": ["Should the period be based on ordered_at or paid_at?"],
     }
     assert "SELECT" not in res.text
@@ -546,7 +550,9 @@ async def test_mixed_case_sql_gets_quoting_guidance_and_is_revalidated(
     def response(sql):
         output = ok(sql, params)
         if hybrid_mode:
-            return LLMHybridPlan(**output.model_dump(), route="sql", metric_id=None, period=None)
+            return LLMHybridPlan(
+                **output.model_dump(), route="sql", metric_id=None, period=None, date_field=None
+            )
         return output
 
     provider = fake(response(bad_sql), response(good_sql if repair_succeeds else bad_sql))

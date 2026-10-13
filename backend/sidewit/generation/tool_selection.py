@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from sidewit.domain.operation import SqlOperation
+from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS, LLMClarification
 from sidewit.generation.dto import LLMParameter
 from sidewit.generation.parameters import convert_parameter
 from sidewit.generation.planners import GenerationInput
@@ -14,7 +15,7 @@ from sidewit.tools.service import InvalidArguments, ToolInvalid, invoke
 from sidewit.validation.input_schema import parameter_types
 from sidewit.validation.sql_validator import ValidationResult
 
-PROMPT_VERSION = "tool_selection_v1"
+PROMPT_VERSION = "tool_selection_v2"
 MAX_CATALOG_CHARS = 100_000
 
 
@@ -25,7 +26,7 @@ class ToolSelection(BaseModel):
     tool_name: str | None
     parameters: list[LLMParameter]
     reason: str | None
-    clarifications: list[str]
+    clarifications: list[LLMClarification]
 
 
 class ToolSelectionError(Exception):
@@ -73,7 +74,7 @@ def selection_prompt(
         "parameters empty. Only ambiguous has nonempty clarifications. "
         f"\nReference time: {request.reference_time.isoformat()}\nTimezone: {context.timezone}"
         f"\nContext: {json.dumps(context.definition, ensure_ascii=False)}"
-        f"\nTool catalog: {catalog}"
+        f"\nTool catalog: {catalog}" + CLARIFICATION_INSTRUCTIONS
     )
 
 

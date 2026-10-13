@@ -44,7 +44,10 @@ def choice(route="tool", name="count_customers", parameters=None, **kwargs):
             [LLMParameter(name="region", type="string", value="서울")] if route == "tool" else []
         ),
         reason=kwargs.get("reason"),
-        clarifications=kwargs.get("clarifications", []),
+        clarifications=[
+            {"question": q, "options": []} if isinstance(q, str) else q
+            for q in kwargs.get("clarifications", [])
+        ],
     )
 
 
@@ -296,7 +299,7 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
     assert str(record.id) == generation_id
     assert (record.input_tokens, record.output_tokens) == (123, 45)
     assert record.latency_ms >= 0
-    assert record.prompt_version == "tool_selection_v1"
+    assert record.prompt_version == "tool_selection_v2"
     assert "REVIEW_PRIVATE_QUESTION" not in caplog.text
     assert "932847" not in caplog.text
     assert f"generation id={generation_id}" in caplog.text

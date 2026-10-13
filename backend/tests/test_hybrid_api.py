@@ -13,13 +13,14 @@ REVENUE_SQL = (
 )
 
 
-def hybrid(route, *, metric_id=None, period=None, statement=None, parameters=()):
+def hybrid(route, *, metric_id=None, period=None, date_field=None, statement=None, parameters=()):
     return LLMHybridPlan(
         status="ok",
         reason=None,
         clarifications=[],
         route=route,
         metric_id=metric_id,
+        date_field=date_field,
         period=period,
         statement=statement,
         parameters=list(parameters),
@@ -31,6 +32,7 @@ def metric_route():
     return hybrid(
         "metric",
         metric_id="regional_revenue",
+        date_field="orders.paid_at",
         period=LLMPeriod(kind="rolling_days", days=30),
         parameters=[LLMParameter(name="region", type="string", value="서울")],
     )
@@ -81,7 +83,7 @@ async def test_metric_route_is_contract_built(client, hybrid_context):
     assert body["operation"]["parameters"]["region"] == "서울"
     assert "metric_contract" in body["validation"]["checks"]
     record = await detail(client, body["generation_id"])
-    assert (record["prompt_version"], record["source"]) == ("hybrid_v3", "metric")
+    assert (record["prompt_version"], record["source"]) == ("hybrid_v4", "metric")
 
     system = provider.calls[0][0]
     assert "# SQL rules for `ok`" in system, "the SQL route rules are included"
@@ -145,9 +147,10 @@ async def test_non_ok_answers_have_no_route_or_source(client, hybrid_context, st
         LLMHybridPlan(
             status=status,
             reason="r",
-            clarifications=["q?"] if status == "ambiguous" else [],
+            clarifications=[{"question": "q?", "options": []}] if status == "ambiguous" else [],
             route="sql",
             metric_id=None,
+            date_field=None,
             period=None,
             statement="SELECT 1",
             parameters=[],
@@ -166,7 +169,7 @@ async def test_require_metric_uses_the_metric_planner(client, hybrid_context):
     assert res.status_code == 200, res.text
     assert res.json()["source"] == "metric"
     record = await detail(client, res.json()["generation_id"])
-    assert record["prompt_version"] == "metric_plan_v2"
+    assert record["prompt_version"] == "metric_plan_v3"
 
 
 async def test_metrics_only_context_never_routes_to_sql(client, hybrid_context):
@@ -176,7 +179,7 @@ async def test_metrics_only_context_never_routes_to_sql(client, hybrid_context):
     install(plan("orders_count"))
     res = await ask(client, hybrid_context)
     assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == (
-        "metric_plan_v2"
+        "metric_plan_v3"
     )
 
 
@@ -189,7 +192,7 @@ async def test_context_without_metrics_uses_the_sql_planner(client):
     install(ok("SELECT 1", []))
     res = await ask(client, context)
     assert res.json()["source"] == "generated_sql"
-    assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == "generate_v8"
+    assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == "generate_v9"
 
 
 async def test_tool_drafts_keep_the_route(client, hybrid_context):

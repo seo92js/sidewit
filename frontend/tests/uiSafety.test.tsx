@@ -589,3 +589,167 @@ test("Playground identifies a reused Tool and links to it instead of creating an
   expect(screen.getByRole("button", { name: "Copy API request" })).toBeTruthy();
   qc.clear();
 });
+
+const clarification = {
+  status: "ambiguous",
+  generation_id: "g1",
+  context_version: 1,
+  reference_time: "2026-10-13T01:00:00Z",
+  reason: "Choose a date basis.",
+  clarifications: ["Which date?"],
+  clarification_questions: [
+    { id: "g1:0", question: "Which date?", options: ["Created", "Updated"] },
+  ],
+};
+function playground(qc: QueryClient) {
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <PlaygroundPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+test("Clarification preserves the original request and accumulates answers across rounds", async () => {
+  const second = {
+    ...clarification,
+    generation_id: "g2",
+    clarifications: ["Which region?"],
+    clarification_questions: [{ id: "g2:0", question: "Which region?", options: [] }],
+  };
+  vi.mocked(request)
+    .mockResolvedValueOnce(clarification)
+    .mockResolvedValueOnce(second)
+    .mockResolvedValueOnce({
+      status: "unanswerable",
+      generation_id: "g3",
+      context_version: 1,
+      reason: "No matching data.",
+    });
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "This month reviews" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  await screen.findByText("Which date?");
+  expect(screen.getByRole("button", { name: "Continue with answers" }).matches(":disabled")).toBe(
+    true,
+  );
+  await user.click(screen.getByRole("button", { name: "Created" }));
+  await user.click(screen.getByRole("button", { name: "Continue with answers" }));
+  await screen.findByText("Which region?");
+  expect(request).toHaveBeenNthCalledWith(2, "POST", "/generate", {
+    context_id: "c",
+    question: "This month reviews",
+    reference_time: clarification.reference_time,
+    expected_context_version: 1,
+    clarification_answers: [{ id: "g1:0", question: "Which date?", answer: "Created" }],
+  });
+  expect(screen.queryByText(/Inputs or Context changed since/)).toBeNull();
+  await user.type(screen.getByLabelText("Which region?"), "Seoul");
+  await user.click(screen.getByRole("button", { name: "Continue with answers" }));
+  await screen.findByText("No matching data.");
+  expect(request).toHaveBeenLastCalledWith("POST", "/generate", {
+    context_id: "c",
+    question: "This month reviews",
+    reference_time: clarification.reference_time,
+    expected_context_version: 1,
+    clarification_answers: [
+      { id: "g1:0", question: "Which date?", answer: "Created" },
+      { id: "g2:0", question: "Which region?", answer: "Seoul" },
+    ],
+  });
+  expect(screen.queryByRole("button", { name: "Continue with answers" })).toBeNull();
+  qc.clear();
+});
+
+test("Clarification keeps answers on failure and blocks stale inputs", async () => {
+  vi.mocked(request)
+    .mockResolvedValueOnce(clarification)
+    .mockRejectedValueOnce(new Error("Offline"));
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "This month reviews" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  await user.click(await screen.findByRole("button", { name: "Created" }));
+  await user.click(screen.getByRole("button", { name: "Continue with answers" }));
+  await screen.findByText("Offline");
+  expect(screen.getByRole("textbox", { name: "Which date?" })).toHaveProperty("value", "Created");
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Another request" } });
+  expect(screen.getByRole("button", { name: "Continue with answers" }).matches(":disabled")).toBe(
+    true,
+  );
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "This month reviews" } });
+  expect(screen.getByRole("button", { name: "Continue with answers" }).matches(":disabled")).toBe(
+    false,
+  );
+  await act(async () => {
+    qc.setQueryData(["contexts"], [{ ...context, version: 2 }]);
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Continue with answers" }).matches(":disabled")).toBe(
+      true,
+    ),
+  );
+  qc.clear();
+});
+
+test("Starting a new request drops prior clarification answers", async () => {
+  vi.mocked(request).mockResolvedValue(clarification);
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "First request" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  await user.click(await screen.findByRole("button", { name: "Created" }));
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "New request" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  await screen.findByRole("textbox", { name: "Which date?" });
+  expect(request).toHaveBeenLastCalledWith("POST", "/generate", {
+    context_id: "c",
+    question: "New request",
+  });
+  expect(screen.getByRole("textbox", { name: "Which date?" })).toHaveProperty("value", "");
+  qc.clear();
+});
+
+test("Clarification retry uses the response Context version after the cache catches up", async () => {
+  vi.mocked(request)
+    .mockResolvedValueOnce({ ...clarification, context_version: 2 })
+    .mockRejectedValueOnce(new Error("Offline"));
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "This month reviews" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  await screen.findByRole("button", { name: "Created" });
+  await act(async () => {
+    qc.setQueryData(["contexts"], [{ ...context, version: 2 }]);
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Created" }).matches(":disabled")).toBe(false),
+  );
+  await user.click(screen.getByRole("button", { name: "Created" }));
+  await user.click(screen.getByRole("button", { name: "Continue with answers" }));
+  await screen.findByText("Offline");
+  expect(screen.getByRole("textbox", { name: "Which date?" })).toHaveProperty("value", "Created");
+  expect(screen.getByRole("button", { name: "Continue with answers" }).matches(":disabled")).toBe(
+    false,
+  );
+  vi.mocked(request).mockResolvedValueOnce({
+    status: "unanswerable",
+    generation_id: "g2",
+    context_version: 2,
+    reason: "No matching data",
+  });
+  await user.click(screen.getByRole("button", { name: "Continue with answers" }));
+  await screen.findByText("No matching data");
+  expect(request).toHaveBeenLastCalledWith(
+    "POST",
+    "/generate",
+    expect.objectContaining({ expected_context_version: 2 }),
+  );
+  qc.clear();
+});

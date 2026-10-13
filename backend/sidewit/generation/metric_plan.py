@@ -8,10 +8,11 @@ from pydantic import BaseModel, ConfigDict, StrictInt
 
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.metric import MetricDefinition, Period, field_for
+from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS, LLMClarification
 from sidewit.generation.dto import LLMParameter, LLMToolSuggestion
 from sidewit.generation.prompts import template
 
-METRIC_PROMPT_VERSION = "metric_plan_v2"
+METRIC_PROMPT_VERSION = "metric_plan_v3"
 
 
 class LLMPeriod(BaseModel):
@@ -28,9 +29,10 @@ class LLMHybridPlan(BaseModel):
 
     status: Literal["ok", "ambiguous", "unanswerable"]
     reason: str | None
-    clarifications: list[str]
+    clarifications: list[LLMClarification]
     route: Literal["metric", "sql"] | None
     metric_id: str | None
+    date_field: str | None
     period: LLMPeriod | None
     statement: str | None
     parameters: list[LLMParameter]
@@ -42,8 +44,9 @@ class LLMMetricPlan(BaseModel):
 
     status: Literal["ok", "ambiguous", "unanswerable"]
     reason: str | None
-    clarifications: list[str]
+    clarifications: list[LLMClarification]
     metric_id: str | None
+    date_field: str | None
     parameters: list[LLMParameter]
     period: LLMPeriod | None
     tool_suggestion: LLMToolSuggestion | None
@@ -55,6 +58,7 @@ def metric_prompt(
     reference_time: datetime,
     metric_id: str | None,
     period: Period | None,
+    date_field: str | None = None,
 ) -> str:
     context = {
         "metrics": [_metric_json(definition, m) for m in definition.metrics],
@@ -63,10 +67,12 @@ def metric_prompt(
         "timezone": timezone,
         "reference_time": reference_time.isoformat(),
         "required_metric_id": metric_id,
+        "required_date_field": date_field,
         "period_override": period.model_dump() if period else None,
     }
     return template(METRIC_PROMPT_VERSION).substitute(
-        context_json=json.dumps(context, ensure_ascii=False)
+        context_json=json.dumps(context, ensure_ascii=False),
+        clarification_instructions=CLARIFICATION_INSTRUCTIONS,
     )
 
 
@@ -77,4 +83,9 @@ def _metric_json(definition: ContextDefinition, metric: MetricDefinition) -> dic
         field = field_for(definition, param.field)
         if field is not None and field.allowed_values:
             item["allowed_values"] = field.allowed_values
+    data["time_field_descriptions"] = {
+        ref: field.description
+        for ref in metric.time_fields
+        if (field := field_for(definition, ref)) is not None and field.description
+    }
     return data

@@ -4,7 +4,12 @@ import { Link, useNavigate } from "react-router";
 
 import { ApiError, getApiKey } from "@/api/client";
 import { useContexts, useGenerate, useGeneration } from "@/api/queries";
-import type { GenerateRequest, GenerateResponse, OperationSource } from "@/api/types";
+import type {
+  ClarificationAnswer,
+  GenerateRequest,
+  GenerateResponse,
+  OperationSource,
+} from "@/api/types";
 import {
   CopyButton,
   Empty,
@@ -25,6 +30,8 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { generateRequestCurl } from "@/lib/apiRequest";
 
+import { ClarificationForm } from "./ClarificationForm";
+
 const CONTEXT_STORAGE = "sidewit.playground.context";
 
 export default function PlaygroundPage() {
@@ -41,6 +48,12 @@ export default function PlaygroundPage() {
   const [submittedContext, setSubmittedContext] = useState<{
     name: string;
     version: number;
+  } | null>(null);
+
+  const [baseRequest, setBaseRequest] = useState<GenerateRequest | null>(null);
+  const [continuation, setContinuation] = useState<{
+    result: Extract<GenerateResponse, { status: "ambiguous" }>;
+    request: GenerateRequest;
   } | null>(null);
 
   // Fall back to the first context when the stored one no longer exists.
@@ -64,15 +77,52 @@ export default function PlaygroundPage() {
     ...(metric?.time_fields?.includes(dateField) ? { date_field: dateField } : {}),
     ...(canRequireMetric && requireMetric ? { require_metric: true } : {}),
   };
-  const resultVersion = generate.data?.context_version ?? submittedContext?.version;
+  const resultVersion =
+    generate.data?.context_version ??
+    continuation?.result.context_version ??
+    submittedContext?.version;
   const inputsChanged =
     !!generate.variables &&
-    (JSON.stringify(generate.variables) !== JSON.stringify(requestPayload) ||
+    (JSON.stringify(baseRequest) !== JSON.stringify(requestPayload) ||
       resultVersion !== selected?.version);
+  const clarificationBlock = inputsChanged
+    ? "Inputs or Context changed. Generate a new request to use your current inputs."
+    : generate.error instanceof ApiError && generate.error.error === "context_changed"
+      ? "The Context changed on the server. Generate a new request to continue."
+      : continuation &&
+          (continuation.request.clarification_answers?.length ?? 0) +
+            (continuation.result.clarification_questions?.length ?? 0) >
+            24
+        ? "This request reached the clarification limit. Start a new request with the details you have provided."
+        : null;
+  const send = (payload: GenerateRequest) => {
+    generate.mutate(payload, {
+      onSuccess: (result) => {
+        setContinuation(
+          result.status === "ambiguous" &&
+            result.clarification_questions?.length &&
+            result.reference_time
+            ? { result, request: payload }
+            : null,
+        );
+      },
+    });
+  };
+  const continueWith = (answers: ClarificationAnswer[]) => {
+    if (!continuation || inputsChanged || generate.isPending) return;
+    send({
+      ...continuation.request,
+      reference_time: continuation.result.reference_time,
+      expected_context_version: continuation.result.context_version,
+      clarification_answers: [...(continuation.request.clarification_answers ?? []), ...answers],
+    });
+  };
   const submit = () => {
     if (!selected || !question.trim() || generate.isPending) return;
     setSubmittedContext({ name: selected.name, version: selected.version });
-    generate.mutate(requestPayload);
+    setBaseRequest(requestPayload);
+    setContinuation(null);
+    send(requestPayload);
   };
 
   if (contexts.isLoading) return <Loading />;
@@ -104,6 +154,7 @@ export default function PlaygroundPage() {
           <Label htmlFor="context">Context</Label>
           <NativeSelect
             id="context"
+            disabled={generate.isPending}
             className="w-full"
             value={contextId}
             onChange={(e) => {
@@ -112,6 +163,8 @@ export default function PlaygroundPage() {
               setDateField("");
               generate.reset();
               setSubmittedContext(null);
+              setContinuation(null);
+              setBaseRequest(null);
             }}
           >
             {contexts.data.map((c) => (
@@ -238,19 +291,36 @@ export default function PlaygroundPage() {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Copies a curl command for this submitted request. Re-running uses the latest Context
-              and may produce a different result.
+              Copies a curl command for this submitted request. Re-running may produce a different
+              result.
+              {generate.variables.expected_context_version
+                ? " This request requires the same Context version."
+                : " Re-running uses the latest Context."}
               {getApiKey() &&
                 " Set SIDEWIT_API_KEY in your shell before running; your saved key is not copied."}
             </p>
             <p className="whitespace-pre-wrap break-words">{generate.variables.question}</p>
+            {!!generate.variables.clarification_answers?.length && (
+              <dl className="space-y-2" aria-label="Submitted clarification answers">
+                {generate.variables.clarification_answers.map((a) => (
+                  <div key={a.id}>
+                    <dt className="text-xs text-muted-foreground">{a.question}</dt>
+                    <dd className="whitespace-pre-wrap break-words">{a.answer}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
             <p className="text-xs text-muted-foreground">
               Context: {submittedContext.name} · v{resultVersion}
             </p>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
               <dt>Reference time</dt>
               <dd className="break-words">
-                {generate.variables.reference_time ?? "Server time when this request was made"}
+                {generate.variables.reference_time ??
+                  (generate.data?.status === "ambiguous"
+                    ? generate.data.reference_time
+                    : undefined) ??
+                  "Server time when this request was made"}
               </dd>
               <dt>Metric</dt>
               <dd>
@@ -272,7 +342,16 @@ export default function PlaygroundPage() {
         )}
         {generate.isPending && <Loading label="Generating and validating…" />}
         {!generate.isPending && generate.error && <GenerateError error={generate.error} />}
-        {!generate.isPending && generate.data && (
+        {continuation && (
+          <ClarificationForm
+            key={continuation.result.generation_id}
+            result={continuation.result}
+            pending={generate.isPending}
+            blockedReason={clarificationBlock}
+            onContinue={continueWith}
+          />
+        )}
+        {!generate.isPending && generate.data && !continuation && (
           <GenerateResult result={generate.data} inputsChanged={inputsChanged} />
         )}
         {!generate.isPending && !generate.data && !generate.error && (
