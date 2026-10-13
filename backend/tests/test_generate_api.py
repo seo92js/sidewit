@@ -155,7 +155,7 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
     assert record["status"] == "ok"
     assert record["attempts"] == 1
     assert record["provider"] == "fake"
-    assert record["prompt_version"] == "generate_v9"
+    assert record["prompt_version"] == "generate_v10"
     assert record["reference_time"] == "2026-10-02T00:00:00Z"
 
 

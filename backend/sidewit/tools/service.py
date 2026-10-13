@@ -139,6 +139,15 @@ def revalidate_context_tools(store: Store, context: ContextRecord) -> Revalidati
     return summary
 
 
+def effective_status(tool: ToolRecord, context: ContextRecord) -> str:
+    """A stored verdict belongs to the Context version it was checked against."""
+    return (
+        "stale"
+        if tool.status == "valid" and tool.context_version != context.version
+        else tool.status
+    )
+
+
 def is_current(tool: ToolRecord, context: ContextRecord) -> bool:
     return tool.status == "valid" and tool.context_version == context.version
 

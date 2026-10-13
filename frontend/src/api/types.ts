@@ -50,6 +50,7 @@ export interface ContextDefinition {
   relations: Relation[];
   rules: Rule[];
   metrics?: MetricDefinition[];
+  sql_extensions?: "postgis"[];
 }
 
 export type Comparison = "=" | "!=" | ">" | ">=" | "<" | "<=";

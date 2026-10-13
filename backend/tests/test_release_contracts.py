@@ -71,12 +71,18 @@ async def test_stale_tool_that_no_longer_validates_is_blocked_on_invoke(client, 
     assert [e["code"] for e in stored["validation"]["errors"]] == ["unknown_field"]
 
 
-async def test_static_validation_does_not_judge_functions_or_types(client):
-    """SELECT is a statement kind, not a safety guarantee; function signatures and types are
-    the executing database's to check. Both Tools validate."""
+async def test_static_validation_limits_functions_but_does_not_judge_types(client):
+    """Function policy is enforced; custom field types still belong to the database."""
     context = await create_context(client, DEFINITION)
-    tool = await create_tool(client, context, "SELECT pg_advisory_lock(1)", input_schema_for({}))
-    assert tool["validation"]["valid"]
+    check = await client.post(
+        "/api/v1/validate",
+        json={
+            "context_id": context["id"],
+            "operation": {"statement": "SELECT pg_advisory_lock(1)"},
+        },
+    )
+    assert not check.json()["valid"]
+    assert check.json()["errors"][0]["code"] == "function_not_allowed"
     definition = {
         "resources": [{"name": "items", "fields": [{"name": "value", "type": "private_domain"}]}]
     }

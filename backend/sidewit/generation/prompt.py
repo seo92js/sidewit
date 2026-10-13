@@ -8,8 +8,9 @@ from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
 from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS
 from sidewit.generation.prompts import template
+from sidewit.validation.functions import POSTGIS
 
-PROMPT_VERSION = "generate_v9"
+PROMPT_VERSION = "generate_v10"
 # Bookkeeping timestamps rarely define a business period; they never make a period ambiguous.
 _AUDIT_FIELD = re.compile(r"(^|_)(updated|modified|deleted|synced|archived)(_at|_on)?$", re.I)
 
@@ -29,7 +30,20 @@ def render_system_prompt(
 
 
 def render_context(definition: ContextDefinition) -> str:
-    lines = ["## Resources"]
+    lines = [
+        "## SQL function policy",
+        "Use supported PostgreSQL query functions. Common examples: count, sum, avg, min, "
+        "max, coalesce, lower, upper, length, substring, date_trunc, extract, row_number. "
+        "Unknown/custom functions, dynamic SQL, administrative functions and file/sequence "
+        "operations are forbidden.",
+        "Supported spatial functions: "
+        + (", ".join(sorted(POSTGIS)) if "postgis" in definition.sql_extensions else "none")
+        + ".",
+        "Schema-qualified functions and escape/Unicode string literals are forbidden. "
+        "Use bound parameters for user values.",
+        "",
+        "## Resources",
+    ]
     if not definition.resources:
         lines.append("(none)")
     for resource in definition.resources:
@@ -69,13 +83,13 @@ def render_context(definition: ContextDefinition) -> str:
     return "\n".join(lines)
 
 
-HYBRID_PROMPT_VERSION = "hybrid_v4"
+HYBRID_PROMPT_VERSION = "hybrid_v5"
 
 
 def render_hybrid_prompt(
     definition: ContextDefinition, dialect: Dialect, timezone: str, reference_time: datetime
 ) -> str:
-    """generate_v9 (the SQL route) followed by the registered metrics and routing rules."""
+    """generate_v10 (the SQL route) followed by the registered metrics and routing rules."""
     return render_system_prompt(definition, dialect, timezone, reference_time) + template(
         HYBRID_PROMPT_VERSION
     ).substitute(metrics=render_metrics(definition))

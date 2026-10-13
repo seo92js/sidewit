@@ -48,6 +48,7 @@ CONTEXT = ContextDefinition.model_validate(
 ALL_CHECKS = [
     "syntax",
     "statement_policy",
+    "functions",
     "resources",
     "fields",
     "relations",
