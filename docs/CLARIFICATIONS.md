@@ -1,6 +1,6 @@
 # Continuing an ambiguous request
 
-Sidewit is an API worker, not a chat-session store. Your application displays clarification
+Sidewit handles clarification through stateless API requests. Your application displays clarification
 questions, collects answers and resubmits the original request. The Playground implements the
 same flow. Neither step executes SQL.
 

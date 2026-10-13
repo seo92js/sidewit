@@ -1,7 +1,6 @@
 # Sidewit v0.1 SPEC
 
-> Sidewit is an AI Worker, not a database proxy.
-> Sidewit turns context and natural-language intent into reviewable SQL operations.
+> An AI agent that transforms natural-language queries into executable operations for your applications
 > Your application stays in control of execution.
 
 This document defines the implementation contract for Sidewit v0.1. If the implementation needs to diverge from it, update this document before implementing the change.
