@@ -13,7 +13,7 @@ Sidewit is not a database proxy: it never connects to a database or executes SQL
 | Feature | What it does |
 |---|---|
 | Context | Manage schemas, relations, descriptions and business rules; import DDL |
-| Generate | Produce SQL drafts, or return `ambiguous` / `unanswerable` when appropriate |
+| Generate | Select a matching saved Tool first; otherwise produce SQL drafts, or return `ambiguous` / `unanswerable` |
 | Static validation | Check statement type, Context tables and columns, parameter contracts, and supported value policies |
 | Tools | Save and edit reviewed SQL and input contracts; revalidate after Context changes; invoke deterministically |
 | SQL metric contracts | Compile registered aggregates, joins, fixed filters and periods into SQL |
@@ -65,7 +65,7 @@ curl -fsS http://127.0.0.1:8000/api/v1/health
    ```
 
 3. In Playground, select `ecommerce`. Use the bundled question **최근 30일 서울 지역 매출 알려줘** (“Show revenue for the Seoul region over the last 30 days”), set reference time to `2026-10-02T09:00:00+09:00`, and click **Generate operation**.
-4. If the status is `ok`, review the SQL, parameters and validation result. Choose **Create Tool draft**, review the inputs and SQL, then **Save tool**.
+4. If the status is `ok`, review the SQL, parameters and validation result. A **saved Tool** result links to the reused Tool. For a new draft, choose **Create Tool draft**, review the inputs and SQL, then **Save tool**.
 5. Enter arguments under **Invoke Tool**. The result is **SQL and binding values**, not database query results.
 
 Without a provider key, you can still manage Contexts, import DDL, and manually save and invoke Tools. Generate returns `503 llm_not_configured` when no provider is configured. The [ecommerce walkthrough](examples/ecommerce/README.md) also covers manual Context setup in the UI.
@@ -153,9 +153,29 @@ Example input to the saved Tool's invoke endpoint:
 
 Invoke does not call an LLM or execute SQL. Your application must adapt `:name` placeholders to its driver and bind values. **Never interpolate values into SQL strings.** See the [API contract](docs/SPEC.md#5-api) for complete request, response and version-conflict details.
 
+### Saved Tool selection
+
+`POST /generate` first asks the model to select one saved Tool from the same Context and extract
+its arguments. The catalog includes the Tool's SQL and input schema, so selection is based on
+its whole operation rather than just its name. A match invokes the existing deterministic Tool
+service; it never executes SQL. The response uses `source: "tool"` and
+`selected_tool: {"name": "...", "version": 1}`. Review the selected Tool and arguments: static
+validation cannot prove that they answer the question.
+
+If no Tool matches, the existing metric/SQL generation path runs. Missing inputs or ambiguous
+intent return clarification questions. Invalid selections, incompatible Tools and concurrent
+Tool/Context changes fail explicitly; they do not silently fall back to new SQL. Requests with
+explicit metric options (`metric_id`, `date_field`, `period`, or `require_metric: true`) skip Tool
+selection and use the metric path. With no saved Tools, there is no extra model call.
+
+Natural-language selection requires an LLM call; direct `/tools/{name}/invoke` still does not.
+Selection and generation share the 90-second request deadline. Catalogs over 100,000 serialized
+characters are rejected with `tool_catalog_too_large` rather than silently truncated. Only one
+Tool is selected per request. New drafts are saved only when you explicitly create a Tool.
+
 ### SQL metric contracts
 
-Register reviewed aggregates under `definition.metrics` for recurring queries. The model selects a metric, inputs and period; the server compiles the SQL. If no metric fits, the model can write SQL instead. Set `allow_generated_sql: false` on the Context or `require_metric: true` on a request to require the metric path. **Contract compilation does not prove that the model chose the right metric or values.** See [metric contracts](docs/METRIC_CONTRACTS.md) for the format, examples and Tool rebuild behavior.
+Register reviewed aggregates under `definition.metrics` for recurring queries. The model selects a metric, inputs and period; the server compiles the SQL. If no metric fits, the model can write SQL instead. Set `allow_generated_sql: false` on the Context to disable new model-written SQL; saved Tools can still be selected. Set `require_metric: true` on a request to bypass Tool selection and require the metric path. **Contract compilation does not prove that the model chose the right metric or values.** See [metric contracts](docs/METRIC_CONTRACTS.md) for the format, examples and Tool rebuild behavior.
 
 ## Evaluation and development checks
 
@@ -169,11 +189,11 @@ The suites are **regression cases exposed during development and review**, not a
 
 ## Limitations and roadmap
 
-- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, Tool auto-selection and Vector/RAG/MCP are not implemented.
+- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, multi-Tool orchestration and Vector/RAG/MCP are not implemented.
 - Static validation does not guarantee executability, absence of side effects, execution cost or business correctness. The application must enforce database roles and function privileges, user and tenant authorization, and time/resource limits. Prose business rules and omitted conditions are not automatically enforced.
 - One API process owns a data directory on a local filesystem. Multiple instances are not supported. Once a Generation leaves memory, it cannot be used to create a Tool draft.
 - All Tool inputs are required. Optional/default/array inputs and Tool version history are not supported. Generate has a 90-second total request budget, including repair.
-- Questions and Context content are sent to the selected provider. Generation content stays in memory, but saved Tool SQL and Context values persist in files. Protect the data directory and backups.
+- Questions, Context content and the same Context's saved Tool catalog (including SQL and input schemas) are sent to the selected provider. Generation content stays in memory, but saved Tool SQL and Context values persist in files. Protect the data directory and backups.
 
 The [specification](docs/SPEC.md) defines supported expressions and input limits. Future work will be driven by usage of the SQL and Tool workflow; no additional Operation types are scheduled.
 

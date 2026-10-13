@@ -65,7 +65,7 @@ class AggregateExpectation(_Strict):
 class Expectations(_Strict):
     status: Literal["ok", "ambiguous", "unanswerable"]
     # ok only: "metric" = built from a registered metric, "generated_sql" = model-written.
-    source: Literal["metric", "generated_sql"] | None = None
+    source: Literal["metric", "generated_sql", "tool"] | None = None
     resources: list[str] | None = None  # exact set of base resources
     fields: list[str] = []  # must be referenced
     forbidden_fields: list[str] = []

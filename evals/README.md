@@ -65,3 +65,19 @@ the intended parameter value.
 These are exposed regression cases, not an independent accuracy benchmark. The repair check
 used an injected invalid first response followed by a real provider repair response; it is a
 mixed fixture/real-provider test. Browser click-through was not verified in this run.
+
+## Saved Tool selection smoke check — 2026-10-13
+
+Using `gemini-3.5-flash-lite` with `tool_selection_v1` and one synthetic
+`count_stores_by_region` Tool (Store.id, Store.regionSido; allowed regions 서울/부산):
+
+| Question | Observed result |
+|---|---|
+| 서울 매장 개수 | `source: tool`, saved SQL with region 서울; one model call |
+| 부산 매장의 id 목록 | `source: generated_sql`, ID projection; two model calls |
+| 지역별 매장 개수를 알려줘 | `source: generated_sql`, grouped count; two model calls |
+| 그 지역 매장 개수 | `ambiguous`, asks for the region; one model call |
+
+All four requests returned HTTP 200 with the expected route. This is a small synthetic smoke
+check, not a routing accuracy benchmark. OpenAI Tool selection has not been tested with a real
+provider. Selection correctness and argument meaning still require application review.

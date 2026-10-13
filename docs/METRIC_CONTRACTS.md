@@ -7,6 +7,9 @@ question correctly. Sidewit never executes the resulting SQL.
 
 ## Choose a generation path
 
+Saved Tools are considered first for ordinary questions. The table below describes generation
+when no saved Tool matches. Explicit metric options bypass Tool selection.
+
 | Configuration | Model output | Server behavior |
 |---|---|---|
 | No metrics | SQL, values and period interpretation | Static SQL and request-value checks |
@@ -14,7 +17,7 @@ question correctly. Sidewit never executes the resulting SQL.
 | `allow_generated_sql: false`, `require_metric: true`, or structured metric options | Registered metric, inputs and supported period | Compile and validate against the contract |
 | Bound Tool invoke | No model call | Check the saved contract and inputs; return an Operation |
 
-Responses identify the path as `source: metric` or `source: generated_sql`. A question that
+Responses identify the path as `source: tool`, `source: metric` or `source: generated_sql`. A question that
 adds a condition absent from a metric may require generated SQL. The prompt asks that path to
 follow registered business definitions, but the compiler does not enforce them there. Use a
 suitable contract and require the metric path when those guarantees are needed. Prose business

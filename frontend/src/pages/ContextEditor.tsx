@@ -175,7 +175,8 @@ export function ContextEditor({ id }: { id: string }) {
           <span>
             <span className="font-medium">Allow model-written SQL</span>
             <span className="block text-muted-foreground">
-              Registered metrics are tried first. Off: answer only with a metric.
+              Saved Tools are tried first, then registered metrics. Off: no new model-written SQL;
+              at least one metric is required.
             </span>
           </span>
         </label>
@@ -393,11 +394,11 @@ export function ContextEditor({ id }: { id: string }) {
         </TabsContent>
         <TabsContent value="metrics" className="space-y-3 pt-3">
           <p className="text-sm text-muted-foreground">
-            Register reviewed aggregate contracts. Generate prioritizes registered metrics: the
-            model chooses a contract and the server builds the SQL. If no metric fits, model-written
-            SQL is available only when allowed by this Context and the request. Fixed filters,
-            aggregation and date fields stay under your control. Business-rule prose is not
-            automatically enforced.
+            Register reviewed aggregate contracts. When no saved Tool matches, Generate prioritizes
+            registered metrics: the model chooses a contract and the server builds the SQL. If no
+            metric fits, model-written SQL is available only when allowed by this Context and the
+            request. Fixed filters, aggregation and date fields stay under your control.
+            Business-rule prose is not automatically enforced.
           </p>
           <Label htmlFor="metric-contracts">Metric contracts (JSON array)</Label>
           <Textarea

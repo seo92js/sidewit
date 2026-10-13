@@ -30,7 +30,7 @@
 ### v0.1에 포함
 
 - Data Context 관리: DDL import, 설명·관계·Business Rule·지표 계약 편집, 버전 관리
-- `POST /generate`: 자연어를 parameterized SQL Operation 초안으로 변환하거나 ambiguous/unanswerable 반환
+- `POST /generate`: 저장된 Tool을 먼저 선택하고, 없으면 parameterized SQL Operation 초안을 생성하거나 ambiguous/unanswerable 반환
 - 정적 SQL Validator
 - Tool: Generation에서 초안 생성, 사용자 편집, 검증 후 저장, 결정론적 invoke
 - Context 변경 시 연결된 Tool 정적 재검증
@@ -40,7 +40,7 @@
 
 ### v0.1에서 하지 않음
 
-데이터베이스 연결(Application DB와 Sidewit 자체 DB 모두), SQL 실행, EXPLAIN, 여러 인스턴스의 동시 쓰기, Generation 영구 저장, Tool 자동 선택(`/resolve`), Vector, RAG, MCP, API Operation, Composite Operation, 여러 parameter style, optional/default/array 파라미터, Operation 파라미터의 Tool 입력 자동 일반화, Tool 버전 이력, 멀티 테넌시, 함수 허용 목록, PostgreSQL 이외 dialect 공식 지원.
+데이터베이스 연결(Application DB와 Sidewit 자체 DB 모두), SQL 실행, EXPLAIN, 여러 인스턴스의 동시 쓰기, Generation 영구 저장, 여러 Tool 자동 조합, Vector, RAG, MCP, API Operation, Composite Operation, 여러 parameter style, optional/default/array 파라미터, Operation 파라미터의 Tool 입력 자동 일반화, Tool 버전 이력, 멀티 테넌시, 함수 허용 목록, PostgreSQL 이외 dialect 공식 지원.
 
 ---
 
@@ -132,7 +132,7 @@ Generate는 **등록 지표를 먼저** 시도한다. 경로는 세 가지다.
 - 지표가 있고 `allow_generated_sql: true`(기본)이면 **hybrid**(`hybrid_v3`)로, LLM 호출 한 번에 모델이 경로를 고른다. 등록 지표 하나가 질문 전체에 답하면 `route: metric`(서버가 계약으로 SQL 조립), 아니면 `route: sql`(모델이 SQL 작성)이다. SQL 경로에서도 등록 지표의 집계·고정 조건을 업무 정의로 따르도록 지시한다.
 - `allow_generated_sql: false`이면 지표로만 답하고(`metric_plan_v2`), 맞는 지표가 없으면 unanswerable이다. 이 설정은 등록 지표가 1개 이상 필요하다(아니면 422 `no_generation_path`).
 
-성공 응답의 `source`는 `metric`(계약으로 조립) 또는 `generated_sql`(모델 작성)이다. 계약으로 조립한 SQL은 결정론적이지만, **모델이 맞는 지표·입력·기간을 골랐는지는 보장하지 않는다**(예: 허용 값이 `京都`인데 `교토`를 추출하는 실패). 상세 필드와 시간 경계는 [지표 계약](METRIC_CONTRACTS.md)을 따른다.
+성공 응답의 `source`는 `tool`(저장된 Tool 재사용), `metric`(계약으로 조립) 또는 `generated_sql`(모델 작성)이다. 계약으로 조립한 SQL은 결정론적이지만, **모델이 맞는 지표·입력·기간을 골랐는지는 보장하지 않는다**(예: 허용 값이 `京都`인데 `교토`를 추출하는 실패). 상세 필드와 시간 경계는 [지표 계약](METRIC_CONTRACTS.md)을 따른다.
 
 ### 3.2 Operation (SQL)
 
@@ -311,6 +311,23 @@ created_at
 
 `POST /generate`
 
+기본 경로는 **같은 Context의 저장된 Tool 선택 → 없으면 기존 지표/SQL 생성**이다.
+Tool이 있으면 `tool_selection_v1` structured-output 호출로 하나의 Tool과 인자를 선택한다.
+설명뿐 아니라 SQL과 입력 계약을 제공하며, Tool이 없으면 선택 호출을 생략한다.
+명시적 지표 옵션은 Tool 선택을 건너뛰고 기존 지표 경로로 처리한다.
+선택 성공 시 기존 invoke 검증을 재사용하고 `source: "tool"`,
+`selected_tool: {"name": "...", "version": 1}`을 반환한다. 다른 성공 경로의 selected_tool은 null이다.
+Tool SQL은 모델이 변경하지 않으며 실행하지도 않는다. Tool/인자 선택의 의미 정확성은 보장하지 않는다.
+입력 부족/의도 모호는 ambiguous로 반환한다. 잘못된 선택은 422 invalid_tool_selection,
+인자 계약 위반은 422 invalid_tool_arguments, Tool 비호환은 409 tool_invalid,
+선택 중 Tool/Context 변경은 409 tool_changed/context_changed다. 이 실패들은 생성으로 우회하지 않는다.
+Tool catalog는 JSON 100,000자를 초과하면 422 tool_catalog_too_large이며 일부만 임의 선택하지 않는다.
+모델 응답 이후 Tool 선택/인자/버전 검증 실패도 failed Generation으로 기록하고 오류 details에 generation_id를 포함한다.
+디버그 상세의 tool_selection은 검증 전 모델 선택 원문이며 실행 가능한 Operation이 아니다. reason에 오류 코드를 기록하고 토큰·지연 시간을 보존한다.
+선택 입력은 메모리에만 보관하며 로그에는 기존 메타데이터만 남긴다. 호출 전 catalog 크기 거부와 Context 삭제는 기록을 만들지 않는다.
+선택 호출과 이후 생성·repair가 기존 90초 deadline을 공유한다. attempts와 token 수는 선택 호출도 포함한다.
+여러 Tool 조합·자동 저장은 지원하지 않는다.
+
 ```json
 {
   "context_id": "uuid",
@@ -331,6 +348,7 @@ created_at
   "context_version": 4,
   "status": "ok",
   "source": "generated_sql",
+  "selected_tool": null,
   "operation": {
     "type": "sql",
     "dialect": "postgresql",
@@ -681,7 +699,7 @@ cases:
       forbidden_constructs: [relative_time_function]
 ```
 
-- `expect.status`는 필수다. 그 외 expectation은 생략할 수 있다. `source`(`metric` | `generated_sql`)도 지정할 수 있다.
+- `expect.status`는 필수다. 그 외 expectation은 생략할 수 있다. `source`(`tool` | `metric` | `generated_sql`)도 지정할 수 있다.
 - `fields` / `forbidden_fields`: 반드시 참조할 / 참조하면 안 되는 `resource.field`.
 - `joins`: 두 필드의 equality join이 WHERE 또는 JOIN ON 조건에 있어야 한다. 좌우 순서는 무관하다.
 - `aggregates`: SELECT projection에 필요한 집계(`count / sum / avg / min / max`, `field`는 `resource.field` 또는 `*`, `distinct` 기본 false). `COUNT(*)`, `COUNT(1)`, outer JOIN이 없는 쿼리의 non-null 필드 `COUNT(field)`는 row count로 취급한다.

@@ -12,6 +12,15 @@ from sidewit.domain.issue import Issue
 from sidewit.generation.history import GenerationHistory, GenerationRecord
 from sidewit.generation.planners import GenerationInput, StatusOutput, planner_for
 from sidewit.generation.providers.base import LLMError, LLMProvider, Message
+from sidewit.generation.tool_selection import (
+    PROMPT_VERSION as TOOL_PROMPT_VERSION,
+)
+from sidewit.generation.tool_selection import (
+    ToolSelection,
+    ToolSelectionError,
+    invoke_selection,
+    selection_prompt,
+)
 from sidewit.security import redact
 from sidewit.store import ContextRecord, Store
 
@@ -65,7 +74,71 @@ async def generate(
 
     outcome: Outcome = "llm_error"
     errors: list[Issue] = []
-    while record.attempts < MAX_ATTEMPTS:
+    selection_error: ToolSelectionError | None = None
+    handled = False
+    candidates = store.tools_of(context.id) if not request.options.any() else []
+    if candidates:
+        tool_prompt = selection_prompt(candidates, context, request)
+        record.prompt_version = TOOL_PROMPT_VERSION
+        record.attempts += 1
+        try:
+            selection_result = await provider.generate_structured(
+                tool_prompt, messages, ToolSelection
+            )
+            if selection_result.input_tokens is not None:
+                input_tokens.append(selection_result.input_tokens)
+            if selection_result.output_tokens is not None:
+                output_tokens.append(selection_result.output_tokens)
+            record.tool_selection = selection_result.parsed.model_dump(mode="json")
+            current_context = store.context(context.id)
+            if current_context is None:
+                raise ContextDeleted(context.id)
+            if current_context.version != record.context_version:
+                raise ToolSelectionError(
+                    409, "context_changed", "Context changed. Submit the question again."
+                )
+            selection = selection_result.parsed
+            if selection.route != "tool" and (
+                selection.tool_name is not None or selection.parameters
+            ):
+                raise ToolSelectionError(
+                    422, "invalid_tool_selection", "Unexpected Tool arguments for this route."
+                )
+            if selection.route == "ambiguous":
+                if not selection.reason or not selection.clarifications:
+                    raise ToolSelectionError(
+                        422,
+                        "invalid_tool_selection",
+                        "Tool selection omitted clarification questions.",
+                    )
+                _conclude(record, "ambiguous", selection.reason)
+                record.clarifications = selection.clarifications
+                outcome, handled = "ambiguous", True
+            elif selection.route == "tool":
+                operation, validation, selected_tool = invoke_selection(
+                    selection, candidates, store, current_context
+                )
+                record.operation = operation.model_dump(mode="json")
+                record.validation = validation.model_dump(mode="json")
+                record.selected_tool = {
+                    "name": selected_tool.name,
+                    "version": selected_tool.version,
+                }
+                record.metric_binding = selected_tool.metric_binding
+                record.status = "ok"
+                outcome, handled = "ok", True
+        except ToolSelectionError as exc:
+            # Persist diagnostics and usage through the same finalization as other outcomes.
+            # Never resume generation after a failed selection or invocation.
+            record.reason = f"{exc.code}: {exc}"
+            selection_error = exc
+            handled = True
+        except LLMError as exc:
+            record.reason = redact(f"LLM call failed: {exc}")
+            outcome, handled = "llm_error", True
+    if candidates and not handled:
+        record.prompt_version += "+" + planner.prompt_version
+    for _ in range(0 if handled else MAX_ATTEMPTS):
         record.attempts += 1
         try:
             result = await provider.generate_structured(system, messages, planner.output_schema)
@@ -123,6 +196,9 @@ async def generate(
     if store.context(context.id) is None:
         raise ContextDeleted(context.id)
     history.add(record)
+    if selection_error is not None:
+        selection_error.details = {**selection_error.details, "generation_id": str(record.id)}
+        raise selection_error
     return GenerationResult(outcome=outcome, record=record, errors=errors)
 
 

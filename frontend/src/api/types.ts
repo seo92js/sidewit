@@ -84,7 +84,7 @@ export interface MetricBinding {
  * Where an ok operation came from. metric: built by the server from a registered metric
  * contract. generated_sql: written by the model and structurally validated; review its meaning.
  */
-export type OperationSource = "metric" | "generated_sql";
+export type OperationSource = "metric" | "generated_sql" | "tool";
 
 export interface Context {
   id: string;
@@ -186,6 +186,7 @@ export type GenerateResponse =
   | {
       status: "ok";
       source: OperationSource;
+      selected_tool?: { name: string; version: number } | null;
       generation_id: string;
       context_version: number;
       operation: SqlOperation;
@@ -208,8 +209,10 @@ export type GenerateResponse =
     };
 
 export interface GenerationDetail {
+  tool_selection?: Record<string, unknown> | null;
   id: string;
   source: OperationSource | null;
+  selected_tool?: { name: string; version: number } | null;
   context_id: string;
   context_version: number;
   question: string;

@@ -47,7 +47,7 @@ async def ask(client, context, **kwargs):
 
 async def saved(client, context):
     install(plan())
-    generation = (await ask(client, context)).json()
+    generation = (await ask(client, context, metric_id="orders_count")).json()
     draft = (
         await client.post(
             "/api/v1/tools/draft",
