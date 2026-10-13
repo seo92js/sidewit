@@ -9,6 +9,10 @@ from typing import Literal
 
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.issue import Issue
+from sidewit.generation.clarification import (
+    LLMClarification,
+    user_message,
+)
 from sidewit.generation.history import GenerationHistory, GenerationRecord
 from sidewit.generation.planners import GenerationInput, StatusOutput, planner_for
 from sidewit.generation.providers.base import LLMError, LLMProvider, Message
@@ -58,11 +62,12 @@ async def generate(
         request,
     )
     system = planner.system_prompt()
-    messages = [Message("user", request.question)]
+    messages = [Message("user", user_message(request.question, request.clarification_answers))]
     record = GenerationRecord(
         context_id=context.id,
         context_version=context.version,
         question=request.question,
+        clarification_answers=[a.model_dump() for a in request.clarification_answers],
         reference_time=request.reference_time.astimezone(UTC),
         provider=provider.name,
         model=provider.model,
@@ -112,7 +117,7 @@ async def generate(
                         "Tool selection omitted clarification questions.",
                     )
                 _conclude(record, "ambiguous", selection.reason)
-                record.clarifications = selection.clarifications
+                _clarify(record, selection.clarifications)
                 outcome, handled = "ambiguous", True
             elif selection.route == "tool":
                 operation, validation, selected_tool = invoke_selection(
@@ -154,17 +159,22 @@ async def generate(
             output_tokens.append(result.output_tokens)
         output: StatusOutput = result.parsed
 
+        if output.status == "ambiguous" and not output.clarifications:
+            record.reason = "LLM omitted clarification questions."
+            outcome = "llm_error"
+            break
         if output.status != "ok":
             # Never turn ambiguous/unanswerable into SQL; any statement sent along is dropped.
             _conclude(record, output.status, output.reason or "No reason provided.")
-            record.clarifications = output.clarifications if output.status == "ambiguous" else None
+            if output.status == "ambiguous":
+                _clarify(record, output.clarifications)
             outcome = output.status
             break
 
         plan = planner.plan(result.parsed)
         if plan.kind == "ambiguous":
             _conclude(record, "ambiguous", plan.reason or "Clarification needed.")
-            record.clarifications = plan.clarifications
+            _clarify(record, plan.clarifications)
             outcome = "ambiguous"
             break
 
@@ -193,8 +203,16 @@ async def generate(
     record.input_tokens = sum(input_tokens) if input_tokens else None
     record.output_tokens = sum(output_tokens) if output_tokens else None
     # The Context is not held while the model answers, so it may have been deleted since.
-    if store.context(context.id) is None:
+    current_context = store.context(context.id)
+    if current_context is None:
         raise ContextDeleted(context.id)
+    if (
+        request.expected_context_version is not None
+        and current_context.version != request.expected_context_version
+    ):
+        _conclude(record, "failed", "Context changed. Start a new request.")
+        record.selected_tool = None
+        selection_error = ToolSelectionError(409, "context_changed", record.reason)
     history.add(record)
     if selection_error is not None:
         selection_error.details = {**selection_error.details, "generation_id": str(record.id)}
@@ -208,3 +226,15 @@ def _conclude(record: GenerationRecord, status: str, reason: str) -> None:
     record.reason = reason
     record.operation = record.validation = record.tool_suggestion = None
     record.metric_binding = None
+
+
+def _clarify(record: GenerationRecord, questions: list[LLMClarification]) -> None:
+    record.clarifications = [q.question for q in questions]
+    record.clarification_questions = [
+        {
+            "id": f"{record.id}:{index}",
+            "question": q.question,
+            "options": list(dict.fromkeys(q.options)),
+        }
+        for index, q in enumerate(questions)
+    ]

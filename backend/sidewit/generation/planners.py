@@ -21,6 +21,7 @@ from sidewit.domain.dialect import Dialect
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import MetricBinding, Period
 from sidewit.domain.operation import SqlOperation
+from sidewit.generation.clarification import ClarificationAnswer, LLMClarification
 from sidewit.generation.dto import LLMGenerationOutput, LLMToolSuggestion
 from sidewit.generation.metric_compiler import compile_plan
 from sidewit.generation.metric_plan import (
@@ -73,6 +74,13 @@ class GenerationInput:
     question: str
     reference_time: datetime
     options: MetricOptions = field(default_factory=MetricOptions)
+    clarification_answers: tuple[ClarificationAnswer, ...] = ()
+    expected_context_version: int | None = None
+
+    @property
+    def intent(self) -> str:
+        # Offered alternatives are not user choices and must not reach literal/date checks.
+        return "\n".join([self.question, *(a.answer for a in self.clarification_answers)])
 
 
 @dataclass
@@ -84,7 +92,7 @@ class Plan:
     validation: ValidationResult | None = None
     binding: MetricBinding | None = None
     reason: str | None = None
-    clarifications: list[str] = field(default_factory=list)
+    clarifications: list[LLMClarification] = field(default_factory=list)
 
 
 class StatusOutput(Protocol):
@@ -92,7 +100,7 @@ class StatusOutput(Protocol):
 
     status: Literal["ok", "ambiguous", "unanswerable"]
     reason: str | None
-    clarifications: list[str]
+    clarifications: list[LLMClarification]
     tool_suggestion: LLMToolSuggestion | None
 
     def model_dump_json(self) -> str: ...
@@ -204,7 +212,7 @@ class SqlPlanner(_PlannerBase):
             self.definition,
             operation.parameter_types,
             operation.parameters,
-            generate_policy(self.request.question),
+            generate_policy(self.request.intent),
         )
         if duplicates:
             validation = validation.model_copy(
@@ -232,6 +240,7 @@ class MetricPlanner(_PlannerBase):
             self.request.reference_time,
             options.metric_id,
             options.period,
+            options.date_field,
         )
 
     def plan(self, output: LLMMetricPlan) -> Plan:
@@ -239,7 +248,6 @@ class MetricPlanner(_PlannerBase):
         compiled = compile_plan(
             output,
             self.definition,
-            self.request.question,
             self.request.reference_time,
             self.timezone,
             dialect=self.dialect,
@@ -323,7 +331,12 @@ class HybridPlanner(_PlannerBase):
         if output.route == "metric":
             self._last = self.metric
             return self.metric.plan(
-                LLMMetricPlan(**common, metric_id=output.metric_id, period=output.period)
+                LLMMetricPlan(
+                    **common,
+                    metric_id=output.metric_id,
+                    period=output.period,
+                    date_field=output.date_field,
+                )
             )
         if output.route == "sql":
             self._last = self.sql

@@ -143,7 +143,9 @@ An illustrative `operation` from an `ok` response follows. This is an authored e
 }
 ```
 
-For `ambiguous`, use `clarifications[]` to refine the question or Context. For `unanswerable`, check whether the Context contains the required data. Neither status provides an Operation to execute.
+For `ambiguous`, show `clarification_questions` as choices or a free-text input, then send the
+original request with the user's answers. See [continuing a request](docs/CLARIFICATIONS.md).
+The legacy `clarifications[]` text list remains available. For `unanswerable`, check whether the Context contains the required data. Neither status provides an Operation to execute.
 
 Example input to the saved Tool's invoke endpoint:
 

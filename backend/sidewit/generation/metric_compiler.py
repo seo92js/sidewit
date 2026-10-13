@@ -1,6 +1,5 @@
 """Convert the small provider intent DTO into a validated metric Operation."""
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -12,6 +11,7 @@ from sidewit.domain.issue import Issue
 from sidewit.domain.metric import MetricBinding, Period
 from sidewit.domain.operation import SqlOperation
 from sidewit.domain.params import value_matches_type
+from sidewit.generation.clarification import LLMClarification
 from sidewit.generation.metric_plan import LLMMetricPlan
 from sidewit.generation.parameters import convert_parameter
 from sidewit.validation.metric_contract import canonical_ref, metric_template, period_bounds
@@ -22,13 +22,12 @@ class CompiledMetric:
     operation: SqlOperation | None = None
     binding: MetricBinding | None = None
     errors: list[Issue] | None = None
-    clarifications: list[str] | None = None
+    clarifications: list[LLMClarification] | None = None
 
 
 def compile_plan(
     plan: LLMMetricPlan,
     definition: ContextDefinition,
-    question: str,
     reference_time: datetime,
     timezone: str,
     *,
@@ -64,37 +63,24 @@ def compile_plan(
         return invalid("Invalid period; rolling days must be between 1 and 3660.")
     resolved: str | None = None
     if period is not None:
-        # Resolve a trusted choice, an explicit unique field mention, then the default.
-        mentioned = [
-            ref
-            for ref in metric.time_fields
-            if any(
-                re.search(
-                    r"(?<![A-Za-z0-9_.])" + re.escape(candidate) + r"(?![A-Za-z0-9_.])",
-                    question,
-                    re.I,
-                )
-                for candidate in (ref, ref.partition(".")[2])
-            )
-        ]
-        if date_field:
-            resolved = date_field
-        elif len(mentioned) == 1:
-            resolved = mentioned[0]
-        elif len(mentioned) > 1:
-            return CompiledMetric(clarifications=["Choose one date field: " + ", ".join(mentioned)])
-        elif metric.default_time_field:
-            resolved = metric.default_time_field
-        else:
+        # Text interpretation belongs to the planner. Never infer a choice from a mention:
+        # a field can be negated, offered as an alternative or requested only in the output.
+        resolved = date_field if date_field is not None else plan.date_field
+        if resolved is None:
             return (
                 CompiledMetric(
                     clarifications=[
-                        "Choose a date field for this period: " + ", ".join(metric.time_fields)
+                        LLMClarification(
+                            question="Choose a date field for this period.",
+                            options=metric.time_fields,
+                        )
                     ]
                 )
                 if metric.time_fields
                 else invalid("This metric does not support a period.")
             )
+        if resolved.lower() not in {ref.lower() for ref in metric.time_fields}:
+            return invalid("Date field must be one of the selected metric's time_fields.", resolved)
         try:
             resolved = canonical_ref(definition, resolved)
             statement, types = metric_template(definition, metric, resolved, dialect)

@@ -73,7 +73,7 @@ const ERROR_HINTS: Record<string, string> = {
   llm_not_configured:
     "Configure SIDEWIT_LLM_PROVIDER, SIDEWIT_LLM_MODEL and the provider API key on the server.",
   tool_changed: "The selected Tool changed during selection. Submit the question again.",
-  context_changed: "The Context changed during selection. Submit the question again.",
+  context_changed: "The Context changed. Generate a new request using the current Context.",
   tool_invalid: "Review the saved Tool in Tools and fix or rebuild its contract before retrying.",
   invalid_tool_arguments:
     "The selected Tool's arguments failed validation. Clarify the question or review its input contract.",

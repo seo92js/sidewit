@@ -6,6 +6,9 @@ Initial release candidate.
 
 ### Features
 
+- Continue ambiguous requests with structured clarification choices or free-text answers in the
+  Playground and API, preserving the reference time and checking the Context version.
+
 - Select one matching saved Tool before generating a new operation, with validated arguments, explicit provenance and no silent fallback on Tool errors. Explicit metric requests retain their existing path.
 
 - Context management for schemas, relations, descriptions and business rules, with DDL import.
@@ -19,6 +22,11 @@ Initial release candidate.
 
 ### API changes
 
+- Generate accepts optional `clarification_answers` and `expected_context_version`. Ambiguous
+  responses add `clarification_questions` and resolved `reference_time`; the existing
+  `clarifications` string list remains compatible. Prompt versions advance to `generate_v9`,
+  `hybrid_v4`, `metric_plan_v3` and `tool_selection_v2` for structured clarification output.
+
 - Generate can now return `source: "tool"` and `selected_tool` (name/version); clients with exhaustive source handling must support the new value. Natural-language requests with saved Tools may use an additional LLM call. Direct Tool invocation remains LLM-free.
 
 ### Removed
@@ -26,6 +34,11 @@ Initial release candidate.
 - Removed the temporary thumbs-up/down feedback UI, its generation feedback endpoint and response field. Feedback was not persisted or used by generation.
 
 ### Fixes
+
+- Resolve metric date choices through structured planner intent instead of matching field mentions
+  in clarification answers; validate membership and keep unresolved choices ambiguous.
+- Preserve the continuation Context version after request failures so stale initial UI metadata
+  cannot incorrectly disable retries.
 
 - Record failed Tool selections in generation history with usage, debugging details and a generation ID in the error response, without falling back to SQL generation.
 

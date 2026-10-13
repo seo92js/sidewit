@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from sidewit.domain.params import ParamType
+from sidewit.generation.clarification import LLMClarification
 
 
 class LLMParameter(BaseModel):
@@ -33,7 +34,7 @@ class LLMGenerationOutput(BaseModel):
 
     status: Literal["ok", "ambiguous", "unanswerable"]
     reason: str | None
-    clarifications: list[str]
+    clarifications: list[LLMClarification]
     statement: str | None
     parameters: list[LLMParameter]
     tool_suggestion: LLMToolSuggestion | None

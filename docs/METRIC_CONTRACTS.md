@@ -74,9 +74,21 @@ Generate accepts `metric_id`, `date_field` and `period` in addition to the usual
 Invalid structured options return 422 before calling the provider. An explicit `period`
 overrides the model's proposal.
 
-Date-field priority is explicit `date_field`, then a unique field named in the question,
-then the contract default. Multiple named fields or no usable default produce `ambiguous`
-when a period needs a field. All-time questions do not require one. Bounds are `[start_at, end_at)`.
+An explicit request `date_field` takes precedence. Otherwise, the model returns a structured
+`date_field` choice based on the question, clarification answers, field descriptions and contract
+default. The server checks that the choice belongs to the selected metric's `time_fields`, using
+existing case-insensitive reference resolution. It does not select fields by matching names in
+answer text: a mentioned field may be excluded or requested only as an output column.
+
+A null choice produces `ambiguous` when a period needs a field; the compiler does not silently
+substitute the default. An invalid model-selected field triggers repair. The model is instructed
+to use the default only when the user has not requested a different or unresolved basis.
+This semantic interpretation still requires review. All-time questions do not require a date
+field. Bounds are `[start_at, end_at)`.
+
+To answer a clarification, resend the original request with `clarification_answers`, the returned
+`reference_time` and `expected_context_version`. Preserve explicit metric options: they still take
+precedence over free-text answers. See [continuing a request](CLARIFICATIONS.md).
 
 | `period.kind` | Meaning in the Context timezone |
 |---|---|

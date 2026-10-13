@@ -128,11 +128,11 @@ Rules:
 `definition.metrics` contains developer-registered contracts and defaults to `[]`. A contract specifies its metric ID, aggregate, explicit INNER JOINs, GROUP BY, fixed scalar comparisons, required inputs and allowed/default date columns. `row_count` means COUNT(*); `non_null_count` counts non-NULL values of the specified column. Overlapping fields between fixed conditions and caller inputs, or invalid types, references or JOINs, return 422 when saving the Context. DDL import preserves contracts and warns about invalid references.
 
 When no saved Tool is selected (§5.3), generation tries **registered metrics first** through three paths:
-- Without metrics, the model writes SQL (`generate_v8`).
-- With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v3`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
-- With `allow_generated_sql: false`, this generation stage uses metrics only (`metric_plan_v2`) and returns unanswerable when none matches. At least one registered metric is required for this setting; otherwise it returns 422 `no_generation_path`.
+- Without metrics, the model writes SQL (`generate_v9`).
+- With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v4`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
+- With `allow_generated_sql: false`, this generation stage uses metrics only (`metric_plan_v3`) and returns unanswerable when none matches. At least one registered metric is required for this setting; otherwise it returns 422 `no_generation_path`.
 
-Successful responses identify `source` as `tool` (saved Tool reuse), `metric` (contract compilation) or `generated_sql` (model-written SQL). Contract compilation is deterministic, but **does not guarantee that the model selected the right metric, inputs or period** (for example, extracting `교토` when the allowed value is `京都`). See [metric contracts](METRIC_CONTRACTS.md) for fields and time boundaries.
+Successful responses identify `source` as `tool` (saved Tool reuse), `metric` (contract compilation) or `generated_sql` (model-written SQL). Contract compilation is deterministic, but **does not guarantee that the model selected the right metric, inputs, date field or period** (for example, extracting `교토` when the allowed value is `京都`). See [metric contracts](METRIC_CONTRACTS.md) for fields and time boundaries.
 
 ### 3.2 Operation (SQL)
 
@@ -189,7 +189,8 @@ Generations are **not persisted.** The running process retains recent records in
 ```
 id, context_id, context_version, question, reference_time,
 status            -- "ok" | "ambiguous" | "unanswerable" | "failed"
-operation, reason, clarifications, tool_suggestion, validation, metric_binding,
+operation, reason, clarifications, clarification_questions, clarification_answers,
+tool_suggestion, validation, metric_binding,
 selected_tool, tool_selection,
 provider, model, prompt_version, attempts, latency_ms, input_tokens, output_tokens,
 created_at
@@ -313,7 +314,7 @@ Revalidation runs synchronously during `PUT /contexts/{id}`, updating the Contex
 `POST /generate`
 
 The default flow is **select a saved Tool from the same Context → otherwise use existing metric/SQL generation**.
-When Tools exist, a `tool_selection_v1` structured-output call selects one Tool and its arguments.
+When Tools exist, a `tool_selection_v2` structured-output call selects one Tool and its arguments.
 The model receives SQL and input contracts as well as descriptions. Without Tools, this call is skipped.
 Explicit metric options bypass Tool selection and use the existing metric path.
 Successful selection reuses existing invocation validation and returns `source: "tool"` and
@@ -341,6 +342,22 @@ Multiple-Tool composition and automatic saving are not supported.
 
 When `reference_time` is omitted, use the server's current time converted to the Context `timezone`.
 
+Optional `clarification_answers` contains up to 24 `{id, question, answer}` items in chronological
+order. Nonempty answers require `reference_time` and `expected_context_version`; duplicate IDs,
+blank text and oversized input return 422 before any LLM call. Question text is limited to 1,000
+characters per item, answers to 2,000, IDs to 100; original question plus all clarification
+question/answer text is limited to 16,000 characters. Preserve the original question and all
+metric options on resubmission. Use the preceding ambiguous response's resolved `reference_time`
+and `context_version`. A version mismatch before or during a pinned request returns 409
+`context_changed` with no Operation; start a new request against the current Context.
+
+This is stateless input refinement, not a server-side chat session. Clients retain the original
+request and accumulated answers. IDs correlate answers with questions but do not authenticate
+prior server output; all supplied content is untrusted user input. No generation-history lookup
+is required. Re-run normal Tool selection, planning and validation with the supplied answers.
+Offered alternatives are excluded from request-literal checks; the planner is instructed not to treat them as user-selected values. Explicit metric
+options still take precedence. See [API integration example](CLARIFICATIONS.md).
+
 A 200 response has one of three shapes:
 
 ```json
@@ -366,7 +383,13 @@ A 200 response has one of three shapes:
 ```json
 { "generation_id": "uuid", "context_version": 4, "status": "ambiguous",
   "reason": "Revenue has multiple possible interpretations.",
-  "clarifications": ["Should revenue be based on completed payments or placed orders?"] }
+  "clarifications": ["Should revenue be based on completed payments or placed orders?"],
+  "reference_time": "2026-10-02T00:00:00Z",
+  "clarification_questions": [{
+    "id": "uuid:0",
+    "question": "Should revenue be based on completed payments or placed orders?",
+    "options": ["Completed payments", "Placed orders"]
+  }] }
 ```
 
 ```json
@@ -375,8 +398,8 @@ A 200 response has one of three shapes:
 ```
 
 Generation flow when no saved Tool is selected:
-1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v8`) without metrics; `HybridPlanner` (`hybrid_v3`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v2`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. It selects the date basis in this order: structured option → unique explicit field → default. A missing required date basis returns ambiguous.
-2. For `status=ok`, run the static Validator with the appropriate Generate policy (§7): `generate_policy(question)` for SQL (including request-literal checks), or `CONTRACT_POLICY` for metrics. Return ambiguous/unanswerable without validation; discard any SQL the LLM supplied with those statuses.
+1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v9`) without metrics; `HybridPlanner` (`hybrid_v4`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v3`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. A structured `date_field` request option takes precedence. Otherwise, the model returns a `date_field` intent after interpreting the question, answers, field descriptions and metric default. The compiler accepts only a member of that metric's `time_fields` using the existing case-insensitive reference resolution; it never infers a choice from field-name mentions. A null choice returns ambiguous without silently applying a default; an invalid field triggers repair. Negated fields and fields requested only in the output must not select the period basis. Interpreting natural language remains probabilistic.
+2. For `status=ok`, run the static Validator with the appropriate Generate policy (§7): `generate_policy(original question + answer values)` for SQL (including request-literal checks), or `CONTRACT_POLICY` for metrics. Return ambiguous/unanswerable without validation; discard any SQL the LLM supplied with those statuses.
 3. On validation failure, attach the errors and request repair **once only**.
 4. If repair also fails, return 422 `generation_invalid`. **The response contains no SQL.** Generated SQL remains only in the in-memory Generation record.
    ```json
@@ -496,7 +519,7 @@ For provider compatibility, use lists instead of objects with dynamic keys. `val
 {
   "status": "ok | ambiguous | unanswerable",
   "reason": "string | null",
-  "clarifications": ["string"],
+  "clarifications": [{"question": "string", "options": ["string"]}],
   "statement": "string | null",
   "parameters": [{ "name": "region", "type": "string", "value": "서울" }, { "name": "days", "type": "integer", "value": "30" }],
   "tool_suggestion": { "name": "snake_case", "description": "string" }
@@ -505,7 +528,7 @@ For provider compatibility, use lists instead of objects with dynamic keys. `val
 
 - Convert integer/number values **only when exactly representable** (`domain/params.exact_number`, shared by metrics and DDL CHECK values). Integral values in the bigint range become ints (`"9007199254740993"`, `"3.0"`); others become floats only when representable under the exact-number rules (`"0.1"`, `"1e30"`). Values requiring rounding, becoming infinite or using excessive exponents remain strings and trigger repair through `parameter_type_mismatch`. The server never silently rounds numbers.
 - Duplicate parameter names trigger repair with `duplicate_parameter` rather than choosing one value (a Generate conversion-stage code).
-- `request_value_literal` is also Generate-only. `generate_policy(question)` (`validation/request_literals.py`) requests repair when a direct literal in a comparison/IN/BETWEEN/LIMIT/OFFSET appears verbatim in the question. Numbers immediately followed by date/duration units (`1월`, `30일`, `7 days`) are period expressions, not matches. Literals matching registered constants on the same field are exempt. For Rules without conditions, values mentioned in Context descriptions or Rule prose are conservatively protected as potential constants. This does not validate semantics or Rule application and does not apply to manually authored Tools/`DEFAULT_POLICY`.
+- `request_value_literal` is also Generate-only. `generate_policy(original question + answer values)` (`validation/request_literals.py`) requests repair when a direct literal in a comparison/IN/BETWEEN/LIMIT/OFFSET appears verbatim in the original question or an answer. Offered clarification questions are excluded. Numbers immediately followed by date/duration units (`1월`, `30일`, `7 days`) are period expressions, not matches. Literals matching registered constants on the same field are exempt. For Rules without conditions, values mentioned in Context descriptions or Rule prose are conservatively protected as potential constants. This does not validate semantics or Rule application and does not apply to manually authored Tools/`DEFAULT_POLICY`.
 - This DTO is internal to `generation/`, not a domain model or public API contract.
 
 ### 6.2.1 Internal output for registered metrics
@@ -516,13 +539,14 @@ For provider compatibility, use lists instead of objects with dynamic keys. `val
   "reason": null,
   "clarifications": [],
   "metric_id": "regional_revenue",
+  "date_field": "orders.paid_at",
   "parameters": [{"name":"region","type":"string","value":"서울"}],
   "period": {"kind":"rolling_days","days":30},
   "tool_suggestion": null
 }
 ```
 
-This DTO contains no statement, aggregate function, date column, JOIN or fixed condition. All provider fields are required; nullable values use explicit null. After validating metric/input names, types and periods, the server compiler produces canonical `:name` SQL and checks it with `CONTRACT_POLICY`. Failure follows the one-repair and 422/no-SQL contract. Semantic errors in metric or extracted-value selection are not validated.
+This DTO contains a selected metric, inputs, period and date-field reference, but no statement, aggregate function, JOIN or fixed condition. All provider fields are required; nullable values use explicit null. The hybrid DTO also includes `date_field`, which is null for the SQL route. After validating metric/input names, date-field membership, types and periods, the server compiler produces canonical `:name` SQL and checks it with `CONTRACT_POLICY`. Failure follows the one-repair and 422/no-SQL contract. Semantic errors in metric, date-field or extracted-value selection are not validated.
 
 ### 6.3 Required prompt content
 
@@ -536,7 +560,7 @@ This DTO contains no statement, aggregate function, date column, JOIN or fixed c
   - Generate a single SELECT statement.
   - Apply §4 rules 2 and 3: parameterize only variable values, resolve relative times to absolute values, prohibit `NOW()` in new SQL and prohibit placeholders in literals.
   - Apply Business Rules.
-- Current generation prompts are `sidewit/prompts/generate_v8.md`, `sidewit/prompts/hybrid_v3.md` and `sidewit/prompts/metric_plan_v2.md`; each Generation records `prompt_version`. Tables/columns needing quotes for case or reserved words receive exact SQL spellings from the compiler's identifier renderer. Repairs for `unknown_resource`/`unknown_field` also include those spellings and quoting rules; SQL is not rewritten automatically and validation is not relaxed. `allowed_values` instructions require exact spelling without translation, transliteration or invention. Multiple undescribed date/timestamp fields produce an ambiguity hint, excluding bookkeeping timestamps such as `updated_at` and `deleted_at`. These are model instructions, not enforced validation.
+- Current generation prompts are `sidewit/prompts/generate_v9.md`, `sidewit/prompts/hybrid_v4.md` and `sidewit/prompts/metric_plan_v3.md`; each Generation records `prompt_version`. Tables/columns needing quotes for case or reserved words receive exact SQL spellings from the compiler's identifier renderer. Repairs for `unknown_resource`/`unknown_field` also include those spellings and quoting rules; SQL is not rewritten automatically and validation is not relaxed. `allowed_values` instructions require exact spelling without translation, transliteration or invention. Multiple undescribed date/timestamp fields produce an ambiguity hint, excluding bookkeeping timestamps such as `updated_at` and `deleted_at`. These are model instructions, not enforced validation.
 
 ---
 
@@ -761,7 +785,12 @@ The UI is a React SPA with three screens. Every function is available through th
 - Show the submitted question, Context version, reference time, metric and date basis beside the result. Warn when inputs or Context change; label draft creation as using the previous result when appropriate.
 - Select Context, enter a question and generate. Contexts with metrics offer metric selection and, when model-written SQL is allowed, **Answer only with a registered metric** (`require_metric`).
 - `ok`: read-only Monaco SQL, a Parameters table, validation results/warnings, provenance badge (saved Tool / metric contract / model-written SQL), and an explanation that execution safety, access control, cost and business correctness are not guaranteed. Provide [Copy SQL], [Copy JSON] and [Copy API request]. New results offer [Create Tool draft]; reused Tools link to their name/version instead. No feedback buttons are shown.
-- `ambiguous`: reason and clarifications. `unanswerable`: reason.
+- `ambiguous`: reason, structured questions and an answer form. Choices fill an editable answer;
+  free text is always allowed. Continue resubmits the original request, accumulated answers, fixed
+  reference time and expected Context version. Disable continuation after inputs/Context change;
+  retain answers on request failures. A fresh Generate action starts a new request without answers.
+  Model-authored reasons/questions follow the original question's language; server-generated
+  contract messages remain English. `unanswerable`: reason.
 - `422 generation_invalid`: show "Rejected generation". Fetch rejected SQL through `GET /generations/{id}` and show it only in a collapsed debug view, visually distinct from a valid Operation (dashed red border, "Not validated · Do not execute"). Do not provide copy buttons or Tool draft entry points for rejected SQL. Other request errors use their own error messages.
 - Explain that recent generation history is held in server memory and disappears on restart.
 
