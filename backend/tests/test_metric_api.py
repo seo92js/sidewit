@@ -53,6 +53,7 @@ async def saved(client, context):
             "/api/v1/tools/draft",
             json={
                 "generation_id": generation["generation_id"],
+                "step_id": generation["operations"][0]["id"],
             },
         )
     ).json()
@@ -76,7 +77,7 @@ async def test_bound_end_to_end_and_deterministic_invoke(client, metric_context)
     tool, generation = await saved(client, metric_context)
     assert (
         tool["metric_binding"]
-        == generation["metric_binding"]
+        == generation["operations"][0]["metric_binding"]
         == {
             "metric_id": "orders_count",
             "time_field": None,
@@ -158,7 +159,10 @@ async def test_date_ambiguity_is_server_owned_and_does_not_repair(client, metric
     assert len(provider.calls) == 1
     provider = install(plan(period=LLMPeriod(kind="rolling_days", days=30)))
     res = await ask(client, metric_context, metric_id="orders_count", date_field="orders.paid_at")
-    assert res.json()["operation"]["parameters"]["start_at"] == "2026-09-02T09:00:00+09:00"
+    assert (
+        res.json()["operations"][0]["operation"]["parameters"]["start_at"]
+        == "2026-09-02T09:00:00+09:00"
+    )
     assert len(provider.calls) == 1
 
 
@@ -174,7 +178,10 @@ async def test_forced_metric_and_period_override(client, metric_context):
         client, metric_context, metric_id="regional_revenue", period={"kind": "previous_month"}
     )
     assert res.status_code == 200, res.text
-    assert res.json()["operation"]["parameters"]["start_at"] == "2026-09-01T00:00:00+09:00"
+    assert (
+        res.json()["operations"][0]["operation"]["parameters"]["start_at"]
+        == "2026-09-01T00:00:00+09:00"
+    )
 
 
 @pytest.mark.parametrize(

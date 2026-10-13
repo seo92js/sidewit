@@ -124,17 +124,19 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
         "generation_id",
         "context_version",
         "status",
-        "operation",
-        "validation",
-        "tool_suggestion",
-        "metric_binding",
+        "operations",
+        "execution",
         "source",
     }
+    assert body["execution"] == "independent"
+    assert len(body["operations"]) == 1
+    assert body["operations"][0]["id"] == "step_1"
+    assert body["operations"][0]["source"] == "generated_sql"
     assert body["source"] == "generated_sql"
-    assert body["metric_binding"] is None
+    assert body["operations"][0]["metric_binding"] is None
     assert body["status"] == "ok"
     assert body["context_version"] == 1
-    assert body["operation"] == {
+    assert body["operations"][0]["operation"] == {
         "type": "sql",
         "dialect": "postgresql",
         "statement": REVENUE_SQL,
@@ -145,9 +147,12 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
         },
         "parameter_types": {"region": "string", "start_at": "date-time", "end_at": "date-time"},
     }
-    assert body["validation"]["valid"] is True
-    assert "relative_time" in body["validation"]["checks"]
-    assert body["tool_suggestion"] == {"name": "regional_revenue", "description": "지역 매출"}
+    assert body["operations"][0]["validation"]["valid"] is True
+    assert "relative_time" in body["operations"][0]["validation"]["checks"]
+    assert body["operations"][0]["tool_suggestion"] == {
+        "name": "regional_revenue",
+        "description": "지역 매출",
+    }
     assert len(provider.calls) == 1
 
     record = await detail(client, body["generation_id"])
@@ -169,7 +174,7 @@ async def test_parameter_values_are_converted_to_declared_types(client, context,
         )
     )
     body = (await ask(client, context)).json()
-    assert body["operation"]["parameters"] == {"min_amount": 10.5, "n": 30}
+    assert body["operations"][0]["operation"]["parameters"] == {"min_amount": 10.5, "n": 30}
 
 
 async def test_non_finite_number_rejected_without_json_storage_error(client, context, fake):
@@ -235,6 +240,7 @@ async def test_ambiguous_returns_clarifications_without_sql(client, context, fak
         "reason": "Several date fields could define the period.",
         "reference_time": body["reference_time"],
         "clarification_questions": body["clarification_questions"],
+        "continuation_request": body["continuation_request"],
     }
     assert "SELECT" not in res.text
     assert len(provider.calls) == 1, "no repair or second call for ambiguous"
@@ -269,7 +275,7 @@ async def test_repair_once_then_succeed(client, context, fake):
     provider = fake(bad, ok())
     res = await ask(client, context)
     assert res.status_code == 200
-    assert res.json()["operation"]["statement"] == REVENUE_SQL
+    assert res.json()["operations"][0]["operation"]["statement"] == REVENUE_SQL
 
     assert len(provider.calls) == 2
     _, repair_messages = provider.calls[1]
@@ -288,8 +294,8 @@ async def test_user_literal_triggers_repair_and_keeps_rule_constant(client, cont
     provider = fake(bad, ok())
     response = await ask(client, context)
     assert response.status_code == 200
-    assert response.json()["operation"]["statement"] == REVENUE_SQL
-    assert "request_literals" in response.json()["validation"]["checks"]
+    assert response.json()["operations"][0]["operation"]["statement"] == REVENUE_SQL
+    assert "request_literals" in response.json()["operations"][0]["validation"]["checks"]
     assert "[request_value_literal]" in provider.calls[1][1][-1].content
     assert (await detail(client, response.json()["generation_id"]))["attempts"] == 2
 
@@ -315,7 +321,7 @@ async def test_rule_constant_mentioned_in_question_is_preserved(client, context,
     provider = fake(ok("SELECT SUM(amount) FROM orders WHERE status = 'COMPLETED'", []))
     response = await ask(client, context, question="COMPLETED 매출 합계")
     assert response.status_code == 200 and len(provider.calls) == 1
-    assert response.json()["operation"]["parameters"] == {}
+    assert response.json()["operations"][0]["operation"]["parameters"] == {}
 
 
 async def test_request_parameter_repair_can_end_with_clarification(client, context, fake):
@@ -476,7 +482,7 @@ async def test_provider_dto_never_reaches_public_responses(client, context, fake
             assert shape not in compact, (shape, compact)
         body = res.json()
         if body["status"] == "ok":
-            assert isinstance(body["operation"]["parameters"], dict)
+            assert isinstance(body["operations"][0]["operation"]["parameters"], dict)
             assert "clarifications" not in body and "reason" not in body
         else:
             assert "operation" not in body and "tool_suggestion" not in body
@@ -562,8 +568,8 @@ async def test_mixed_case_sql_gets_quoting_guidance_and_is_revalidated(
     assert '"Store"."regionSido"' in repair
     if repair_succeeds:
         assert res.status_code == 200
-        assert res.json()["operation"]["statement"] == good_sql
-        assert res.json()["operation"]["parameters"] == {"region_sido": "서울"}
+        assert res.json()["operations"][0]["operation"]["statement"] == good_sql
+        assert res.json()["operations"][0]["operation"]["parameters"] == {"region_sido": "서울"}
     else:
         assert res.status_code == 422
         assert res.json()["error"] == "generation_invalid"

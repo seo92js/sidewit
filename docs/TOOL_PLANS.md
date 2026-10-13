@@ -34,19 +34,21 @@ selection. Metric-bound saved Tools remain eligible and keep their bindings.
 
 ## Success response
 
-Plan responses have status **ok**, source **plan**, execution **independent**, generation_id,
-context_version and an **operations** array. There is no top-level operation or validation.
-Generation fallback instead returns the existing single operation response with source
-generated_sql or metric. Clients must dispatch by source, even when a plan has just one step.
+All successful Generate responses have status **ok**, execution **independent**, generation_id,
+context_version and an **operations** array. There is no top-level operation, validation,
+tool_suggestion or metric_binding. Top-level source describes routing (plan, generated_sql or
+metric); it does not change the response structure. A top-level generated_sql or metric
+source requires exactly one step with the same source; contradictory responses are rejected.
+Generation without saved Tools returns one step with ID step_1. Iterate operations regardless of source.
 
 Each plan operation contains:
 
 | Field | Meaning |
 |---|---|
 | id | Server-assigned step_1, step_2, etc.; unique within this response |
-| source | tool, generated_sql or metric; dispatch by source |
+| source | tool, generated_sql or metric; identifies provenance |
 | selected_tool | Saved Tool name and version; present only for source tool |
-| task | Subquestion covered by a generated/metric step |
+| task | Question covered by a generated/metric step |
 | tool_suggestion | Suggested name/description for a generated step, when available |
 | operation | SQL dialect, statement, bound parameters and parameter types |
 | validation | Tool invocation validation, generation validation or metric contract validation |
@@ -59,8 +61,13 @@ parameter maps or concatenate SQL statements.
 
 ## Application integration
 
+For a generated step, create a Tool draft with `{generation_id, step_id: step.id}`.
+The same request works for `step_1` in a one-operation response. A single step can also be
+selected by omitting `step_id`; its resolved ID is returned and saved as `source_step_id`.
+Multiple steps require an explicit ID. Saved Tool steps cannot be drafted again.
+
 1. Check HTTP status and the response status before accessing operations.
-2. For a successful plan, review every operation and its parameters against the question.
+2. For any successful response, review every operation and its parameters against the question.
 3. Apply your application's execution authorization and limits to each operation.
 4. Execute the operations against your own database, retaining step IDs with their results.
 5. Present or compare the results in your application.
@@ -76,8 +83,8 @@ The Playground displays each operation's source, SQL, parameters and validation,
 To save one generated step as a Tool, send `POST /tools/draft` with `generation_id` and
 `step_id` (for example `step_2`). The draft includes `source_generation_id` and `source_step_id`;
 retain both when sending it to `POST /tools`. The selected step's metric binding cannot be
-stripped or replaced. Saved Tool steps link to the existing Tool instead. Drafting the entire
-plan without a step returns 409 plan_not_draftable; a saved Tool step returns 409 step_already_saved.
+stripped or replaced. Saved Tool steps link to the existing Tool instead. Drafting a multi-step
+plan without a step ID returns 409 plan_not_draftable; a saved Tool step returns 409 step_already_saved.
 
 Generation runs concurrently for uncovered tasks (at most four), with one repair per task,
 under the same 90-second overall request deadline. Every task uses the original request and

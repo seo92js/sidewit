@@ -196,7 +196,7 @@ async def test_parameterized_constant_is_repaired_into_a_literal(client, rule_co
     provider = install(parameterized, literal)
     res = await ask(client, rule_context, question="대여료 3000원 이상인 결제 대여료 합계")
     assert res.status_code == 200, res.text
-    assert res.json()["operation"]["parameters"] == {"minimum": 3000}
+    assert res.json()["operations"][0]["operation"]["parameters"] == {"minimum": 3000}
     repair = provider.calls[1][1][2].content
     assert "[constant_as_parameter]" in repair and "rule revenue" in repair
 

@@ -329,14 +329,26 @@ async def test_source_step_requires_generation_id(client, context):
     assert response.status_code == 422
 
 
-async def test_single_generation_cannot_be_addressed_as_step(client, context, fake):
+async def test_single_generation_can_be_addressed_as_step(client, context, fake):
     fake(ids())
     gid = (await ask(client, context)).json()["generation_id"]
     response = await client.post(
         "/api/v1/tools/draft", json={"generation_id": gid, "step_id": "step_1"}
     )
-    assert response.status_code == 422
-    assert response.json()["error"] == "invalid_source_step"
+    assert response.status_code == 200
+    assert response.json()["source_step_id"] == "step_1"
+    draft = response.json()
+    draft.pop("example_arguments")
+    draft.update(name="single_step", description="Customer IDs")
+    saved = await client.post("/api/v1/tools", json=draft)
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["source_step_id"] == "step_1"
+    assert saved.json()["source_generation_id"] == gid
+    invalid = await client.post(
+        "/api/v1/tools/draft", json={"generation_id": gid, "step_id": "step_2"}
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["error"] == "invalid_source_step"
 
 
 async def test_multiple_ambiguous_tasks_ask_one_task_then_replan(client, context, fake):

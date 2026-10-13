@@ -456,7 +456,8 @@ async def generate(client, context, output):
     return res.json()["generation_id"]
 
 
-async def test_draft_from_generation_is_not_saved(client, context):
+@pytest.mark.parametrize("omit_step", [False, True])
+async def test_draft_from_generation_is_not_saved(client, context, omit_step):
     generation_id = await generate(client, context, generation_output())
     res = await client.post("/api/v1/tools/draft", json={"generation_id": generation_id})
     assert res.status_code == 200
@@ -478,15 +479,19 @@ async def test_draft_from_generation_is_not_saved(client, context):
         "operation": {"type": "sql", "statement": SQL},
         "example_arguments": ARGS,
         "source_generation_id": generation_id,
-        "source_step_id": None,
+        "source_step_id": "step_1",
     }
     assert (await client.get("/api/v1/tools")).json()["items"] == []
 
-    saved = await client.post(
-        "/api/v1/tools", json={k: v for k, v in draft.items() if k != "example_arguments"}
-    )
+    payload = {k: v for k, v in draft.items() if k != "example_arguments"}
+    if omit_step:
+        payload.pop("source_step_id")
+    saved = await client.post("/api/v1/tools", json=payload)
     assert saved.status_code == 201
     assert saved.json()["source_generation_id"] == generation_id
+    assert saved.json()["source_step_id"] == "step_1"
+    stored = await client.get(f"/api/v1/tools/{saved.json()['name']}")
+    assert stored.json()["source_step_id"] == "step_1"
     assert (await invoke(client, arguments=draft["example_arguments"])).status_code == 200
 
 

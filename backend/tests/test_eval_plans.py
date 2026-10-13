@@ -151,3 +151,47 @@ async def test_generated_plan_step_uses_generation_policy(golden_suite):
     result = await evaluate(golden_suite, response([item]))
     assert not result.passed
     assert any("relative_time_function" in failure.detail for failure in result.failures)
+
+
+async def test_legacy_single_response_is_rejected(golden_suite):
+    legacy = response([step(1)])
+    single = legacy.pop("operations")[0]
+    legacy.update(operation=single["operation"], validation=single["validation"])
+    result = await evaluate(golden_suite, legacy, **rule("서울"))
+    assert not result.passed
+    assert result.failures[0].expectation == "generation"
+    assert result.failures[0].detail == "Malformed operation result."
+
+
+@pytest.mark.parametrize(
+    "source,step_source",
+    [
+        ("generated_sql", "tool"),
+        ("metric", "tool"),
+        ("generated_sql", "metric"),
+        ("metric", "generated_sql"),
+    ],
+)
+async def test_contradictory_sources_cannot_bypass_policy(golden_suite, source, step_source):
+    item = step(1)
+    item["operation"].update(statement="SELECT NOW()", parameters={}, parameter_types={})
+    if step_source != "tool":
+        item.pop("selected_tool")
+        item.update(source=step_source, task="Current time")
+    body = response([item])
+    body["source"] = source
+    result = await evaluate(golden_suite, body, source=source)
+    assert not result.passed
+    assert result.failures[0].detail == "Malformed operation result."
+
+
+async def test_standalone_source_cannot_label_multiple_steps(golden_suite):
+    items = [step(1), step(2)]
+    for item in items:
+        item.pop("selected_tool")
+        item.update(source="generated_sql", task="Count customers")
+    body = response(items)
+    body["source"] = "generated_sql"
+    result = await evaluate(golden_suite, body, source="generated_sql")
+    assert not result.passed
+    assert result.failures[0].detail == "Malformed operation result."

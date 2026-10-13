@@ -151,7 +151,7 @@ async def test_wrong_rule_is_an_expectation_failure_not_validation_failure(
     result = report.cases[0]
     assert report.failed == 1
     assert result.actual_status == "ok"
-    assert [f.expectation for f in result.failures] == ["constraints"]
+    assert [f.expectation for f in result.failures] == ["steps[0].constraints"]
     assert result.validation_errors == []
 
 

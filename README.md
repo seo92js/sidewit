@@ -118,7 +118,7 @@ docker compose run --rm -T --no-deps -v ./examples/ecommerce:/examples:ro api py
 | Preview DDL | `POST /contexts/{id}/import-ddl` | [schema.sql](examples/ecommerce/schema.sql) → `context_version`, `definition`, `warning_details` |
 | Save Context | `PUT /contexts/{id}` | Review the preview; send the complete Context and `expected_version` |
 | Generate SQL | `POST /generate` | Context ID, question and reference time → Operation draft |
-| Draft Tool | `POST /tools/draft` | `generation_id` (+ `step_id` for a plan) → SQL and input contract |
+| Draft Tool | `POST /tools/draft` | `generation_id` + `step_id` (optional for one step) → SQL and input contract |
 | Save Tool | `POST /tools` | Review the draft and omit `example_arguments` before saving |
 | Invoke | `POST /tools/{name}/invoke` | `arguments` → SQL, binding values, versions and validation result |
 
@@ -132,7 +132,8 @@ Example Generate request, using the bundled Korean-language fixture:
 }
 ```
 
-An illustrative `operation` from an `ok` response follows. This is an authored example, not a real model response. `서울` is the fixture's exact value for Seoul.
+Every successful Generate response has an `operations` array, including a single result.
+Read each step's `operation`, `validation` and `source`. An illustrative `operations[0].operation` follows. This is an authored example, not a real model response. `서울` is the fixture's exact value for Seoul.
 
 ```json
 {
@@ -145,7 +146,9 @@ An illustrative `operation` from an `ok` response follows. This is an authored e
 ```
 
 For `ambiguous`, show `clarification_questions` as choices or a free-text input, then send the
-original request with the user's answers. See [continuing a request](docs/CLARIFICATIONS.md).
+returned `continuation_request` with the user's answers added. See
+[API integration](docs/API_USAGE.md) for a short client example and
+[continuing a request](docs/CLARIFICATIONS.md) for the full contract.
 For `unanswerable`, check whether the Context contains the required data. Neither status provides an Operation to execute.
 
 Example input to the saved Tool's invoke endpoint:
@@ -232,4 +235,4 @@ all validated operations together. The same Tool can be selected with different 
 If saved Tools cover only part of the request, new SQL or metric operations fill the gaps in
 the same plan. All operations must validate; a failure or clarification returns no partial plan.
 Generated steps can be saved individually as Tools. Applications must
-handle `source: "plan"` with `operations`, as well as single generated/metric `operation` responses. See [Tool plans](docs/TOOL_PLANS.md).
+read `operations` for every successful response, regardless of source or operation count. See [Tool plans](docs/TOOL_PLANS.md).

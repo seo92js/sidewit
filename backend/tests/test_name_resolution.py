@@ -136,7 +136,7 @@ async def test_generate_never_returns_a_rounded_model_number(client):
     res = await ask(client, context, question="amount 조회")
     assert res.status_code == 200, res.text
     # The inexact value went to repair; the answer carries the exact integer.
-    assert res.json()["operation"]["parameters"] == {"amount": 9007199254740993}
+    assert res.json()["operations"][0]["operation"]["parameters"] == {"amount": 9007199254740993}
     assert "parameter_type_mismatch" in provider.calls[1][1][2].content
 
 

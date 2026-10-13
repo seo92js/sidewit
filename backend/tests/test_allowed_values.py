@@ -254,7 +254,7 @@ async def test_translated_value_is_repaired_to_the_allowed_spelling(client, zone
     provider = install(translated, exact)
     res = await ask(client, zone_context, question="京都 회원 수")
     assert res.status_code == 200, res.text
-    assert res.json()["operation"]["parameters"] == {"zone": "京都"}
+    assert res.json()["operations"][0]["operation"]["parameters"] == {"zone": "京都"}
     repair = provider.calls[1][1][2].content
     assert "[value_not_allowed]" in repair and "'京都', '札幌'" in repair
 

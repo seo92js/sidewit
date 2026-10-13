@@ -6,6 +6,7 @@ import type { GenerateResponse } from "@/api/types";
 
 afterEach(cleanup);
 const result: Extract<GenerateResponse, { status: "ambiguous" }> = {
+  continuation_request: { context_id: "c", question: "Question" },
   status: "ambiguous",
   generation_id: "generation",
   context_version: 1,

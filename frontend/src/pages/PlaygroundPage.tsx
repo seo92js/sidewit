@@ -1,25 +1,12 @@
-import { ChevronDown, ChevronRight, Sparkles, Wrench, XCircle } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles, XCircle } from "lucide-react";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 
 import { ApiError, getApiKey } from "@/api/client";
 import { useContexts, useGenerate, useGeneration } from "@/api/queries";
-import type {
-  ClarificationAnswer,
-  GenerateRequest,
-  GenerateResponse,
-  OperationSource,
-} from "@/api/types";
-import {
-  CopyButton,
-  Empty,
-  ErrorAlert,
-  IssueList,
-  Loading,
-  ValidationPanel,
-} from "@/components/app/common";
+import type { ClarificationAnswer, GenerateRequest, GenerateResponse } from "@/api/types";
+import { CopyButton, Empty, ErrorAlert, IssueList, Loading } from "@/components/app/common";
 import { NativeSelect } from "@/components/app/NativeSelect";
-import { OperationView } from "@/components/app/OperationView";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -30,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { generateRequestCurl } from "@/lib/apiRequest";
 
-import { ToolPlanView } from "./ToolPlanView";
+import { OperationResultView } from "./OperationResultView";
 import { ClarificationForm } from "./ClarificationForm";
 
 const CONTEXT_STORAGE = "sidewit.playground.context";
@@ -52,10 +39,10 @@ export default function PlaygroundPage() {
   } | null>(null);
 
   const [baseRequest, setBaseRequest] = useState<GenerateRequest | null>(null);
-  const [continuation, setContinuation] = useState<{
-    result: Extract<GenerateResponse, { status: "ambiguous" }>;
-    request: GenerateRequest;
-  } | null>(null);
+  const [continuation, setContinuation] = useState<Extract<
+    GenerateResponse,
+    { status: "ambiguous" }
+  > | null>(null);
 
   // Fall back to the first context when the stored one no longer exists.
   const selected =
@@ -79,9 +66,7 @@ export default function PlaygroundPage() {
     ...(canRequireMetric && requireMetric ? { require_metric: true } : {}),
   };
   const resultVersion =
-    generate.data?.context_version ??
-    continuation?.result.context_version ??
-    submittedContext?.version;
+    generate.data?.context_version ?? continuation?.context_version ?? submittedContext?.version;
   const inputsChanged =
     !!generate.variables &&
     (JSON.stringify(baseRequest) !== JSON.stringify(requestPayload) ||
@@ -91,24 +76,22 @@ export default function PlaygroundPage() {
     : generate.error instanceof ApiError && generate.error.error === "context_changed"
       ? "The Context changed on the server. Generate a new request to continue."
       : continuation &&
-          (continuation.request.clarification_answers?.length ?? 0) +
-            continuation.result.clarification_questions.length >
+          (continuation.continuation_request.clarification_answers?.length ?? 0) +
+            continuation.clarification_questions.length >
             24
         ? "This request reached the clarification limit. Start a new request with the details you have provided."
         : null;
   const send = (payload: GenerateRequest) => {
     generate.mutate(payload, {
       onSuccess: (result) => {
-        setContinuation(result.status === "ambiguous" ? { result, request: payload } : null);
+        setContinuation(result.status === "ambiguous" ? result : null);
       },
     });
   };
   const continueWith = (answers: ClarificationAnswer[]) => {
     if (!continuation || inputsChanged || generate.isPending) return;
     send({
-      ...continuation.request,
-      reference_time: continuation.result.reference_time,
-      expected_context_version: continuation.result.context_version,
+      ...continuation.continuation_request,
       clarification_answers: answers,
     });
   };
@@ -356,10 +339,10 @@ export default function PlaygroundPage() {
         {!generate.isPending && generate.error && <GenerateError error={generate.error} />}
         {continuation && (
           <ClarificationForm
-            key={continuation.result.generation_id}
-            result={continuation.result}
-            originalQuestion={continuation.request.question}
-            previousAnswers={continuation.request.clarification_answers}
+            key={continuation.generation_id}
+            result={continuation}
+            originalQuestion={continuation.continuation_request.question}
+            previousAnswers={continuation.continuation_request.clarification_answers}
             pending={generate.isPending}
             blockedReason={clarificationBlock}
             onContinue={continueWith}
@@ -412,7 +395,6 @@ function GenerateResult({
   result: Exclude<GenerateResponse, { status: "ambiguous" }>;
   inputsChanged: boolean;
 }) {
-  const navigate = useNavigate();
   if (result.status === "unanswerable") {
     return (
       <Card>
@@ -431,58 +413,7 @@ function GenerateResult({
       </Card>
     );
   }
-  if (result.source === "plan") {
-    return <ToolPlanView result={result} />;
-  }
-  return (
-    <Card>
-      <CardHeader>
-        <StatusHeader
-          status="ok"
-          generationId={result.generation_id}
-          contextVersion={result.context_version}
-        />
-        <CardTitle className="text-base">SQL operation</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <SourceBadge source={result.source} />
-        {result.metric_binding && (
-          <p className="text-sm">
-            Metric contract: <code>{result.metric_binding.metric_id}</code>
-            {result.metric_binding.time_field && (
-              <>
-                {" "}
-                · date basis: <code>{result.metric_binding.time_field}</code>
-              </>
-            )}
-          </p>
-        )}
-        <OperationView operation={result.operation} />
-        <ValidationPanel
-          result={result.validation}
-          label={
-            result.metric_binding
-              ? "SQL and metric contract validated"
-              : "SQL structurally validated"
-          }
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
-            <Wrench /> {inputsChanged ? "Create draft from previous result" : "Create Tool draft"}
-          </Button>
-          {result.tool_suggestion && (
-            <span className="text-xs text-muted-foreground">
-              suggested: <code className="font-mono">{result.tool_suggestion.name}</code>
-            </span>
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Generation history is temporary. Create and save a Tool before this record expires or the
-          server restarts.
-        </p>
-      </CardContent>
-    </Card>
-  );
+  return <OperationResultView result={result} inputsChanged={inputsChanged} />;
 }
 
 function GenerateError({ error }: { error: unknown }) {
@@ -552,23 +483,5 @@ function GenerateError({ error }: { error: unknown }) {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function SourceBadge({ source }: { source: OperationSource }) {
-  return source === "metric" ? (
-    <p className="flex items-center gap-2 text-sm">
-      <Badge className="bg-emerald-600 text-white">metric contract</Badge>
-      <span className="text-muted-foreground">
-        The server built this SQL from a registered metric.
-      </span>
-    </p>
-  ) : (
-    <p className="flex items-center gap-2 text-sm">
-      <Badge className="bg-amber-500 text-white">model-written SQL</Badge>
-      <span className="text-muted-foreground">
-        Structurally validated only; review that it means what was asked.
-      </span>
-    </p>
   );
 }

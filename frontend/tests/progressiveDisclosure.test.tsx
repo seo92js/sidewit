@@ -30,6 +30,7 @@ test.each([true, false])(
   },
 );
 const result = {
+  continuation_request: { context_id: "c", question: "Question" },
   status: "ambiguous" as const,
   generation_id: "g2",
   context_version: 1,

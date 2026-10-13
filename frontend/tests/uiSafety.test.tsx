@@ -169,15 +169,23 @@ test("Playground binds an earlier result to its submitted question", async () =>
     generation_id: "g1",
     context_version: 1,
     source: "generated_sql",
-    operation: {
-      type: "sql",
-      dialect: "postgresql",
-      statement: "SELECT 1 AS old_answer",
-      parameters: {},
-      parameter_types: {},
-    },
-    validation: valid,
-    tool_suggestion: null,
+    execution: "independent",
+    operations: [
+      {
+        id: "step_1",
+        source: "generated_sql",
+        task: "Generated task",
+        operation: {
+          type: "sql",
+          dialect: "postgresql",
+          statement: "SELECT 1 AS old_answer",
+          parameters: {},
+          parameter_types: {},
+        },
+        validation: valid,
+        tool_suggestion: null,
+      },
+    ],
   });
   const qc = client();
   render(
@@ -190,12 +198,12 @@ test("Playground binds an earlier result to its submitted question", async () =>
   const user = userEvent.setup();
   fireEvent.change(screen.getByLabelText("Question"), { target: { value: "first question" } });
   await user.click(screen.getByRole("button", { name: "Generate operation" }));
-  await screen.findByRole("button", { name: "Create Tool draft" });
+  await screen.findByRole("link", { name: "Create Tool draft from step_1" });
   fireEvent.change(screen.getByLabelText("Question"), {
     target: { value: "a different question" },
   });
   expect(screen.getByLabelText("SQL result")).toHaveProperty("value", "SELECT 1 AS old_answer");
-  expect(screen.getByRole("button", { name: "Create draft from previous result" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Create draft from previous result" })).toBeTruthy();
   expect(screen.getByText("first question")).toBeTruthy();
   expect(screen.getByText(/Inputs or Context changed/)).toBeTruthy();
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
@@ -367,19 +375,27 @@ test("Playground retains the submitted request when inputs change during generat
       generation_id: "g1",
       context_version: 1,
       source: "generated_sql",
-      operation: {
-        type: "sql",
-        dialect: "postgresql",
-        statement: "SELECT 1",
-        parameters: {},
-        parameter_types: {},
-      },
-      validation: valid,
-      tool_suggestion: null,
+      execution: "independent",
+      operations: [
+        {
+          id: "step_1",
+          source: "generated_sql",
+          task: "Generated task",
+          operation: {
+            type: "sql",
+            dialect: "postgresql",
+            statement: "SELECT 1",
+            parameters: {},
+            parameter_types: {},
+          },
+          validation: valid,
+          tool_suggestion: null,
+        },
+      ],
     }),
   );
   expect(
-    await screen.findByRole("button", { name: "Create draft from previous result" }),
+    await screen.findByRole("link", { name: "Create draft from previous result" }),
   ).toBeTruthy();
   expect(screen.getByText("submitted question")).toBeTruthy();
   expect(screen.getByText("2026-10-01T00:00:00Z")).toBeTruthy();
@@ -598,6 +614,12 @@ test("Playground identifies a reused Tool and links to it instead of creating an
 });
 
 const clarification = {
+  continuation_request: {
+    context_id: "c",
+    question: "This month reviews",
+    reference_time: "2026-10-13T01:00:00Z",
+    expected_context_version: 1,
+  },
   status: "ambiguous",
   generation_id: "g1",
   context_version: 1,
@@ -622,6 +644,10 @@ test("Clarification preserves the original request and accumulates answers acros
   const second = {
     ...clarification,
     generation_id: "g2",
+    continuation_request: {
+      ...clarification.continuation_request,
+      clarification_answers: [{ id: "g1:0", question: "Which date?", answer: "Created" }],
+    },
 
     clarification_questions: [{ id: "g2:0", question: "Which region?", options: [] }],
   };
@@ -724,7 +750,14 @@ test("Starting a new request drops prior clarification answers", async () => {
 
 test("Clarification retry uses the response Context version after the cache catches up", async () => {
   vi.mocked(request)
-    .mockResolvedValueOnce({ ...clarification, context_version: 2 })
+    .mockResolvedValueOnce({
+      ...clarification,
+      context_version: 2,
+      continuation_request: {
+        ...clarification.continuation_request,
+        expected_context_version: 2,
+      },
+    })
     .mockRejectedValueOnce(new Error("Offline"));
   const qc = client();
   playground(qc);
@@ -924,6 +957,12 @@ test("Default plan clarification preserves request and prevents continuation aft
   vi.mocked(request)
     .mockResolvedValueOnce({
       status: "ambiguous",
+      continuation_request: {
+        context_id: "c",
+        question: "Compare regions",
+        reference_time: "2026-10-13T00:00:00Z",
+        expected_context_version: 1,
+      },
       generation_id: "plan-question",
       context_version: 1,
       reason: "Which regions?",

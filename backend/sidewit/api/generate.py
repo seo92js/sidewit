@@ -21,6 +21,7 @@ from sidewit.generation.clarification import (
     continuation_characters,
 )
 from sidewit.generation.history import GenerationRecord
+from sidewit.generation.operations import operation_steps
 from sidewit.generation.planners import GenerationInput, InvalidGenerateRequest, MetricOptions
 from sidewit.generation.providers import build_provider
 from sidewit.generation.providers.base import LLMProvider
@@ -102,23 +103,22 @@ def source_of(record: GenerationRecord) -> Source | Literal["plan"]:
 
 
 class GenerateOk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     generation_id: uuid.UUID
     context_version: int
     status: Literal["ok"] = "ok"
-    source: Source
-    operation: SqlOperation
-    validation: ValidationResult
-    tool_suggestion: ToolSuggestion | None
-    metric_binding: MetricBinding | None = None
-
-
-class GeneratePlanOk(BaseModel):
-    generation_id: uuid.UUID
-    context_version: int
-    status: Literal["ok"] = "ok"
-    source: Literal["plan"] = "plan"
+    source: Source | Literal["plan"]
     execution: Literal["independent"] = "independent"
     operations: list[PlannedOperation] = Field(min_length=1, max_length=MAX_PLAN_OPERATIONS)
+
+    @model_validator(mode="after")
+    def _source_consistency(self):
+        if self.source != "plan" and (
+            len(self.operations) != 1 or self.operations[0].source != self.source
+        ):
+            raise ValueError("A standalone result requires one step matching its source.")
+        return self
 
 
 class GenerateAmbiguous(BaseModel):
@@ -128,6 +128,7 @@ class GenerateAmbiguous(BaseModel):
     reason: str
     clarification_questions: list[ClarificationQuestion]
     reference_time: datetime
+    continuation_request: GenerateRequest
 
 
 class GenerateUnanswerable(BaseModel):
@@ -140,7 +141,7 @@ class GenerateUnanswerable(BaseModel):
 @router.post("/generate")
 async def generate_operation(
     body: GenerateRequest, store: StoreDep, history: HistoryDep, provider: ProviderDep
-) -> GenerateOk | GeneratePlanOk | GenerateAmbiguous | GenerateUnanswerable:
+) -> GenerateOk | GenerateAmbiguous | GenerateUnanswerable:
     try:
         async with asyncio.timeout(GENERATION_TIMEOUT_SECONDS):
             return await _generate_operation(body, store, history, provider)
@@ -214,15 +215,8 @@ async def _generate_operation(
 
     match result.outcome:
         case "ok":
-            if record.operations is not None:
-                return GeneratePlanOk(**common, operations=record.operations)
             return GenerateOk(
-                **common,
-                source=source_of(record),
-                operation=SqlOperation.model_validate(record.operation),
-                validation=ValidationResult.model_validate(record.validation),
-                tool_suggestion=record.tool_suggestion,
-                metric_binding=record.metric_binding,
+                **common, source=source_of(record), operations=operation_steps(record)
             )
         case "ambiguous":
             return GenerateAmbiguous(
@@ -230,6 +224,13 @@ async def _generate_operation(
                 reason=record.reason,
                 clarification_questions=record.clarification_questions,
                 reference_time=record.reference_time,
+                continuation_request=body.model_copy(
+                    update={
+                        "reference_time": record.reference_time,
+                        "expected_context_version": record.context_version,
+                    },
+                    deep=True,
+                ),
             )
         case "unanswerable":
             return GenerateUnanswerable(**common, reason=record.reason)
