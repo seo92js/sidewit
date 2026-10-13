@@ -197,6 +197,13 @@ test("Playground binds an earlier result to its submitted question", async () =>
   expect(screen.getByRole("button", { name: "Create draft from previous result" })).toBeTruthy();
   expect(screen.getByText("first question")).toBeTruthy();
   expect(screen.getByText(/Inputs or Context changed/)).toBeTruthy();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  await user.click(screen.getByRole("button", { name: "Copy API request" }));
+  const command = write.mock.calls[0][0];
+  expect(command).toContain('"question": "first question"');
+  expect(command).toContain('"context_id": "c"');
+  expect(command).not.toContain("a different question");
+  write.mockRestore();
   qc.clear();
 });
 

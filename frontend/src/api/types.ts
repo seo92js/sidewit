@@ -214,7 +214,6 @@ export interface GenerationDetail {
   context_version: number;
   question: string;
   status: "ok" | "ambiguous" | "unanswerable" | "failed";
-  feedback: "up" | "down" | null;
   provider: string;
   model: string;
   prompt_version: string;

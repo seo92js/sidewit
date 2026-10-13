@@ -482,7 +482,7 @@ async def test_provider_dto_never_reaches_public_responses(client, context, fake
 # generation log -------------------------------------------------------------------------
 
 
-async def test_list_feedback_and_cascade_delete(client, context, fake):
+async def test_list_generations_and_cascade_delete(client, context, fake):
     fake(ok(), not_ok("unanswerable", "r"))
     first = (await ask(client, context)).json()["generation_id"]
     second = (await ask(client, context)).json()["generation_id"]
@@ -490,12 +490,6 @@ async def test_list_feedback_and_cascade_delete(client, context, fake):
     items = (await client.get(f"/api/v1/generations?context_id={context['id']}")).json()["items"]
     assert [i["id"] for i in items] == [second, first]
     assert "operation" not in items[0], "summaries omit SQL"
-
-    res = await client.post(f"/api/v1/generations/{first}/feedback", json={"feedback": "up"})
-    assert res.status_code == 200
-    assert res.json()["feedback"] == "up"
-    res = await client.post(f"/api/v1/generations/{first}/feedback", json={"feedback": "meh"})
-    assert res.status_code == 422
 
     await client.delete(f"/api/v1/contexts/{context['id']}")
     assert (await client.get(f"/api/v1/generations/{first}")).status_code == 404

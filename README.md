@@ -57,7 +57,7 @@ docker compose up -d --build --wait
 curl -fsS http://127.0.0.1:8000/api/v1/health
 ```
 
-1. Open the UI at **http://127.0.0.1:3000**. If you set `SIDEWIT_API_KEY`, enter it under **API key** in the header. Interactive API documentation is at http://127.0.0.1:8000/docs.
+1. Open the UI at **http://127.0.0.1:3000**. If you set `SIDEWIT_API_KEY`, enter it under **Sidewit API key** in the header. Interactive API documentation is at http://127.0.0.1:8000/docs.
 2. Register the example Context. This previews the DDL, adds descriptions and business rules, and saves the result without calling an LLM:
 
    ```bash

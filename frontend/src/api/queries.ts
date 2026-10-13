@@ -114,13 +114,6 @@ export function useGeneration(id: string | undefined) {
   });
 }
 
-export function useFeedback() {
-  return useMutation({
-    mutationFn: ({ id, feedback }: { id: string; feedback: "up" | "down" }) =>
-      request<unknown>("POST", `/generations/${id}/feedback`, { feedback }),
-  });
-}
-
 // Tools ------------------------------------------------------------------------------
 
 export function useTools() {
