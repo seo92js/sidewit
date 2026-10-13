@@ -21,6 +21,16 @@ Tests use temporary data directories and provider fixtures, not real LLM keys.
 Frontend checks run Prettier, ESLint, Vitest, TypeScript and the Vite build.
 The [CI workflow](.github/workflows/checks.yml) also builds both Docker images.
 
+## Language
+
+Write documentation, specifications, code comments, prompt instructions and UI guidance in
+English. Maintain one English version of each document rather than parallel translations.
+Preserve original-language example questions, sample data, fixture descriptions, test inputs
+and expected values when their wording matters. Do not translate API field names, identifiers,
+SQL or literal values as part of a documentation-language change.
+When translating headings, update links to their section anchors. Keep language-only changes
+separate from functional changes.
+
 ## Pull requests
 
 - Keep each change focused and explain the user-visible problem, behavior and validation.
