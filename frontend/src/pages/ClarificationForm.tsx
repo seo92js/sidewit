@@ -70,7 +70,35 @@ export function ClarificationForm({
           className="space-y-4"
         >
           <fieldset disabled={disabled || pending} className="space-y-4">
-            {questions.map((q) => (
+            {previousAnswers.length > 0 && (
+              <section aria-label="Previous answers" className="space-y-2 rounded-md border p-3">
+                <h3 className="text-xs font-medium text-muted-foreground">Previous answers</h3>
+                {previousAnswers.map((q) => (
+                  <div key={q.id} className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{q.question}</p>
+                    <p className="whitespace-pre-wrap break-words">
+                      {values[q.id] || "Answer required"}
+                    </p>
+                    <details>
+                      <summary className="cursor-pointer text-xs underline">Edit answer</summary>
+                      <div className="mt-2 space-y-1">
+                        <Label htmlFor={`answer-${q.id}`}>{q.question}</Label>
+                        <Textarea
+                          id={`answer-${q.id}`}
+                          rows={2}
+                          maxLength={2000}
+                          value={values[q.id] ?? ""}
+                          onChange={(e) =>
+                            setValues((previous) => ({ ...previous, [q.id]: e.target.value }))
+                          }
+                        />
+                      </div>
+                    </details>
+                  </div>
+                ))}
+              </section>
+            )}
+            {result.clarification_questions.map((q) => (
               <div key={q.id} className="space-y-2">
                 <Label htmlFor={`answer-${q.id}`}>{q.question}</Label>
                 {q.options.length > 0 && (
@@ -113,8 +141,7 @@ export function ClarificationForm({
           </fieldset>
         </form>
         <p className="text-xs text-muted-foreground">
-          {blockedReason ??
-            "Your answers refine the original request. Sidewit checks saved Tools and validates the operation again. Nothing is executed."}
+          {blockedReason ?? "Answers update the original request. Nothing is executed."}
         </p>
       </CardContent>
     </Card>
