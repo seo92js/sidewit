@@ -1,9 +1,13 @@
 """Bounded, stateless clarification input and structured questions."""
 
 import json
+from collections.abc import Sequence
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+MAX_CLARIFICATION_ANSWERS = 24
+MAX_CONTINUATION_CHARACTERS = 16000
 
 QuestionText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)
@@ -52,3 +56,8 @@ def user_message(question: str, answers: tuple[ClarificationAnswer, ...]) -> str
         {"question": question, "clarification_answers": [a.model_dump() for a in answers]},
         ensure_ascii=False,
     )
+
+
+def continuation_characters(question: str, answers: Sequence[ClarificationAnswer]) -> int:
+    """The same text budget applies to request validation and follow-up admission."""
+    return len(question) + sum(len(a.question) + len(a.answer) for a in answers)

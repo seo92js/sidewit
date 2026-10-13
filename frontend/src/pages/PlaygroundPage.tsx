@@ -140,8 +140,8 @@ export default function PlaygroundPage() {
         <div>
           <h1 className="text-lg font-semibold">Playground</h1>
           <p className="text-sm text-muted-foreground">
-            Ask in natural language. Sidewit selects one or more matching saved Tools, otherwise
-            creates a new SQL draft. It never runs SQL; your application does.
+            Ask in natural language. Sidewit selects one or more matching saved Tools, and creates
+            SQL drafts for any remaining parts. It never runs SQL; your application does.
           </p>
         </div>
 

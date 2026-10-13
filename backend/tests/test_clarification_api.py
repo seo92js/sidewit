@@ -287,3 +287,70 @@ async def test_unrelated_later_answer_does_not_override_date_intent(client, metr
         ],
     )
     assert result.json()["metric_binding"]["time_field"] == "orders.ordered_at"
+
+
+@pytest.mark.parametrize("route", ["generation", "selection", "mixed"])
+@pytest.mark.parametrize("previous_count, status", [(23, "ambiguous"), (24, "unanswerable")])
+async def test_followup_respects_remaining_answer_slots(
+    client, context, fake, route, previous_count, status
+):
+    from tests.test_mixed_plan import mixed
+
+    output = ambiguous()
+    if route == "generation":
+        fake(output)
+    else:
+        await saved_tool(client, context)
+        if route == "mixed":
+            fake(mixed(), output)
+        else:
+            from sidewit.generation.tool_plan import ToolPlanSelection
+
+            fake(
+                ToolPlanSelection(
+                    route="ambiguous",
+                    calls=[],
+                    generated_tasks=[],
+                    reason=output.reason,
+                    clarifications=output.clarifications,
+                )
+            )
+    answers = [{"id": f"q{i}", "question": "Q?", "answer": "A"} for i in range(previous_count)]
+    response = await ask(
+        client, context, clarification_answers=answers, expected_context_version=context["version"]
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == status
+    if status == "unanswerable":
+        assert "Split" in body["reason"]
+        assert "clarification_questions" not in body
+        record = (await client.get(f"/api/v1/generations/{body['generation_id']}")).json()
+        assert record["clarification_questions"] == []
+        assert record["operation"] is None and record["operations"] is None
+
+
+@pytest.mark.parametrize("question_length, status", [(7996, "ambiguous"), (7997, "unanswerable")])
+async def test_followup_reserves_minimum_answer_text(
+    client, context, fake, question_length, status
+):
+    # Used: 7996 + 4*(1+1999) = 15996. New question 'New' + one char fits exactly.
+    fake(ambiguous("New", options=()))
+    response = await ask(
+        client,
+        context,
+        question="x" * question_length,
+        expected_context_version=context["version"],
+        clarification_answers=[
+            {"id": f"q{i}", "question": "Q", "answer": "a" * 1999} for i in range(4)
+        ],
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == status
+
+
+async def test_oversized_single_task_questions_are_not_silently_truncated(client, context, fake):
+    fake(not_ok("ambiguous", "Need details", [f"Q{i}?" for i in range(25)]))
+    response = await ask(client, context)
+    assert response.json()["status"] == "unanswerable", response.text
+    assert "clarification_questions" not in response.json()

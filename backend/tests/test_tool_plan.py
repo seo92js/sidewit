@@ -19,8 +19,9 @@ def call(region="서울", name="count_customers"):
     }
 
 
-def plan(calls=None, route="tools", reason=None, clarifications=()):
+def plan(calls=None, route="plan", reason=None, clarifications=()):
     return ToolPlanSelection(
+        generated_tasks=[],
         route=route,
         calls=calls if calls is not None else [call(), call("부산")],
         reason=reason,
@@ -54,7 +55,7 @@ async def test_repeated_tool_with_distinct_inputs_returns_validated_independent_
     assert record["operations"] == body["operations"]
     assert record["source"] == "plan"
     assert record["operation"] is None
-    assert record["prompt_version"] == "tool_plan_v2"
+    assert record["prompt_version"] == "tool_plan_v3"
     draft = await client.post("/api/v1/tools/draft", json={"generation_id": body["generation_id"]})
     assert draft.status_code == 409
     assert draft.json()["error"] == "plan_not_draftable"
@@ -151,7 +152,7 @@ async def test_removed_modes_are_rejected_before_provider(client, context, fake,
 @pytest.mark.parametrize(
     "route,calls,reason,questions",
     [
-        ("tools", [call()], "unexpected", []),
+        ("plan", [call()], "unexpected", []),
         ("unanswerable", [call()], "missing", []),
         ("unanswerable", [], "missing", [{"question": "Q?", "options": []}]),
         ("ambiguous", [], " ", [{"question": "Q?", "options": []}]),
@@ -290,9 +291,9 @@ async def test_default_no_complete_match_generates_whole_question(client, contex
     assert response.json()["source"] == "generated_sql"
     assert "operations" not in response.json()
     assert len(provider.calls) == 2
-    assert "choose generate with empty calls" in provider.calls[0][0]
+    assert "generate: if no saved Tool fits" in provider.calls[0][0]
     record = await detail(client, response.json()["generation_id"])
-    assert record["prompt_version"].startswith("tool_plan_v2+")
+    assert record["prompt_version"].startswith("tool_plan_v3+")
 
 
 @pytest.mark.parametrize(

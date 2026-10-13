@@ -131,10 +131,14 @@ export function useTool(name: string | undefined) {
   });
 }
 
-export function useToolDraft(generationId: string | undefined) {
+export function useToolDraft(generationId: string | undefined, stepId?: string) {
   return useQuery({
-    queryKey: ["tool-draft", generationId],
-    queryFn: () => request<ToolDraft>("POST", "/tools/draft", { generation_id: generationId }),
+    queryKey: ["tool-draft", generationId, stepId],
+    queryFn: () =>
+      request<ToolDraft>("POST", "/tools/draft", {
+        generation_id: generationId,
+        ...(stepId ? { step_id: stepId } : {}),
+      }),
     enabled: !!generationId,
     staleTime: Infinity,
     retry: false,

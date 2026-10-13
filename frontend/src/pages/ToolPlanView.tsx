@@ -3,19 +3,21 @@ import type { GeneratePlan } from "@/api/types";
 import { CopyButton, ValidationPanel } from "@/components/app/common";
 import { OperationView } from "@/components/app/OperationView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 export function ToolPlanView({ result }: { result: GeneratePlan }) {
+  const hasDrafts = result.operations.some((step) => step.source !== "tool");
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">
-          Saved Tool plan · {result.operations.length} operations
+          {hasDrafts ? "Operation plan" : "Saved Tool plan"} · {result.operations.length} operations
         </CardTitle>
         <p className="font-mono text-xs text-muted-foreground">
           generation {result.generation_id.slice(0, 8)} · context v{result.context_version}
         </p>
         <p className="text-sm text-muted-foreground">
-          Every operation passed validation. Review that the selected Tools and arguments answer the
+          Every operation passed validation. Review that the operations and arguments answer the
           whole question. These operations are independent; Sidewit has not executed them or
           combined their results. Your application controls execution and presentation.
         </p>
@@ -26,15 +28,31 @@ export function ToolPlanView({ result }: { result: GeneratePlan }) {
           <section key={step.id} aria-label={step.id} className="space-y-3 rounded-md border p-3">
             <h3 className="text-sm font-medium">
               {index + 1}.{" "}
-              <Link
-                className="underline"
-                to={`/tools/${encodeURIComponent(step.selected_tool.name)}`}
-              >
-                {step.selected_tool.name}
-              </Link>{" "}
-              · v{step.selected_tool.version}
+              {step.source === "tool" ? (
+                <>
+                  <Link
+                    className="underline"
+                    to={`/tools/${encodeURIComponent(step.selected_tool.name)}`}
+                  >
+                    {step.selected_tool.name}
+                  </Link>{" "}
+                  · v{step.selected_tool.version}
+                </>
+              ) : (
+                step.task
+              )}
             </h3>
-            <p className="text-xs text-muted-foreground">{step.id} · saved Tool</p>
+            <p className="text-xs text-muted-foreground">
+              {step.id} ·{" "}
+              {step.source === "tool"
+                ? "saved Tool"
+                : step.source === "metric"
+                  ? "metric contract"
+                  : "model-written SQL"}
+            </p>
+            {step.source === "generated_sql" && (
+              <Badge className="bg-amber-500 text-white">New SQL draft · review before use</Badge>
+            )}
             {step.metric_binding && (
               <p className="text-xs">Metric contract: {step.metric_binding.metric_id}</p>
             )}
@@ -47,8 +65,22 @@ export function ToolPlanView({ result }: { result: GeneratePlan }) {
                   : "SQL structurally validated"
               }
             />
+            {step.source !== "tool" && (
+              <Link
+                className="inline-block rounded-md border px-3 py-2 text-sm underline"
+                to={`/tools/new?generation=${result.generation_id}&step=${step.id}`}
+              >
+                Create Tool draft from {step.id}
+              </Link>
+            )}
           </section>
         ))}
+        {hasDrafts && (
+          <p className="text-xs text-muted-foreground">
+            Generation history is temporary. Save new drafts as Tools before this record expires or
+            the server restarts.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

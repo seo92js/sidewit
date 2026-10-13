@@ -62,6 +62,7 @@ interface FormState {
   rows: ParamRow[];
   statement: string;
   sourceGenerationId: string | null;
+  sourceStepId: string | null;
   exampleArguments: Record<string, unknown>;
   metricBinding: MetricBinding | null;
 }
@@ -111,7 +112,8 @@ export default function ToolEditorPage() {
   const [search] = useSearchParams();
   const generationId = name ? undefined : (search.get("generation") ?? undefined);
   const tool = useTool(name);
-  const draft = useToolDraft(generationId);
+  const stepId = name ? undefined : (search.get("step") ?? undefined);
+  const draft = useToolDraft(generationId, stepId);
   const contexts = useContexts();
 
   if (tool.isLoading || draft.isLoading || contexts.isLoading) return <Loading />;
@@ -129,6 +131,7 @@ export default function ToolEditorPage() {
       rows: rowsFromSchema(tool.data.input_schema),
       statement: tool.data.operation.statement,
       sourceGenerationId: tool.data.source_generation_id,
+      sourceStepId: tool.data.source_step_id ?? null,
       exampleArguments: {},
       metricBinding: tool.data.metric_binding ?? null,
     };
@@ -140,6 +143,7 @@ export default function ToolEditorPage() {
       rows: rowsFromSchema(draft.data.input_schema),
       statement: draft.data.operation.statement,
       sourceGenerationId: draft.data.source_generation_id,
+      sourceStepId: draft.data.source_step_id ?? null,
       exampleArguments: draft.data.example_arguments,
       metricBinding: draft.data.metric_binding ?? null,
     };
@@ -151,6 +155,7 @@ export default function ToolEditorPage() {
       rows: [],
       statement: "",
       sourceGenerationId: null,
+      sourceStepId: null,
       exampleArguments: {},
       metricBinding: null,
     };
@@ -174,6 +179,7 @@ export default function ToolEditorPage() {
         <Alert>
           <AlertTitle>
             Draft from generation {draft.data.source_generation_id.slice(0, 8)}
+            {draft.data.source_step_id && ` · ${draft.data.source_step_id}`}
           </AlertTitle>
           <AlertDescription>
             Draft material only — review the name, description, inputs and SQL. It is validated
@@ -182,7 +188,7 @@ export default function ToolEditorPage() {
         </Alert>
       )}
       <ToolForm
-        key={tool.data?.name ?? generationId ?? "blank"}
+        key={tool.data?.name ?? `${generationId ?? "blank"}:${stepId ?? ""}`}
         initial={initial}
         saved={tool.data}
       />
@@ -297,6 +303,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
           context_id: form.contextId,
           name: form.name,
           source_generation_id: form.sourceGenerationId,
+          source_step_id: form.sourceStepId,
           metric_binding: form.metricBinding,
         },
         {

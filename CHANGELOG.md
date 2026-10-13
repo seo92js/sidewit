@@ -6,14 +6,20 @@ Initial release candidate.
 
 ### Features
 
+- Reuse saved Tools and generate uncovered SQL/metric tasks in one independent plan. Reuse
+  normal validation/repair, preserve original request values, and recheck versions after
+  generation. No partial operations are returned on failure or clarification.
+- Label generated steps in the Playground and allow saving each as a Tool draft with its
+  generation/step provenance and metric binding. Selection uses tool_plan_v3.
+
 - Evaluate saved Tool plans with independent validation and one-to-one step expectations;
   remove the unused Playground clarification display branch.
 
 - Automatically select independent saved Tool plans in the API and Playground, falling back
-  to metric/SQL generation when no complete saved Tool match exists. Plans contain 1–5 validated
+  to metric/SQL generation when no saved Tool matches. Plans contain 1–5 validated
   operations with per-step Tool versions, SQL, parameters and validation results. Repeated
   Tools with different arguments are supported; partial success, duplicate calls, dependent
-  chaining and generated-SQL mixing are not supported.
+  chaining are not supported.
 
 
 - Fix SQLGlot canonical names for boolean aggregates and string position; remove unreachable
@@ -32,7 +38,7 @@ Initial release candidate.
 - Continue ambiguous requests with structured clarification choices or free-text answers in the
   Playground and API, preserving the reference time and checking the Context version.
 
-- Select one matching saved Tool before generating a new operation, with validated arguments, explicit provenance and no silent fallback on Tool errors. Explicit metric requests retain their existing path.
+- Select saved Tools with validated arguments, explicit provenance and no silent fallback on Tool errors. Explicit metric requests retain their existing path.
 
 - Context management for schemas, relations, descriptions and business rules, with DDL import.
 - SQL draft generation with OpenAI or Gemini, static validation, and ambiguous/unanswerable responses.
@@ -47,15 +53,15 @@ Initial release candidate.
 
 - Generate automatically selects saved Tools without a mode option. Saved Tool success returns
   `source: "plan"`, `execution: "independent"` and `operations`, including one-call plans.
-  Generated/metric responses retain their single operation. Generation detail includes
-  operations. Selection uses tool_plan_v2.
+  Plans may include generated/metric steps. Whole-question generation retains its single operation. Generation detail includes
+  operations. Selection uses tool_plan_v3.
 - Remove legacy single-Tool response handling and duplicate text-only clarification/DDL warning
   fields. Use clarification_questions and warning_details. Unknown Generate request fields
   are rejected instead of silently ignored.
 
 
 - SQL function policy and timezone-aware Tool selection use prompt versions generate_v10,
-  hybrid_v5 and tool_plan_v2.
+  hybrid_v5 and tool_plan_v3.
 
 - Enforce a closed SQL function allowlist for generation, validation and Tool invocation.
   Context definitions add optional sql_extensions: ["postgis"] for supported spatial functions.
@@ -65,17 +71,19 @@ Initial release candidate.
 
 
 - Generate accepts optional `clarification_answers` and `expected_context_version`. Ambiguous
-  responses add `clarification_questions` and resolved `reference_time`; the existing
-  `clarifications` string list remains compatible. Prompt versions advance to `generate_v9`,
-  `hybrid_v4`, `metric_plan_v3` and `tool_selection_v2` for structured clarification output.
+  responses add `clarification_questions` and resolved `reference_time`; text-only `clarifications` field is removed.
 
-- Generate can now return `source: "tool"` and `selected_tool` (name/version); clients with exhaustive source handling must support the new value. Natural-language requests with saved Tools may use an additional LLM call. Direct Tool invocation remains LLM-free.
+- Natural-language requests with saved Tools may use additional LLM calls. Direct Tool invocation remains LLM-free.
 
 ### Removed
 
 - Removed the temporary thumbs-up/down feedback UI, its generation feedback endpoint and response field. Feedback was not persisted or used by generation.
 
 ### Fixes
+
+- Clarify one unresolved plan task at a time and check follow-up capacity before returning
+  questions. Keep the same count/text budgets for incoming answers and outgoing questions.
+- Cancel and join concurrent generation workers on unexpected exceptions or request cancellation.
 
 - Resolve metric date choices through structured planner intent instead of matching field mentions
   in clarification answers; validate membership and keep unresolved choices ambiguous.
