@@ -478,6 +478,7 @@ async def test_draft_from_generation_is_not_saved(client, context):
         "operation": {"type": "sql", "statement": SQL},
         "example_arguments": ARGS,
         "source_generation_id": generation_id,
+        "source_step_id": None,
     }
     assert (await client.get("/api/v1/tools")).json()["items"] == []
 

@@ -196,14 +196,18 @@ export interface GenerateRequest {
   require_metric?: boolean;
 }
 
-export interface PlannedOperation {
+interface PlannedOperationBase {
   id: string;
-  source: "tool";
-  selected_tool: { name: string; version: number };
   operation: SqlOperation;
   validation: ValidationResult;
   metric_binding?: MetricBinding | null;
 }
+
+export type PlannedOperation = PlannedOperationBase &
+  (
+    | { source: "tool"; selected_tool: { name: string; version: number } }
+    | { source: "generated_sql" | "metric"; task: string; tool_suggestion?: ToolSuggestion | null }
+  );
 
 export interface GeneratePlan {
   status: "ok";
@@ -303,6 +307,7 @@ export interface Tool {
   validation_errors: Issue[];
   validation: ValidationResult | null;
   source_generation_id: string | null;
+  source_step_id?: string | null;
   metric_binding?: MetricBinding | null;
   created_at: string;
   updated_at: string;
@@ -315,6 +320,7 @@ export interface ToolCreate {
   input_schema: InputSchema;
   operation: ToolOperation;
   source_generation_id?: string | null;
+  source_step_id?: string | null;
   metric_binding?: MetricBinding | null;
 }
 
@@ -333,6 +339,7 @@ export interface ToolDraft {
   operation: ToolOperation;
   example_arguments: Record<string, unknown>;
   source_generation_id: string;
+  source_step_id?: string | null;
   metric_binding?: MetricBinding | null;
 }
 

@@ -36,7 +36,8 @@ async def saved_tool(client, context, name="count_customers"):
 
 def choice(route="tool", name="count_customers", parameters=None, **kwargs):
     return ToolPlanSelection(
-        route="tools" if route == "tool" else route,
+        generated_tasks=[],
+        route="plan" if route == "tool" else route,
         calls=[
             {
                 "tool_name": name,
@@ -301,7 +302,7 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
     assert str(record.id) == generation_id
     assert (record.input_tokens, record.output_tokens) == (123, 45)
     assert record.latency_ms >= 0
-    assert record.prompt_version == "tool_plan_v2"
+    assert record.prompt_version == "tool_plan_v3"
     assert "REVIEW_PRIVATE_QUESTION" not in caplog.text
     assert "932847" not in caplog.text
     assert f"generation id={generation_id}" in caplog.text

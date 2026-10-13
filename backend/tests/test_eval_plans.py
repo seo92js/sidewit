@@ -141,3 +141,13 @@ async def test_tool_clock_policy_preserved(golden_suite):
     item["operation"].update(statement="SELECT NOW()", parameters={}, parameter_types={})
     result = await evaluate(golden_suite, response([item]))
     assert result.passed, result.failures
+
+
+async def test_generated_plan_step_uses_generation_policy(golden_suite):
+    item = step(1)
+    item.pop("selected_tool")
+    item.update(source="generated_sql", task="Current time")
+    item["operation"].update(statement="SELECT NOW()", parameters={}, parameter_types={})
+    result = await evaluate(golden_suite, response([item]))
+    assert not result.passed
+    assert any("relative_time_function" in failure.detail for failure in result.failures)

@@ -40,7 +40,7 @@ The license is Apache-2.0.
 
 ### Not included in v0.1
 
-Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, dependent Tool chaining, mixed Tool/generated-SQL plans, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
+Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, dependent Tool chaining, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
 
 ---
 
@@ -313,20 +313,30 @@ Revalidation runs synchronously during `PUT /contexts/{id}`, updating the Contex
 
 `POST /generate`
 
-Requests automatically select 1–5 independent saved Tool calls covering the
-whole question, otherwise use existing metric/SQL generation for the whole question. No
-UI toggle or API mode is needed. Explicit metric options bypass Tool selection. With no
+Requests automatically select saved Tool calls and generate independent metric/SQL operations
+for uncovered parts, up to five operations in total. If no Tool fits, generation handles the
+whole question as one operation. No UI toggle or API mode is needed. Explicit metric options bypass Tool selection. With no
 Tools, the selection call is skipped. Context generation policy still applies.
 
-Selection uses `tool_plan_v2` and receives saved SQL and input contracts, Context-local
+Selection uses `tool_plan_v3` and receives saved SQL and input contracts, Context-local
 reference time and clarification answers. Successful plans return `status: "ok", source:
 "plan", execution: "independent", operations: [...]`; there is no top-level operation or
-validation, even for one step. Each step contains its ID, Tool name/version, operation,
-validation and optional metric binding. Generation fallback retains its single-operation
+validation, even for one step. Each step contains its ID, source, operation, validation and optional metric binding.
+Saved Tool steps include Tool name/version; generated steps include their task. Generation fallback retains its single-operation
 response (`source: "generated_sql"` or `"metric"`). Clients must handle both response shapes.
 See [Tool plans](TOOL_PLANS.md) for integration details.
 
-Plans never mix generated SQL or bind results between steps.
+Plans may mix saved Tools with generated SQL or metric operations, but never bind results
+between steps. Generated operations reuse the existing planner and repair loop. Tasks are
+model-written subquestions; validation uses the original request/answers and reference time.
+Workers run concurrently under the shared request deadline. Unexpected worker exceptions
+cancel and join all remaining workers before the request exits. Tool and Context versions are
+rechecked after generation. Each generated step exposes its task, source and optional
+Tool suggestion. See [operation plans](TOOL_PLANS.md) for lifecycle and draft behavior.
+
+When multiple generated tasks are ambiguous, return only the first unresolved task's
+question batch in plan order. Do not merge or deduplicate questions across tasks. Follow-up
+answers replan the whole request; successful steps are not cached between rounds.
 
 All selected operations must validate before any are returned. Duplicate calls, invalid
 arguments and inconsistent routes return 422; incompatible Tools or concurrent Tool/Context
@@ -334,14 +344,16 @@ changes return 409. These failures never fall back to generation. Missing inputs
 ambiguous; dependent execution or excessive call counts return unanswerable. Selection of
 Tools, completeness and dependencies are model judgments, not static guarantees. Sidewit
 never executes SQL. A whole plan cannot become one Tool via /tools/draft (409
-plan_not_draftable); it already references saved Tools.
+plan_not_draftable). Use generation_id plus step_id to draft one generated step; saved Tool
+steps return step_already_saved. Tool create accepts source_step_id alongside
+source_generation_id and preserves the selected step's metric contract.
 
 A Tool catalog exceeding 100,000 JSON characters returns 422 `tool_catalog_too_large`; it is not arbitrarily truncated.
 Tool selection, argument and version validation failures after a model response are recorded as failed Generations, with `generation_id` included in the error details.
 The debugging detail `tool_selection` contains the unvalidated model selection, not an executable Operation. `reason` records the error code, and token counts and latency are retained.
 Selection content stays in memory; logs contain only existing metadata. Catalog size rejection before the call and Context deletion do not create records.
 Selection, subsequent generation and repair share the existing 90-second deadline. Attempts and token counts include selection calls.
-Dependent Tool chaining, mixed Tool/generated-SQL plans and automatic saving are not supported.
+Dependent Tool chaining and automatic saving are not supported.
 
 ```json
 {
@@ -354,6 +366,11 @@ Dependent Tool chaining, mixed Tool/generated-SQL plans and automatic saving are
 `metric_id`, `date_field`, `period` and `require_metric` are optional metric options. Specifying a metric option restricts the request to metrics; `require_metric: true` applies that restriction without choosing a metric. `date_field` requires a `metric_id` and an allowed field of that contract. Supported periods are rolling_days (days 1–3660) and previous_day/week/month (days=null), computed by the server. Invalid options return 422 `invalid_metric_request` before any LLM call.
 
 When `reference_time` is omitted, use the server's current time converted to the Context `timezone`.
+
+Every ambiguous response must fit the remaining answer slots and text budget, allowing
+at least one character per new answer. Otherwise return unanswerable and instruct the caller
+to split the request; do not silently truncate questions. Actual answer lengths are checked
+on submission by the UI and API, so longer answers may still require shortening.
 
 Optional `clarification_answers` contains up to 24 `{id, question, answer}` items in chronological
 order. Nonempty answers require `reference_time` and `expected_context_version`; duplicate IDs,
@@ -432,8 +449,8 @@ Generation flow when no saved Tool is selected:
 |---|---|---|
 | GET | `/tools?context_id=` | List, including status |
 | GET | `/tools/{name}` | Retrieve |
-| POST | `/tools/draft` | Draft from a Generation `{generation_id}` without saving |
-| POST | `/tools` | Create `{context_id, name, description, input_schema, operation, source_generation_id?}`. Validation failure returns 422 `tool_validation_failed` (`details.validation_errors`, `details.warnings`); a name conflict returns 409 `tool_name_conflict` |
+| POST | `/tools/draft` | Draft from a Generation `{generation_id, step_id?}` without saving |
+| POST | `/tools` | Create `{context_id, name, description, input_schema, operation, source_generation_id?, source_step_id?}`. Validation failure returns 422 `tool_validation_failed` (`details.validation_errors`, `details.warnings`); a name conflict returns 409 `tool_name_conflict` |
 | PUT | `/tools/{name}` | Update `{expected_version, description, input_schema, operation}`. Version mismatch returns 409 `version_conflict`. Name and Context cannot change. Content changes increment version by one. Validation failure returns 422 and leaves the Tool unchanged |
 | DELETE | `/tools/{name}` | Delete |
 | POST | `/validate` | Validation without saving, for editors: `{context_id, operation, input_schema?}`. With `input_schema`, run Tool validation (§7.5); also supplying `operation.parameter_types`/`parameters` returns 422 `invalid_validate_request`. Otherwise validate SQL using those parameter fields. Always uses `DEFAULT_POLICY`; this is not a Generate-compatibility check |
@@ -442,6 +459,7 @@ Generation flow when no saved Tool is selected:
 
 `POST /tools/draft` makes no LLM call.
 - Requires an in-memory Generation with `status=ok`. Missing records return 404 `generation_not_found`; other statuses return 409 `generation_not_ok`.
+- Plans require `step_id` for a generated/metric step. Omit it for a standalone generation.
 - Drafts are unvalidated starting material. Saving validates them against the Context at that time.
 - Map `operation.parameter_types` one-to-one to `input_schema`. Populate name and description from `tool_suggestion`. For string inputs compared with fields that have allowed values, use those values as the input `enum`.
 - Include `example_arguments` (the Generation's parameters) in the response.
@@ -459,7 +477,8 @@ Generation flow when no saved Tool is selected:
 }
 ```
 
-`source_generation_id` in `POST /tools`:
+`source_generation_id` and `source_step_id` in `POST /tools`:
+- For a plan, retain both IDs from the draft; `source_step_id` cannot be supplied alone.
 - Must reference an in-memory `ok` Generation of the same Context; otherwise return 422 `invalid_source_generation`.
 - A metric Generation passes on its `metric_binding`. Omitting it or sending null cannot remove it, and a different binding cannot replace it. PUT does not change bindings.
 
@@ -768,7 +787,7 @@ For multiple operations, set `expect.steps` to 1–5 objects containing those SQ
 and omit top-level SQL expectations. The count must match exactly. Independent steps are
 matched one-to-one without requiring response order; one operation cannot satisfy two entries.
 A multi-operation response without explicit step expectations fails with a setup guidance message.
-Each operation is independently revalidated with the saved-Tool policy. Reported validation
+Each operation is independently revalidated with its own source policy (Tool, generated SQL or metric contract). Reported validation
 errors retain their step IDs. Malformed plans and invalid step IDs fail evaluation.
 
 ### 9.2 Scoring

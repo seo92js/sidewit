@@ -13,7 +13,13 @@ from sidewit.config import get_settings
 from sidewit.domain.context import ContextDefinition, check_context_size
 from sidewit.domain.metric import MetricBinding, Period
 from sidewit.domain.operation import SqlOperation
-from sidewit.generation.clarification import ClarificationAnswer, ClarificationQuestion
+from sidewit.generation.clarification import (
+    MAX_CLARIFICATION_ANSWERS,
+    MAX_CONTINUATION_CHARACTERS,
+    ClarificationAnswer,
+    ClarificationQuestion,
+    continuation_characters,
+)
 from sidewit.generation.history import GenerationRecord
 from sidewit.generation.planners import GenerationInput, InvalidGenerateRequest, MetricOptions
 from sidewit.generation.providers import build_provider
@@ -43,7 +49,9 @@ class GenerateRequest(BaseModel):
     question: str = Field(min_length=1, max_length=8000)
     reference_time: AwareDatetime | None = None
     expected_context_version: int | None = Field(default=None, ge=1)
-    clarification_answers: list[ClarificationAnswer] = Field(default_factory=list, max_length=24)
+    clarification_answers: list[ClarificationAnswer] = Field(
+        default_factory=list, max_length=MAX_CLARIFICATION_ANSWERS
+    )
 
     metric_id: str | None = None
     date_field: str | None = None
@@ -62,9 +70,8 @@ class GenerateRequest(BaseModel):
             if len(ids) != len(set(ids)):
                 raise ValueError("Clarification answer IDs must be unique.")
             if (
-                len(self.question)
-                + sum(len(a.question) + len(a.answer) for a in self.clarification_answers)
-                > 16000
+                continuation_characters(self.question, self.clarification_answers)
+                > MAX_CONTINUATION_CHARACTERS
             ):
                 raise ValueError("Question and clarification answers exceed 16000 characters.")
         return self

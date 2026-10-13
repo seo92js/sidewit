@@ -68,6 +68,7 @@ class ToolRecord:
     validation_errors: list[dict[str, Any]] = field(default_factory=list)
     validation: dict[str, Any] | None = None
     source_generation_id: uuid.UUID | None = None
+    source_step_id: str | None = None
     metric_binding: dict[str, Any] | None = None
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     created_at: datetime = field(default_factory=_now)
@@ -132,6 +133,7 @@ class _ToolFile(BaseModel):
     validation_errors: list[Issue]
     validation: ValidationResult | None
     source_generation_id: uuid.UUID | None
+    source_step_id: str | None = Field(default=None, pattern=r"^step_[1-5]$")
     metric_binding: MetricBinding | None
     created_at: AwareDatetime
     updated_at: AwareDatetime

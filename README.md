@@ -14,7 +14,7 @@ Sidewit is not a database proxy: it never connects to a database or executes SQL
 |---|---|
 | Context | Manage schemas, relations, descriptions and business rules; import DDL |
 | Generate | Select a matching saved Tool first; otherwise produce SQL drafts, or return `ambiguous` / `unanswerable` |
-| Tool plans | Automatically select 1–5 independent saved Tool operations; fall back to generation when no complete Tool match exists |
+| Tool plans | Return 1–5 independent operations, reusing saved Tools and generating uncovered parts |
 | Static validation | Check statement type, Context tables and columns, parameter contracts, and supported value policies |
 | Tools | Save and edit reviewed SQL and input contracts; revalidate after Context changes; invoke deterministically |
 | SQL metric contracts | Compile registered aggregates, joins, fixed filters and periods into SQL |
@@ -118,7 +118,7 @@ docker compose run --rm -T --no-deps -v ./examples/ecommerce:/examples:ro api py
 | Preview DDL | `POST /contexts/{id}/import-ddl` | [schema.sql](examples/ecommerce/schema.sql) → `context_version`, `definition`, `warning_details` |
 | Save Context | `PUT /contexts/{id}` | Review the preview; send the complete Context and `expected_version` |
 | Generate SQL | `POST /generate` | Context ID, question and reference time → Operation draft |
-| Draft Tool | `POST /tools/draft` | `generation_id` → SQL and input contract |
+| Draft Tool | `POST /tools/draft` | `generation_id` (+ `step_id` for a plan) → SQL and input contract |
 | Save Tool | `POST /tools` | Review the draft and omit `example_arguments` before saving |
 | Invoke | `POST /tools/{name}/invoke` | `arguments` → SQL, binding values, versions and validation result |
 
@@ -165,7 +165,8 @@ service; it never executes SQL. The response uses `source: "plan"` and an `opera
 `selected_tool: {"name": "...", "version": 1}`. Review the selected Tools and arguments: static
 validation cannot prove that they answer the question.
 
-If no Tool matches, the existing metric/SQL generation path runs. Missing inputs or ambiguous
+If Tools cover only part of the question, the existing metric/SQL generation path fills the gaps.
+If no Tool matches, generation handles the whole question. Missing inputs or ambiguous
 intent return clarification questions. Invalid selections, incompatible Tools and concurrent
 Tool/Context changes fail explicitly; they do not silently fall back to new SQL. Requests with
 explicit metric options (`metric_id`, `date_field`, `period`, or `require_metric: true`) skip Tool
@@ -228,6 +229,7 @@ search_path and execution limits remain your application's responsibility.
 Just submit a question in the Playground or to `POST /api/v1/generate`; no mode is needed.
 Sidewit automatically selects one or more saved Tools covering the whole request and returns
 all validated operations together. The same Tool can be selected with different inputs.
-If saved Tools cannot cover the whole request, the existing metric/SQL generation path handles
-the whole question. A response does not mix saved Tools and generated SQL. Applications must
+If saved Tools cover only part of the request, new SQL or metric operations fill the gaps in
+the same plan. All operations must validate; a failure or clarification returns no partial plan.
+Generated steps can be saved individually as Tools. Applications must
 handle `source: "plan"` with `operations`, as well as single generated/metric `operation` responses. See [Tool plans](docs/TOOL_PLANS.md).

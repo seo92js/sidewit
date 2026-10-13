@@ -52,7 +52,7 @@ def score_plan(
     # one correct step from satisfying multiple expectations. At most 5! assignments.
     scores = [
         [
-            score_operation(rule, step.operation, context.definition, context.timezone, "tool")
+            score_operation(rule, step.operation, context.definition, context.timezone, step.source)
             for step in plan.operations
         ]
         for rule in expected
