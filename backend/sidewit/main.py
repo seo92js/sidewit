@@ -26,7 +26,15 @@ async def lifespan(app: FastAPI):
         get_history.cache_clear()
 
 
-app = FastAPI(title="Sidewit", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Sidewit",
+    description=(
+        "An AI agent that transforms natural-language queries into executable operations "
+        "for your applications"
+    ),
+    version="0.1.0",
+    lifespan=lifespan,
+)
 app.add_middleware(RequestSizeLimit)
 install_error_handlers(app)
 

@@ -1,8 +1,8 @@
 # Sidewit
 
-**Sidewit turns context and natural-language intent into reviewable SQL operations. Your application stays in control of execution.**
+**An AI agent that transforms natural-language queries into executable operations for your applications**
 
-Sidewit is an AI Worker that generates SQL drafts from schema and business context, then lets you save reviewed SQL as reusable Tools. It supports PostgreSQL SQL and runs with **one API container and a data directory—no database server required**. The management UI is optional.
+Sidewit currently supports PostgreSQL operations. It reuses saved Tools and generates SQL drafts from schema and business context for uncovered parts of a request. You can save reviewed SQL as reusable Tools. It runs with **one API container and a data directory—no database server required**. The management UI is optional.
 
 Sidewit is not a database proxy: it never connects to a database or executes SQL. Generate uses an LLM and requires review. Saved Tools return the same Operation for the same contract and inputs without an LLM call. Your application decides whether and how to execute it.
 
