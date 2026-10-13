@@ -20,6 +20,7 @@ from sidewit.tools.service import (
     ToolInvalid,
     contract_snapshot,
     draft_from_generation,
+    effective_status,
     invoke,
     save_validated_tool,
     tool_binding,
@@ -135,8 +136,14 @@ class ValidateRequest(BaseModel):
     metric_binding: MetricBinding | None = None
 
 
-def _out(tool: ToolRecord) -> ToolOut:
-    return ToolOut.model_validate(tool, from_attributes=True)
+def _out(tool: ToolRecord, store: Store) -> ToolOut:
+    output = ToolOut.model_validate(tool, from_attributes=True)
+    context = _context(store, tool.context_id)
+    if effective_status(tool, context) == "stale":
+        output.status = "stale"
+        output.validation = None
+        output.validation_errors = []
+    return output
 
 
 def _context(store: Store, context_id: uuid.UUID) -> ContextRecord:
@@ -181,12 +188,12 @@ async def list_tools(store: StoreDep, context_id: uuid.UUID | None = None) -> To
     tools = sorted(store.tools.values(), key=lambda t: t.name)
     if context_id is not None:
         tools = [t for t in tools if t.context_id == context_id]
-    return ToolList(items=[_out(t) for t in tools])
+    return ToolList(items=[_out(t, store) for t in tools])
 
 
 @router.get("/tools/{name}")
 async def get_tool(name: str, store: StoreDep) -> ToolOut:
-    return _out(_tool(store, name))
+    return _out(_tool(store, name), store)
 
 
 @router.post("/tools/draft")
@@ -248,7 +255,7 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
         metric_binding=binding.model_dump() if binding else None,
     )
     save_validated_tool(store, tool, context, validation)
-    return _out(tool)
+    return _out(tool, store)
 
 
 @router.put("/tools/{name}")
@@ -272,7 +279,7 @@ async def update_tool(name: str, body: ToolUpdate, store: StoreDep) -> ToolOut:
         tool.operation = operation
         tool.version += 1
     save_validated_tool(store, tool, context, validation)
-    return _out(tool)
+    return _out(tool, store)
 
 
 @router.post("/tools/{name}/refresh-contract")
@@ -295,7 +302,7 @@ async def refresh_contract(name: str, body: VersionRequest, store: StoreDep) -> 
         tool.operation = operation
         tool.version += 1
     save_validated_tool(store, tool, context, validation)
-    return _out(tool)
+    return _out(tool, store)
 
 
 @router.delete("/tools/{name}", status_code=status.HTTP_204_NO_CONTENT)

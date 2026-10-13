@@ -271,9 +271,12 @@ class Store:
     # files ----------------------------------------------------------------------------
 
     def _write(self, path: Path, record: ContextRecord | ToolRecord) -> None:
-        data = json.dumps(
-            _to_json(record), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
-        )
+        try:
+            data = json.dumps(
+                _to_json(record), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
+            )
+        except (ValueError, TypeError) as e:
+            raise StoreError("Record contains unsupported JSON values.", operation="write") from e
         try:
             fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
             try:

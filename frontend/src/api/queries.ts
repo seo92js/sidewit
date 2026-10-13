@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { request } from "./client";
+import { ApiError, request } from "./client";
 import type {
   Context,
   ContextCreate,
@@ -156,6 +156,11 @@ export function useUpdateTool(name: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ToolUpdate) => request<Tool>("PUT", `/tools/${name}`, body),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        qc.invalidateQueries({ queryKey: keys.tool(name), exact: true });
+      }
+    },
     onSuccess: (tool) => {
       qc.setQueryData(keys.tool(name), tool);
       qc.invalidateQueries({ queryKey: keys.tools, exact: true });

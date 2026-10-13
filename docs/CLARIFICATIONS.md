@@ -94,3 +94,8 @@ letters, digits, underscores, colons or hyphens. Nonempty answers require a time
 `reference_time` and a positive `expected_context_version`; invalid input returns 422 before
 provider usage. Questions and answers reach the configured LLM provider and temporary in-memory
 generation history; they are not written to application logs or the Context/Tool data directory.
+
+
+The Playground lets users edit previous answers while answering the next round. Replacements
+keep their question IDs. It blocks continuations over 24 answers or 16,000 total characters
+(original question plus clarification questions and answers) before sending them.

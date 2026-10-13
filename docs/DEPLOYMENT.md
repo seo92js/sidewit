@@ -129,3 +129,12 @@ not preserved by that manual recreation. Do not point this version at a PostgreS
 Record the image versions you run and back up the data directory before upgrading. A newer
 image validates the existing files at startup; if it rejects them, keep the old image running
 on a copy of the backup until the files are migrated.
+
+
+### Browser security policy
+
+The bundled web server sends a same-origin Content Security Policy, forbids framing, and
+disables MIME sniffing. Monaco uses a local worker (blob worker URLs are permitted); styles
+allow inline declarations required by the editor. API calls use the same-origin /api/ proxy.
+If you customize the deployment to load remote assets or connect directly to another origin,
+update CSP narrowly for those origins. These headers do not replace API authentication.

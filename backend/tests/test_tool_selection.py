@@ -299,7 +299,28 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
     assert str(record.id) == generation_id
     assert (record.input_tokens, record.output_tokens) == (123, 45)
     assert record.latency_ms >= 0
-    assert record.prompt_version == "tool_selection_v2"
+    assert record.prompt_version == "tool_selection_v3"
     assert "REVIEW_PRIVATE_QUESTION" not in caplog.text
     assert "932847" not in caplog.text
     assert f"generation id={generation_id}" in caplog.text
+
+
+async def test_selection_reference_time_is_in_context_timezone(client, context, fake):
+    from datetime import datetime
+
+    from sidewit.generation.planners import GenerationInput
+    from sidewit.generation.tool_selection import selection_prompt
+    from sidewit.store import ContextRecord
+
+    record = ContextRecord(
+        name="local",
+        dialect="postgresql",
+        timezone="Asia/Seoul",
+        definition=context["definition"],
+    )
+    request = GenerationInput(
+        question="어제",
+        reference_time=datetime.fromisoformat("2026-10-12T23:30:00+00:00"),
+    )
+    prompt = selection_prompt([], record, request)
+    assert "Reference time: 2026-10-13T08:30:00+09:00" in prompt

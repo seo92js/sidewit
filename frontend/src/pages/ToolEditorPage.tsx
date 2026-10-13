@@ -1,3 +1,4 @@
+import { ApiError } from "@/api/client";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -191,12 +192,15 @@ export default function ToolEditorPage() {
 
 function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const navigate = useNavigate();
+  const latest = useTool(saved?.name);
   const contexts = useContexts();
   const create = useCreateTool();
   const update = useUpdateTool(saved?.name ?? "");
   const remove = useDeleteTool();
   const refresh = useRefreshContract(saved?.name ?? "");
-  const busy = create.isPending || update.isPending || refresh.isPending || remove.isPending;
+  const [reloading, setReloading] = useState(false);
+  const busy =
+    reloading || create.isPending || update.isPending || refresh.isPending || remove.isPending;
   const allowedNavigation = useRef<string | null>(null);
   const goAfterWrite = (path: string, state?: object) => {
     allowedNavigation.current = path;
@@ -213,6 +217,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
       metricBinding: tool.metric_binding ?? null,
     }));
     setBaseVersion(tool.version);
+    update.reset();
   };
   const set = (patch: Partial<FormState>) => {
     if (!busy) setForm((f) => ({ ...f, ...patch }));
@@ -266,6 +271,8 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     nameValid &&
     !!form.description.trim() &&
     !!form.contextId &&
+    (!saved || saved.version === baseVersion) &&
+    !(update.error instanceof ApiError && update.error.status === 409) &&
     validationCurrent &&
     !!validation.data?.valid &&
     dirty;
@@ -322,11 +329,13 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
       />
       {busy && (
         <p role="status" className="text-sm text-muted-foreground">
-          {refresh.isPending
-            ? "Rebuilding from contract…"
-            : remove.isPending
-              ? "Deleting Tool…"
-              : "Saving Tool…"}{" "}
+          {reloading
+            ? "Reloading Tool…"
+            : refresh.isPending
+              ? "Rebuilding from contract…"
+              : remove.isPending
+                ? "Deleting Tool…"
+                : "Saving Tool…"}{" "}
           Editing is temporarily locked.
         </p>
       )}
@@ -608,6 +617,29 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
           </div>
 
           <ErrorAlert error={saveError} title="Could not save tool" />
+          {saved &&
+            (saved.version !== baseVersion ||
+              (saveError instanceof ApiError && saveError.status === 409)) && (
+              <>
+                <p className="text-sm">Your edits are preserved. Copy them before reloading.</p>
+                <Button
+                  variant="outline"
+                  disabled={latest.isFetching}
+                  onClick={async () => {
+                    setReloading(true);
+                    try {
+                      const result = await latest.refetch();
+                      if (result.data && !result.isError) reload(result.data);
+                    } finally {
+                      setReloading(false);
+                    }
+                  }}
+                >
+                  Reload latest (discards your edits)
+                </Button>
+              </>
+            )}
+          <ErrorAlert error={latest.error} title="Could not reload tool" />
           <ErrorAlert error={remove.error} title="Could not delete tool" />
           <div className="flex flex-wrap gap-2">
             <Button onClick={save} disabled={!canSave || create.isPending || update.isPending}>

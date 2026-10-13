@@ -114,7 +114,7 @@ export default function PlaygroundPage() {
       ...continuation.request,
       reference_time: continuation.result.reference_time,
       expected_context_version: continuation.result.context_version,
-      clarification_answers: [...(continuation.request.clarification_answers ?? []), ...answers],
+      clarification_answers: answers,
     });
   };
   const submit = () => {
@@ -346,6 +346,8 @@ export default function PlaygroundPage() {
           <ClarificationForm
             key={continuation.result.generation_id}
             result={continuation.result}
+            originalQuestion={continuation.request.question}
+            previousAnswers={continuation.request.clarification_answers}
             pending={generate.isPending}
             blockedReason={clarificationBlock}
             onContinue={continueWith}

@@ -6,6 +6,19 @@ Initial release candidate.
 
 ### Features
 
+- Fix SQLGlot canonical names for boolean aggregates and string position; remove unreachable
+  function allowlist entries. Avoid treating temporal-to-text comparisons as database-clock
+  expressions. Lock Tool editing during explicit reloads and preserve drafts on reload failure.
+
+- Add Tool conflict recovery, protect navigation after Context deletion, and allow correction
+  of previous clarification answers with a client-side total-length check.
+- Close dollar-string value/placeholder checks and database-clock bypasses in supported
+  temporal comparisons; reject non-finite Context allowed values even for custom types.
+- Render Tool-selection reference times in the Context timezone.
+- Remove unused historical prompt files; previous versions remain in Git history.
+- Add production CSP, framing and MIME-sniffing headers; use Node.js 24 for Docker and CI.
+
+
 - Continue ambiguous requests with structured clarification choices or free-text answers in the
   Playground and API, preserving the reference time and checking the Context version.
 
@@ -21,6 +34,16 @@ Initial release candidate.
 - Apache-2.0 license.
 
 ### API changes
+
+- SQL function policy and timezone-aware Tool selection use prompt versions generate_v10,
+  hybrid_v5 and tool_selection_v3.
+
+- Enforce a closed SQL function allowlist for generation, validation and Tool invocation.
+  Context definitions add optional sql_extensions: ["postgis"] for supported spatial functions.
+  **Compatibility:** unknown/schema-qualified functions and escape/Unicode string literals
+  that previously passed validation are now rejected. Revalidate existing Tools after upgrading.
+- Report stale and omit the old validation verdict when a Tool's checked Context version differs.
+
 
 - Generate accepts optional `clarification_answers` and `expected_context_version`. Ambiguous
   responses add `clarification_questions` and resolved `reference_time`; the existing

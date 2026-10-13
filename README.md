@@ -210,3 +210,14 @@ The [specification](docs/SPEC.md) defines supported expressions and input limits
 The detailed specification is currently in Korean. Example values retain their original spelling.
 
 [Apache-2.0](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+
+### SQL function policy
+
+SQL validation uses a [closed function allowlist](docs/SQL_FUNCTIONS.md), including
+for saved Tools. Unknown or schema-qualified functions are rejected. To use supported
+spatial functions, enable **Allow supported PostGIS functions** in the Context editor,
+or set definition.sql_extensions to ["postgis"]. Sidewit does not install PostGIS.
+
+After upgrading, review and revalidate existing Tools: previously accepted functions or
+escape/Unicode string literals may now fail validation. Database privileges, a trusted
+search_path and execution limits remain your application's responsibility.

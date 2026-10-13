@@ -4,10 +4,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider, MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
-import { request } from "@/api/client";
+import { ApiError, request } from "@/api/client";
 import type { Context, Tool } from "@/api/types";
 import ToolEditorPage from "@/pages/ToolEditorPage";
 import PlaygroundPage from "@/pages/PlaygroundPage";
+import { ContextEditor } from "@/pages/ContextEditor";
 import ContextsPage from "@/pages/ContextsPage";
 import { InvokePanel } from "@/pages/tool/InvokePanel";
 
@@ -753,3 +754,119 @@ test("Clarification retry uses the response Context version after the cache catc
   );
   qc.clear();
 });
+
+test("Tool conflict preserves edits, reloads explicitly, and saves with the new version", async () => {
+  const remote = { ...tool, version: 2, description: "remote description" };
+  let conflict = true;
+  vi.mocked(request).mockImplementation(async (method, path, body) => {
+    if (method === "PUT") {
+      if (conflict) {
+        conflict = false;
+        throw new ApiError(409, { error: "version_conflict", message: "Changed", details: {} });
+      }
+      return { ...remote, ...(body as object), version: 3 };
+    }
+    if (method === "GET" && path === "/tools/report") return remote;
+    return valid;
+  });
+  const qc = client();
+  editor(qc);
+  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "my draft" } });
+  const save = screen.getByRole("button", { name: "Save as v2" });
+  await waitFor(() => expect(save).toHaveProperty("disabled", false));
+  fireEvent.click(save);
+  expect(await screen.findByText("Changed")).toBeTruthy();
+  expect(screen.getByLabelText("Description")).toHaveProperty("value", "my draft");
+  const reload = screen.getByRole("button", { name: "Reload latest (discards your edits)" });
+  await waitFor(() => expect(reload).toHaveProperty("disabled", false));
+  fireEvent.click(reload);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", "remote description"),
+  );
+  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "revised" } });
+  const retry = screen.getByRole("button", { name: "Save as v3" });
+  await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith(
+      "PUT",
+      "/tools/report",
+      expect.objectContaining({ expected_version: 2 }),
+    ),
+  );
+  qc.clear();
+});
+
+test("Deleting a dirty Context navigates without a discard dialog", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.mocked(request).mockImplementation(async (method, path) => {
+    if (method === "DELETE") return undefined;
+    if (path === "/contexts") return { items: [] };
+    return context;
+  });
+  const qc = client();
+  qc.setQueryData(["contexts", "c"], context);
+  const router = createMemoryRouter(
+    [
+      { path: "/contexts/c", element: <ContextEditor id="c" /> },
+      { path: "/contexts", element: <div>Context listing</div> },
+    ],
+    { initialEntries: ["/contexts/c"] },
+  );
+  render(
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "unsaved" } });
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByText("Context listing")).toBeTruthy();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(request).toHaveBeenCalledWith("DELETE", "/contexts/c");
+  vi.mocked(window.confirm).mockRestore();
+  qc.clear();
+});
+
+test.each(["success", "failure"])(
+  "Tool reload locks edits and navigation until %s",
+  async (outcome) => {
+    const remote = { ...tool, version: 2, description: "remote description" };
+    let resolve!: (value: Tool) => void;
+    let reject!: (reason: Error) => void;
+    const pending = new Promise<Tool>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    vi.mocked(request).mockImplementation(async (method, path) => {
+      if (method === "GET" && path === "/tools/report") return pending;
+      return valid;
+    });
+    const qc = client();
+    editor(qc);
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "old draft" } });
+    await act(async () => {
+      qc.setQueryData(["tools", "report"], remote);
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Reload latest (discards your edits)" }),
+    );
+    await waitFor(() => expect(request).toHaveBeenCalledWith("GET", "/tools/report"));
+    const field = screen.getByLabelText("Description");
+    expect(field.matches(":disabled")).toBe(true);
+    fireEvent.change(field, { target: { value: "new edit during reload" } });
+    expect(field).toHaveProperty("value", "old draft");
+    await userEvent.setup().click(screen.getByRole("link", { name: "Tools" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Keep editing" }));
+    await act(async () => {
+      if (outcome === "success") resolve(remote);
+      else reject(new Error("Reload unavailable"));
+    });
+    await waitFor(() => expect(field.matches(":disabled")).toBe(false));
+    expect(field).toHaveProperty(
+      "value",
+      outcome === "success" ? "remote description" : "old draft",
+    );
+    qc.clear();
+  },
+);

@@ -36,6 +36,7 @@ from sidewit.domain.params import (
     value_matches_type,
 )
 from sidewit.sql import COMPLEXITY_MESSAGE, parse_sql
+from sidewit.validation.functions import function_issues
 from sidewit.validation.request_literals import request_literal_issues
 from sidewit.validation.sql_analysis import (
     FieldRef,
@@ -69,12 +70,12 @@ _CURRENT_TIME_NODES = (
     exp.Localtimestamp,
 )
 _CURRENT_TIME_FUNCTIONS = {
+    "now",
     "clock_timestamp",
     "statement_timestamp",
     "transaction_timestamp",
     "timeofday",
 }
-_SPECIAL_TIME_LITERALS = {"now", "today", "tomorrow", "yesterday"}
 
 # Comparison node -> operator with the field on the left; flipped when the field is right.
 _COMPARISONS: dict[type[exp.Expression], str] = {
@@ -279,6 +280,8 @@ class _Validator:
     def _check(self, ast: exp.Expression) -> None:
         """Checks that need name resolution are skipped when the analysis fails; the others
         (parameters, placeholders, relative time) still run."""
+        self.checks.append("functions")
+        self.errors += function_issues(ast, self.context.sql_extensions)
         analyzed = True
         try:
             self.analysis = SqlAnalysis(ast, self.fields, self.string_fields, self.user_types)
@@ -307,7 +310,7 @@ class _Validator:
             )
         self._check_placeholder_safety(ast)
         if not self.policy.allow_relative_time:
-            self._check_relative_time(ast)
+            self._check_relative_time(ast, analyzed)
         # Text matching is only meaningful on structurally valid SQL.
         if analyzed and self.policy.request_text is not None and not self.errors:
             self.checks.append("request_literals")
@@ -343,6 +346,17 @@ class _Validator:
                 f"Exactly one statement is allowed; found {len(statements)}.",
             )
             return None
+        # Dollar strings have literal contents. Escape/Unicode strings require a complete
+        # PostgreSQL decoder; fail closed instead of letting them bypass value policies.
+        for node in list(statements[0].walk()):
+            if isinstance(node, exp.RawString):
+                node.replace(exp.Literal.string(node.this))
+            elif isinstance(node, (exp.ByteString, exp.UnicodeString)):
+                self._error(
+                    "unsupported_string_literal",
+                    "Escape and Unicode SQL strings are unsupported; use a bound parameter "
+                    "or an ordinary quoted string.",
+                )
         # Fold unquoted identifiers as PostgreSQL does; every later check (and error refs)
         # sees the names the database would resolve.
         return normalize_identifiers(statements[0], dialect=self.dialect)
@@ -769,10 +783,47 @@ class _Validator:
 
     # relative_time (policy) -----------------------------------------------------------
 
-    def _check_relative_time(self, ast: exp.Expression) -> None:
+    def _check_relative_time(self, ast: exp.Expression, analyzed: bool) -> None:
         self.checks.append("relative_time")
+        temporal_fields = {
+            (r.name, f.name)
+            for r in self.context.resources
+            for f in r.fields
+            if field_type(f) in {"date", "date-time"}
+        }
+        implicit_nodes: set[int] = set()
+        analysis = self.analysis if analyzed else None
+        if analysis:
+            for scope in analysis.scopes:
+                for node in scope.expression.find_all(*_COMPARISONS, exp.Between, exp.In):
+                    if node.find_ancestor(exp.Select) is not scope.expression:
+                        continue
+                    # Check the comparison operands, not descendant columns: a temporal
+                    # column inside TO_CHAR or a text cast does not make its result temporal.
+                    if isinstance(node, exp.Between):
+                        pairs = [(node.this, node.args[key]) for key in ("low", "high")]
+                    elif isinstance(node, exp.In):
+                        pairs = [(node.this, value) for value in node.expressions]
+                    else:
+                        pairs = [(node.this, node.expression), (node.expression, node.this)]
+                    for field_expr, value_expr in pairs:
+                        field_expr = field_expr.unnest()
+                        value_expr = value_expr.unnest()
+                        temporal = (
+                            isinstance(field_expr, exp.Cast)
+                            and field_expr.to.is_type(*exp.DataType.TEMPORAL_TYPES)
+                        ) or analysis.field(scope, field_expr) in temporal_fields
+                        if (
+                            temporal
+                            and isinstance(value_expr, exp.Literal)
+                            and value_expr.is_string
+                            and _special_time_literal(value_expr.this)
+                        ):
+                            implicit_nodes.add(id(node))
+                            break
         for node in ast.walk():
-            if is_current_time(node):
+            implicit_clock = id(node) in implicit_nodes
+            if is_current_time(node) or implicit_clock:
                 expression = node.sql(dialect=self.dialect)
                 self._error(
                     "relative_time_function",
@@ -780,6 +831,10 @@ class _Validator:
                     "reference_time into a parameter instead.",
                     expression,
                 )
+
+
+def _special_time_literal(value: str) -> bool:
+    return bool(re.match(r"^\s*(now|today|tomorrow|yesterday)(?:\s|$)", value, re.I))
 
 
 def is_current_time(node: exp.Expression) -> bool:
@@ -791,7 +846,7 @@ def is_current_time(node: exp.Expression) -> bool:
         return name in _CURRENT_TIME_FUNCTIONS or (name == "age" and len(node.expressions) == 1)
     if isinstance(node, exp.Cast) and isinstance(node.this, exp.Literal) and node.this.is_string:
         return node.to.is_type(*exp.DataType.TEMPORAL_TYPES) and (
-            node.this.this.strip().lower() in _SPECIAL_TIME_LITERALS
+            _special_time_literal(node.this.this)
         )
     return False
 

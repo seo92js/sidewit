@@ -64,6 +64,7 @@ async def test_create_defaults(client):
         "relations": [],
         "rules": [],
         "metrics": [],
+        "sql_extensions": [],
     }
 
 

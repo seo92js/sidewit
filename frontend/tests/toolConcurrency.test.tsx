@@ -79,18 +79,12 @@ test("server refetch preserves edits and the editor's original version", async (
   expect(screen.getByLabelText("Description")).toHaveProperty("value", "my unsaved edits");
   expect(await screen.findByText("Tool changed on the server")).toBeTruthy();
   const save = screen.getByRole("button", { name: "Save as v3" });
-  await waitFor(() => expect(save).toHaveProperty("disabled", false));
-  fireEvent.click(save);
+  expect(save).toHaveProperty("disabled", true);
+  vi.mocked(request).mockResolvedValueOnce({ ...tool, version: 2, description: "remote edit" });
+  fireEvent.click(screen.getByRole("button", { name: "Reload latest (discards your edits)" }));
   await waitFor(() =>
-    expect(request).toHaveBeenCalledWith(
-      "PUT",
-      "/tools/report",
-      expect.objectContaining({ expected_version: 1 }),
-    ),
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", "remote edit"),
   );
-  expect(screen.getByLabelText("Description")).toHaveProperty("value", "my unsaved edits");
-  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(screen.getByLabelText("Description")).toHaveProperty("value", "remote edit");
   client.clear();
 });
 

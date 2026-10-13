@@ -1,7 +1,7 @@
 import { contextValueErrors } from "@/lib/scalars";
 import { parseExactJson } from "@/lib/json";
 import { FileInput, RotateCcw, Save, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ApiError } from "@/api/client";
 import { useContextDetail, useDeleteContext, useUpdateContext } from "@/api/queries";
@@ -65,6 +65,7 @@ function parseMetricsJson(text: string): { metrics: MetricDefinition[]; error: s
 
 export function ContextEditor({ id }: { id: string }) {
   const navigate = useNavigate();
+  const allowedNavigation = useRef<string | null>(null);
   const context = useContextDetail(id);
   const update = useUpdateContext(id);
   const remove = useDeleteContext();
@@ -140,7 +141,8 @@ export function ContextEditor({ id }: { id: string }) {
     <div className="space-y-4">
       <UnsavedChangesGuard
         dirty={!remove.isSuccess && (dirty || importHasInput)}
-        busy={update.isPending}
+        busy={update.isPending || remove.isPending}
+        allowNavigation={(path) => allowedNavigation.current === path}
       />
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
@@ -181,6 +183,18 @@ export function ContextEditor({ id }: { id: string }) {
           </span>
         </label>
       </div>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox
+          checked={draft.definition.sql_extensions?.includes("postgis") ?? false}
+          onCheckedChange={(checked) =>
+            setDefinition({
+              ...draft.definition,
+              sql_extensions: checked === true ? ["postgis"] : [],
+            })
+          }
+        />
+        Allow supported PostGIS functions (requires PostGIS in your database)
+      </label>
       <div className="sticky top-12 z-10 flex flex-wrap items-center gap-3 border-b bg-background/95 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="font-mono">
@@ -233,7 +247,12 @@ export function ContextEditor({ id }: { id: string }) {
             disabled={remove.isPending || update.isPending}
             onClick={() => {
               if (confirm(`Delete context "${current.name}"? Its generation log is deleted too.`)) {
-                remove.mutate(id, { onSuccess: () => navigate("/contexts") });
+                remove.mutate(id, {
+                  onSuccess: () => {
+                    allowedNavigation.current = "/contexts";
+                    navigate("/contexts");
+                  },
+                });
               }
             }}
           >

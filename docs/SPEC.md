@@ -40,7 +40,7 @@ The license is Apache-2.0.
 
 ### Not included in v0.1
 
-Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, automatic composition of multiple Tools, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy, function allowlists and official support for dialects other than PostgreSQL.
+Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, automatic composition of multiple Tools, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
 
 ---
 
@@ -128,8 +128,8 @@ Rules:
 `definition.metrics` contains developer-registered contracts and defaults to `[]`. A contract specifies its metric ID, aggregate, explicit INNER JOINs, GROUP BY, fixed scalar comparisons, required inputs and allowed/default date columns. `row_count` means COUNT(*); `non_null_count` counts non-NULL values of the specified column. Overlapping fields between fixed conditions and caller inputs, or invalid types, references or JOINs, return 422 when saving the Context. DDL import preserves contracts and warns about invalid references.
 
 When no saved Tool is selected (§5.3), generation tries **registered metrics first** through three paths:
-- Without metrics, the model writes SQL (`generate_v9`).
-- With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v4`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
+- Without metrics, the model writes SQL (`generate_v10`).
+- With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v5`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
 - With `allow_generated_sql: false`, this generation stage uses metrics only (`metric_plan_v3`) and returns unanswerable when none matches. At least one registered metric is required for this setting; otherwise it returns 422 `no_generation_path`.
 
 Successful responses identify `source` as `tool` (saved Tool reuse), `metric` (contract compilation) or `generated_sql` (model-written SQL). Contract compilation is deterministic, but **does not guarantee that the model selected the right metric, inputs, date field or period** (for example, extracting `교토` when the allowed value is `京都`). See [metric contracts](METRIC_CONTRACTS.md) for fields and time boundaries.
@@ -314,7 +314,7 @@ Revalidation runs synchronously during `PUT /contexts/{id}`, updating the Contex
 `POST /generate`
 
 The default flow is **select a saved Tool from the same Context → otherwise use existing metric/SQL generation**.
-When Tools exist, a `tool_selection_v2` structured-output call selects one Tool and its arguments.
+When Tools exist, a `tool_selection_v3` structured-output call selects one Tool and its arguments.
 The model receives SQL and input contracts as well as descriptions. Without Tools, this call is skipped.
 Explicit metric options bypass Tool selection and use the existing metric path.
 Successful selection reuses existing invocation validation and returns `source: "tool"` and
@@ -398,7 +398,7 @@ A 200 response has one of three shapes:
 ```
 
 Generation flow when no saved Tool is selected:
-1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v9`) without metrics; `HybridPlanner` (`hybrid_v4`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v3`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. A structured `date_field` request option takes precedence. Otherwise, the model returns a `date_field` intent after interpreting the question, answers, field descriptions and metric default. The compiler accepts only a member of that metric's `time_fields` using the existing case-insensitive reference resolution; it never infers a choice from field-name mentions. A null choice returns ambiguous without silently applying a default; an invalid field triggers repair. Negated fields and fields requested only in the output must not select the period basis. Interpreting natural language remains probabilistic.
+1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v10`) without metrics; `HybridPlanner` (`hybrid_v5`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v3`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. A structured `date_field` request option takes precedence. Otherwise, the model returns a `date_field` intent after interpreting the question, answers, field descriptions and metric default. The compiler accepts only a member of that metric's `time_fields` using the existing case-insensitive reference resolution; it never infers a choice from field-name mentions. A null choice returns ambiguous without silently applying a default; an invalid field triggers repair. Negated fields and fields requested only in the output must not select the period basis. Interpreting natural language remains probabilistic.
 2. For `status=ok`, run the static Validator with the appropriate Generate policy (§7): `generate_policy(original question + answer values)` for SQL (including request-literal checks), or `CONTRACT_POLICY` for metrics. Return ambiguous/unanswerable without validation; discard any SQL the LLM supplied with those statuses.
 3. On validation failure, attach the errors and request repair **once only**.
 4. If repair also fails, return 422 `generation_invalid`. **The response contains no SQL.** Generated SQL remains only in the in-memory Generation record.
@@ -560,7 +560,7 @@ This DTO contains a selected metric, inputs, period and date-field reference, bu
   - Generate a single SELECT statement.
   - Apply §4 rules 2 and 3: parameterize only variable values, resolve relative times to absolute values, prohibit `NOW()` in new SQL and prohibit placeholders in literals.
   - Apply Business Rules.
-- Current generation prompts are `sidewit/prompts/generate_v9.md`, `sidewit/prompts/hybrid_v4.md` and `sidewit/prompts/metric_plan_v3.md`; each Generation records `prompt_version`. Tables/columns needing quotes for case or reserved words receive exact SQL spellings from the compiler's identifier renderer. Repairs for `unknown_resource`/`unknown_field` also include those spellings and quoting rules; SQL is not rewritten automatically and validation is not relaxed. `allowed_values` instructions require exact spelling without translation, transliteration or invention. Multiple undescribed date/timestamp fields produce an ambiguity hint, excluding bookkeeping timestamps such as `updated_at` and `deleted_at`. These are model instructions, not enforced validation.
+- Current generation prompts are `sidewit/prompts/generate_v10.md`, `sidewit/prompts/hybrid_v5.md` and `sidewit/prompts/metric_plan_v3.md`; each Generation records `prompt_version`. Tables/columns needing quotes for case or reserved words receive exact SQL spellings from the compiler's identifier renderer. Repairs for `unknown_resource`/`unknown_field` also include those spellings and quoting rules; SQL is not rewritten automatically and validation is not relaxed. `allowed_values` instructions require exact spelling without translation, transliteration or invention. Multiple undescribed date/timestamp fields produce an ambiguity hint, excluding bookkeeping timestamps such as `updated_at` and `deleted_at`. These are model instructions, not enforced validation.
 
 ---
 
@@ -585,13 +585,27 @@ def validate_sql_operation(
 
 ### 7.1 Guarantees and limits
 
-The Validator checks SQL parsing, a single SELECT-family statement, tables belonging to the Context, name resolution (§7.4), parameter contracts, relative time (per policy), and allowed-value/registered-constant policies within supported expressions.
+The Validator checks SQL parsing, a single SELECT-family statement, a closed function allowlist, tables belonging to the Context, name resolution (§7.4), parameter contracts, relative time (per policy), and allowed-value/registered-constant policies within supported expressions.
 
 It does not check function/operator existence or argument types, type compatibility, actual database executability, privileges, cost, function side effects, Business Rule compliance or whether the result answers the question. Such problems surface when the application executes or EXPLAINs SQL against its own database. The UI says "✓ SQL structurally validated", never "Context validated" or "safe".
 
 **Checks stay within their supported scope.** When required policies (allowed values or registered constants) cannot be analyzed outside supported expressions, reject with `value_unverifiable` rather than passing them.
 
 ### 7.2 Policies and checks
+
+The functions check uses a closed allowlist on every SQL path, including saved Tools.
+Unknown functions, schema-qualified calls, dynamic-SQL helpers, file access, sequence
+mutation and administration helpers are rejected with function_not_allowed.
+Supported table functions (unnest, generate_series, JSON element/entry functions) remain
+available; other table functions are rejected by the same allowlist.
+Context definition.sql_extensions defaults to []; ["postgis"] enables the explicitly
+listed spatial functions. This declares validation support, not database installation.
+DDL imports preserve it in both modes. See [SQL function policy](SQL_FUNCTIONS.md).
+
+Dollar-quoted strings are analyzed as ordinary string values. Escape (E'...') and Unicode
+(U&'...') strings are rejected with unsupported_string_literal, including in manually
+saved Tools. Use parameters or ordinary quoted strings instead.
+
 
 `ValidationPolicy` selects the policy for each path.
 
@@ -624,7 +638,7 @@ Metric parameters are contract-declared inputs, so `constant_as_parameter` does 
 | Literal or supplied parameter compared with an `allowed_values` field using `=`, `!=`, `IS [NOT] DISTINCT FROM`, `[NOT] IN` or `= ANY/SOME/ALL(ARRAY[...])` is absent from the list. Text matches exactly; numbers compare by value. Range comparisons and LIKE are excluded | `value_not_allowed` | error |
 | A value compared with a constrained field cannot be evaluated within the supported scope, e.g. `upper(:s)` | `value_unverifiable` | error |
 
-PostgreSQL expressions covered by `relative_time_function`: `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `timeofday()`, `'now'`/`'today'`/`'tomorrow'`/`'yesterday'` cast to date/time types, and single-argument `age(x)`. Its sole purpose is `reference_time` reproducibility; general nondeterministic functions such as `random()` are excluded.
+PostgreSQL expressions covered by `relative_time_function`: `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `timeofday()`, `'now'`/`'today'`/`'tomorrow'`/`'yesterday'` cast to date/time types, and single-argument `age(x)`. Special date words followed by a time (for example 'yesterday 10:00') and literals compared directly to known temporal fields are also checked, including aliases and CTE lineage. Its sole purpose is `reference_time` reproducibility; general nondeterministic functions such as `random()` are excluded.
 
 ### 7.3 Supported value policies
 

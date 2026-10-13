@@ -83,7 +83,7 @@ async def test_metric_route_is_contract_built(client, hybrid_context):
     assert body["operation"]["parameters"]["region"] == "서울"
     assert "metric_contract" in body["validation"]["checks"]
     record = await detail(client, body["generation_id"])
-    assert (record["prompt_version"], record["source"]) == ("hybrid_v4", "metric")
+    assert (record["prompt_version"], record["source"]) == ("hybrid_v5", "metric")
 
     system = provider.calls[0][0]
     assert "# SQL rules for `ok`" in system, "the SQL route rules are included"
@@ -192,7 +192,7 @@ async def test_context_without_metrics_uses_the_sql_planner(client):
     install(ok("SELECT 1", []))
     res = await ask(client, context)
     assert res.json()["source"] == "generated_sql"
-    assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == "generate_v9"
+    assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == "generate_v10"
 
 
 async def test_tool_drafts_keep_the_route(client, hybrid_context):

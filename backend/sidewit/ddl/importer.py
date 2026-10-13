@@ -113,6 +113,7 @@ def _import_ddl(
         relations=relations,
         rules=existing.rules,
         metrics=existing.metrics,
+        sql_extensions=existing.sql_extensions,
     )
     pending: list[PendingForeignKey] = []
     for fk in [*(pending_foreign_keys or []), *parsed.foreign_keys]:

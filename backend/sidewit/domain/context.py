@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,7 +21,7 @@ ScalarValue = str | int | float | bool
 
 
 class ContextField(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     name: str = Field(pattern=NAME_PATTERN)
     type: str = Field(min_length=1)
@@ -67,6 +67,7 @@ class ContextDefinition(BaseModel):
     relations: list[Relation] = []
     rules: list[Rule] = []
     metrics: list[MetricDefinition] = []
+    sql_extensions: list[Literal["postgis"]] = Field(default_factory=list, max_length=1)
 
     def find_resource(self, name: str) -> Resource | None:
         key = name.lower()

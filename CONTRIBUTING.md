@@ -5,7 +5,7 @@ proposing an Operation and executing it in the calling application.
 
 ## Development checks
 
-You need Docker for backend checks and Node.js 20.19+ with npm for frontend checks.
+You need Docker for backend checks and Node.js 24 LTS with npm for frontend checks.
 From the repository root:
 
 ```bash

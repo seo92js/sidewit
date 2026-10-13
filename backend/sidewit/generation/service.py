@@ -100,7 +100,7 @@ async def generate(
                 raise ContextDeleted(context.id)
             if current_context.version != record.context_version:
                 raise ToolSelectionError(
-                    409, "context_changed", "Context changed. Submit the question again."
+                    409, "context_changed", "Context changed. Start a new request."
                 )
             selection = selection_result.parsed
             if selection.route != "tool" and (

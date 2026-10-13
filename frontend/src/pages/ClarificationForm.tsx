@@ -9,18 +9,40 @@ type Ambiguous = Extract<GenerateResponse, { status: "ambiguous" }>;
 
 export function ClarificationForm({
   result,
+  originalQuestion = "",
+  previousAnswers = [],
   blockedReason,
   pending,
   onContinue,
 }: {
   result: Ambiguous;
+  originalQuestion?: string;
+  previousAnswers?: ClarificationAnswer[];
   blockedReason: string | null;
   pending: boolean;
   onContinue: (answers: ClarificationAnswer[]) => void;
 }) {
   const disabled = !!blockedReason;
-  const [values, setValues] = useState<Record<string, string>>({});
-  const questions = result.clarification_questions ?? [];
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(previousAnswers.map((answer) => [answer.id, answer.answer])),
+  );
+  const questions = [
+    ...previousAnswers.map((answer) => ({ ...answer, options: [] as string[] })),
+    ...(result.clarification_questions ?? []),
+  ];
+  const characters =
+    Array.from(originalQuestion).length +
+    questions.reduce(
+      (total, q) =>
+        total + Array.from(q.question).length + Array.from(values[q.id]?.trim() ?? "").length,
+      0,
+    );
+  const limitError =
+    characters > 16000
+      ? "Question and clarification answers exceed 16,000 characters. Shorten your answers or start a new request."
+      : questions.length > 24
+        ? "A request supports at most 24 clarification answers. Start a new request."
+        : null;
   const complete = questions.length > 0 && questions.every((q) => values[q.id]?.trim());
   return (
     <Card className="border-amber-300">
@@ -36,7 +58,7 @@ export function ClarificationForm({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (disabled || pending || !complete) return;
+            if (disabled || pending || !complete || limitError) return;
             onContinue(
               questions.map((q) => ({
                 id: q.id,
@@ -80,7 +102,12 @@ export function ClarificationForm({
                 />
               </div>
             ))}
-            <Button type="submit" disabled={!complete}>
+            {limitError && (
+              <p role="alert" className="text-destructive">
+                {limitError}
+              </p>
+            )}
+            <Button type="submit" disabled={!complete || !!limitError}>
               {pending ? "Continuing…" : "Continue with answers"}
             </Button>
           </fieldset>
