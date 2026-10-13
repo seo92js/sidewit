@@ -2,7 +2,7 @@
 
 Sidewit is one API container plus an optional web UI. It needs no database: Contexts and
 Tools are JSON files in a data directory that you mount as a volume (see
-[SPEC §11](SPEC.md#11-저장)). It never connects to an application database and never executes
+[SPEC §11](SPEC.md#11-storage)). It never connects to an application database and never executes
 SQL.
 
 ## What the data directory holds

@@ -95,8 +95,8 @@ export default function PlaygroundPage() {
         <div>
           <h1 className="text-lg font-semibold">Playground</h1>
           <p className="text-sm text-muted-foreground">
-            Ask in natural language. Sidewit returns a parameterized SQL operation — it never runs
-            SQL; your application does.
+            Ask in natural language. Sidewit first looks for a matching saved Tool, otherwise
+            creates a new SQL draft. It never runs SQL; your application does.
           </p>
         </div>
 
@@ -123,7 +123,7 @@ export default function PlaygroundPage() {
           {selected && (
             <p className="text-xs text-muted-foreground">
               {selected.definition.resources.length} resources · {selected.definition.rules.length}{" "}
-              business rules · timezone {selected.timezone} ·{" "}
+              business rules · timezone {selected.timezone} · saved Tools first, then{" "}
               {metrics.length === 0
                 ? "model-written SQL"
                 : selected.allow_generated_sql
@@ -145,7 +145,7 @@ export default function PlaygroundPage() {
                 setDateField("");
               }}
             >
-              <option value="">Let the model choose (a metric, or SQL if allowed)</option>
+              <option value="">Automatic (saved Tool, metric, or SQL if allowed)</option>
               {metrics.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.id} — {m.description}
@@ -257,7 +257,7 @@ export default function PlaygroundPage() {
                 {generate.variables.metric_id ??
                   (generate.variables.require_metric
                     ? "Registered metrics only"
-                    : "Automatic selection")}
+                    : "Saved Tool first, then generation")}
               </dd>
               <dt>Date basis</dt>
               <dd>{generate.variables.date_field ?? "Question or contract default"}</dd>
@@ -380,6 +380,18 @@ function GenerateResult({
       </CardHeader>
       <CardContent className="space-y-4">
         <SourceBadge source={result.source} />
+        {result.selected_tool && (
+          <p className="text-sm">
+            Tool:{" "}
+            <Link
+              className="underline"
+              to={`/tools/${encodeURIComponent(result.selected_tool.name)}`}
+            >
+              {result.selected_tool.name}
+            </Link>{" "}
+            · v{result.selected_tool.version}
+          </p>
+        )}
         {result.metric_binding && (
           <p className="text-sm">
             Metric contract: <code>{result.metric_binding.metric_id}</code>
@@ -401,19 +413,23 @@ function GenerateResult({
           }
         />
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
-            <Wrench /> {inputsChanged ? "Create draft from previous result" : "Create Tool draft"}
-          </Button>
+          {result.source !== "tool" && (
+            <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
+              <Wrench /> {inputsChanged ? "Create draft from previous result" : "Create Tool draft"}
+            </Button>
+          )}
           {result.tool_suggestion && (
             <span className="text-xs text-muted-foreground">
               suggested: <code className="font-mono">{result.tool_suggestion.name}</code>
             </span>
           )}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Generation history is temporary. Create and save a Tool before this record expires or the
-          server restarts.
-        </p>
+        {result.source !== "tool" && (
+          <p className="text-xs text-muted-foreground">
+            Generation history is temporary. Create and save a Tool before this record expires or
+            the server restarts.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -490,6 +506,15 @@ function GenerateError({ error }: { error: unknown }) {
 }
 
 function SourceBadge({ source }: { source: OperationSource }) {
+  if (source === "tool")
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge className="bg-emerald-600 text-white">saved Tool</Badge>
+        <span className="text-muted-foreground">
+          Reused saved SQL. Review the model-selected Tool and arguments.
+        </span>
+      </p>
+    );
   return source === "metric" ? (
     <p className="flex items-center gap-2 text-sm">
       <Badge className="bg-emerald-600 text-white">metric contract</Badge>

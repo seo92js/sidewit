@@ -127,6 +127,7 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
         "tool_suggestion",
         "metric_binding",
         "source",
+        "selected_tool",
     }
     assert body["source"] == "generated_sql"
     assert body["metric_binding"] is None

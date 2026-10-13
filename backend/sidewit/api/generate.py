@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
@@ -18,6 +18,7 @@ from sidewit.generation.planners import GenerationInput, InvalidGenerateRequest,
 from sidewit.generation.providers import build_provider
 from sidewit.generation.providers.base import LLMProvider
 from sidewit.generation.service import ContextDeleted, generate
+from sidewit.generation.tool_selection import ToolSelectionError
 from sidewit.validation.sql_validator import ValidationResult
 
 router = APIRouter(tags=["generate"])
@@ -59,11 +60,18 @@ class ToolSuggestion(BaseModel):
 
 # metric: SQL built by the server from a registered metric contract.
 # generated_sql: SQL written by the model and structurally validated; review its meaning.
-Source = Literal["metric", "generated_sql"]
+Source = Literal["metric", "generated_sql", "tool"]
+
+
+class SelectedTool(BaseModel):
+    name: str
+    version: int
 
 
 def source_of(record: GenerationRecord) -> Source:
-    return "metric" if record.metric_binding else "generated_sql"
+    return (
+        "tool" if record.selected_tool else "metric" if record.metric_binding else "generated_sql"
+    )
 
 
 class GenerateOk(BaseModel):
@@ -71,6 +79,7 @@ class GenerateOk(BaseModel):
     context_version: int
     status: Literal["ok"] = "ok"
     source: Source
+    selected_tool: SelectedTool | None = None
     operation: SqlOperation
     validation: ValidationResult
     tool_suggestion: ToolSuggestion | None
@@ -142,6 +151,8 @@ async def _generate_operation(
             definition,
             request,
         )
+    except ToolSelectionError as e:
+        raise ApiError(e.status, e.code, str(e), e.details) from e
     except InvalidGenerateRequest as e:
         raise ApiError(422, "invalid_metric_request", str(e)) from e
     except ContextDeleted as e:
@@ -158,6 +169,7 @@ async def _generate_operation(
             return GenerateOk(
                 **common,
                 source=source_of(record),
+                selected_tool=record.selected_tool,
                 operation=SqlOperation.model_validate(record.operation),
                 validation=ValidationResult.model_validate(record.validation),
                 tool_suggestion=record.tool_suggestion,
@@ -203,7 +215,10 @@ class GenerationSummary(BaseModel):
 
 
 class GenerationDetail(GenerationSummary):
+    # Untrusted model selection, for debugging only; never an invocable operation.
+    tool_selection: dict[str, Any] | None = None
     reference_time: datetime
+    selected_tool: SelectedTool | None = None
     source: Source | None = None  # set for ok generations
     operation: SqlOperation | None
     reason: str | None

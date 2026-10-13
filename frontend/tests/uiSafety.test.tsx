@@ -551,3 +551,41 @@ test("schema changes preserve compatible values and reset removed enum choices",
   expect(request).not.toHaveBeenCalled();
   qc.clear();
 });
+
+test("Playground identifies a reused Tool and links to it instead of creating another draft", async () => {
+  vi.mocked(request).mockResolvedValue({
+    status: "ok",
+    source: "tool",
+    generation_id: "g-tool",
+    context_version: 1,
+    selected_tool: { name: "report", version: 3 },
+    operation: {
+      type: "sql",
+      dialect: "postgresql",
+      statement: "SELECT 1",
+      parameters: {},
+      parameter_types: {},
+    },
+    validation: valid,
+    tool_suggestion: null,
+  });
+  const qc = client();
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <PlaygroundPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Run my report" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  const link = await screen.findByRole("link", { name: "report" });
+  expect(link.getAttribute("href")).toBe("/tools/report");
+  expect(screen.getByText("saved Tool")).toBeTruthy();
+  expect(screen.getByText(/v3/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create Tool draft" })).toBeNull();
+  expect(screen.queryByText(/Create and save a Tool before/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Copy API request" })).toBeTruthy();
+  qc.clear();
+});

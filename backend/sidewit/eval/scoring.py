@@ -13,6 +13,7 @@ from sidewit.eval.analysis import AnalysisError, SqlFacts, analyze
 from sidewit.eval.cases import ConstraintExpectation, Expectations
 from sidewit.validation.sql_validator import (
     CONTRACT_POLICY,
+    DEFAULT_POLICY,
     GENERATE_POLICY,
     validate_sql_operation,
 )
@@ -39,7 +40,7 @@ def score_operation(
         context,
         operation.parameter_types,
         operation.parameters,
-        CONTRACT_POLICY if source == "metric" else GENERATE_POLICY,
+        {"metric": CONTRACT_POLICY, "tool": DEFAULT_POLICY}.get(source, GENERATE_POLICY),
     )
     failures = [
         Failure(expectation="validity", detail=f"{error.code}: {error.message}")

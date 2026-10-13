@@ -6,6 +6,8 @@ Initial release candidate.
 
 ### Features
 
+- Select one matching saved Tool before generating a new operation, with validated arguments, explicit provenance and no silent fallback on Tool errors. Explicit metric requests retain their existing path.
+
 - Context management for schemas, relations, descriptions and business rules, with DDL import.
 - SQL draft generation with OpenAI or Gemini, static validation, and ambiguous/unanswerable responses.
 - Optional metric contracts for server-compiled SQL.
@@ -15,11 +17,17 @@ Initial release candidate.
 - Docker deployment, an optional management UI, and regression evaluation suites.
 - Apache-2.0 license.
 
+### API changes
+
+- Generate can now return `source: "tool"` and `selected_tool` (name/version); clients with exhaustive source handling must support the new value. Natural-language requests with saved Tools may use an additional LLM call. Direct Tool invocation remains LLM-free.
+
 ### Removed
 
 - Removed the temporary thumbs-up/down feedback UI, its generation feedback endpoint and response field. Feedback was not persisted or used by generation.
 
 ### Fixes
+
+- Record failed Tool selections in generation history with usage, debugging details and a generation ID in the error response, without falling back to SQL generation.
 
 - Preserve unsaved Tool edits when background refreshes fail.
 - Reset incompatible invocation inputs when a saved Tool schema changes, keeping displayed and submitted values consistent.
