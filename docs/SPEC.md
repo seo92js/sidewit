@@ -40,7 +40,7 @@ The license is Apache-2.0.
 
 ### Not included in v0.1
 
-Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, automatic composition of multiple Tools, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
+Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, dependent Tool chaining, mixed Tool/generated-SQL plans, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
 
 ---
 
@@ -189,9 +189,9 @@ Generations are **not persisted.** The running process retains recent records in
 ```
 id, context_id, context_version, question, reference_time,
 status            -- "ok" | "ambiguous" | "unanswerable" | "failed"
-operation, reason, clarifications, clarification_questions, clarification_answers,
+operation, reason, clarification_questions, clarification_answers,
 tool_suggestion, validation, metric_binding,
-selected_tool, tool_selection,
+operations, tool_selection,
 provider, model, prompt_version, attempts, latency_ms, input_tokens, output_tokens,
 created_at
 ```
@@ -297,7 +297,7 @@ Common behavior:
 - An optional `base_definition` merges against the unsaved draft and requires `expected_version`. If omitted, merge against the saved Context. Context size limits apply to both the input and merged result.
 - Optional `pending_foreign_keys` contains unresolved single-column foreign keys from earlier imports: `{table, column, ref_table, ref_column}`. `ref_column: null` resolves to the target table's single primary key. Retry resolution on the next import and return entries still unresolved. They are not automatically saved in the Context.
 - If tables from different schemas collide after schema removal within one DDL, return 422. Existing Contexts do not retain original schema names, so collisions across separate imports cannot be detected automatically. Review name transformations in the preview.
-- The response is `{ "context_version": 1, "definition": {...}, "warnings": ["..."], "warning_details": [{"code": "ignored_statement", "message": "...", "ref": null}], "pending_foreign_keys": [] }`. After review, the client saves it with `PUT`. Use `warning_details[].code` to classify warnings; the existing `warnings` string list remains for compatibility.
+- The response is `{ "context_version": 1, "definition": {...}, "warning_details": [{"code": "ignored_statement", "message": "...", "ref": null}], "pending_foreign_keys": [] }`. After review, the client saves it with `PUT`. Use `warning_details[].code` to classify warnings.
 
 ### 5.2 Revalidation contract
 
@@ -313,22 +313,35 @@ Revalidation runs synchronously during `PUT /contexts/{id}`, updating the Contex
 
 `POST /generate`
 
-The default flow is **select a saved Tool from the same Context → otherwise use existing metric/SQL generation**.
-When Tools exist, a `tool_selection_v3` structured-output call selects one Tool and its arguments.
-The model receives SQL and input contracts as well as descriptions. Without Tools, this call is skipped.
-Explicit metric options bypass Tool selection and use the existing metric path.
-Successful selection reuses existing invocation validation and returns `source: "tool"` and
-`selected_tool: {"name": "...", "version": 1}`. Other successful paths return null for `selected_tool`.
-The model neither modifies nor executes saved Tool SQL. Semantic correctness of Tool and argument selection is not guaranteed.
-Missing inputs or ambiguous intent return ambiguous. Invalid selection returns 422 `invalid_tool_selection`,
-argument contract violations return 422 `invalid_tool_arguments`, incompatible Tools return 409 `tool_invalid`,
-and Tool/Context changes during selection return 409 `tool_changed`/`context_changed`. These failures never fall back to generation.
+Requests automatically select 1–5 independent saved Tool calls covering the
+whole question, otherwise use existing metric/SQL generation for the whole question. No
+UI toggle or API mode is needed. Explicit metric options bypass Tool selection. With no
+Tools, the selection call is skipped. Context generation policy still applies.
+
+Selection uses `tool_plan_v2` and receives saved SQL and input contracts, Context-local
+reference time and clarification answers. Successful plans return `status: "ok", source:
+"plan", execution: "independent", operations: [...]`; there is no top-level operation or
+validation, even for one step. Each step contains its ID, Tool name/version, operation,
+validation and optional metric binding. Generation fallback retains its single-operation
+response (`source: "generated_sql"` or `"metric"`). Clients must handle both response shapes.
+See [Tool plans](TOOL_PLANS.md) for integration details.
+
+Plans never mix generated SQL or bind results between steps.
+
+All selected operations must validate before any are returned. Duplicate calls, invalid
+arguments and inconsistent routes return 422; incompatible Tools or concurrent Tool/Context
+changes return 409. These failures never fall back to generation. Missing inputs return
+ambiguous; dependent execution or excessive call counts return unanswerable. Selection of
+Tools, completeness and dependencies are model judgments, not static guarantees. Sidewit
+never executes SQL. A whole plan cannot become one Tool via /tools/draft (409
+plan_not_draftable); it already references saved Tools.
+
 A Tool catalog exceeding 100,000 JSON characters returns 422 `tool_catalog_too_large`; it is not arbitrarily truncated.
 Tool selection, argument and version validation failures after a model response are recorded as failed Generations, with `generation_id` included in the error details.
 The debugging detail `tool_selection` contains the unvalidated model selection, not an executable Operation. `reason` records the error code, and token counts and latency are retained.
 Selection content stays in memory; logs contain only existing metadata. Catalog size rejection before the call and Context deletion do not create records.
 Selection, subsequent generation and repair share the existing 90-second deadline. Attempts and token counts include selection calls.
-Multiple-Tool composition and automatic saving are not supported.
+Dependent Tool chaining, mixed Tool/generated-SQL plans and automatic saving are not supported.
 
 ```json
 {
@@ -366,7 +379,6 @@ A 200 response has one of three shapes:
   "context_version": 4,
   "status": "ok",
   "source": "generated_sql",
-  "selected_tool": null,
   "operation": {
     "type": "sql",
     "dialect": "postgresql",
@@ -383,7 +395,6 @@ A 200 response has one of three shapes:
 ```json
 { "generation_id": "uuid", "context_version": 4, "status": "ambiguous",
   "reason": "Revenue has multiple possible interpretations.",
-  "clarifications": ["Should revenue be based on completed payments or placed orders?"],
   "reference_time": "2026-10-02T00:00:00Z",
   "clarification_questions": [{
     "id": "uuid:0",
@@ -740,7 +751,7 @@ cases:
       forbidden_constructs: [relative_time_function]
 ```
 
-- `expect.status` is required; other expectations are optional. `source` (`tool` | `metric` | `generated_sql`) may also be specified.
+- `expect.status` is required; other expectations are optional. `source` (`plan` | `metric` | `generated_sql`) may also be specified.
 - `fields` / `forbidden_fields`: required / forbidden `resource.field` references.
 - `joins`: require an equality join between two fields in WHERE or JOIN ON, regardless of operand order.
 - `aggregates`: required SELECT aggregates (`count / sum / avg / min / max`, `field` as `resource.field` or `*`, `distinct` defaults to false). Treat `COUNT(*)`, `COUNT(1)` and `COUNT(field)` on a non-null field without outer JOINs as row counts.
@@ -751,6 +762,14 @@ cases:
 - `forbidden_constructs`: `select_star`, `relative_time_function`.
 - Optional `reference` is an authored expected Operation used as a test fixture, not for scoring.
 - Empty suites, duplicate case IDs, invalid timezones or Context integrity, and contradictory comparison targets fail before execution.
+
+For `source: plan`, a one-operation plan can use the ordinary SQL expectations above.
+For multiple operations, set `expect.steps` to 1–5 objects containing those SQL expectations
+and omit top-level SQL expectations. The count must match exactly. Independent steps are
+matched one-to-one without requiring response order; one operation cannot satisfy two entries.
+A multi-operation response without explicit step expectations fails with a setup guidance message.
+Each operation is independently revalidated with the saved-Tool policy. Reported validation
+errors retain their step IDs. Malformed plans and invalid step IDs fail evaluation.
 
 ### 9.2 Scoring
 

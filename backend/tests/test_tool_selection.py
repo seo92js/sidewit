@@ -4,7 +4,7 @@ import pytest
 
 from sidewit.generation.dto import LLMParameter
 from sidewit.generation.providers.base import StructuredResult
-from sidewit.generation.tool_selection import ToolSelection
+from sidewit.generation.tool_plan import ToolPlanSelection, plan_prompt
 from tests.test_generate_api import ask, ok
 from tests.test_generate_api import context as context
 from tests.test_generate_api import fake as fake
@@ -35,14 +35,18 @@ async def saved_tool(client, context, name="count_customers"):
 
 
 def choice(route="tool", name="count_customers", parameters=None, **kwargs):
-    return ToolSelection(
-        route=route,
-        tool_name=name if route == "tool" else None,
-        parameters=parameters
-        if parameters is not None
-        else (
-            [LLMParameter(name="region", type="string", value="서울")] if route == "tool" else []
-        ),
+    return ToolPlanSelection(
+        route="tools" if route == "tool" else route,
+        calls=[
+            {
+                "tool_name": name,
+                "parameters": parameters
+                if parameters is not None
+                else [LLMParameter(name="region", type="string", value="서울")],
+            }
+        ]
+        if route == "tool"
+        else [],
         reason=kwargs.get("reason"),
         clarifications=[
             {"question": q, "options": []} if isinstance(q, str) else q
@@ -57,15 +61,15 @@ async def test_reuses_exact_saved_sql_and_reports_provenance(client, context, fa
     response = await ask(client, context, question="서울 고객 수")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["source"] == "tool"
-    assert body["selected_tool"] == {"name": tool["name"], "version": 1}
-    assert body["operation"]["statement"] == tool["operation"]["statement"]
-    assert body["operation"]["parameters"] == {"region": "서울"}
-    assert body["tool_suggestion"] is None
+    assert body["source"] == "plan"
+    step = body["operations"][0]
+    assert step["selected_tool"] == {"name": tool["name"], "version": 1}
+    assert step["operation"]["statement"] == tool["operation"]["statement"]
+    assert step["operation"]["parameters"] == {"region": "서울"}
     assert len(provider.calls) == 1
     history = (await client.get(f"/api/v1/generations/{body['generation_id']}")).json()
-    assert history["selected_tool"] == body["selected_tool"]
-    assert history["source"] == "tool"
+    assert history["operations"] == body["operations"]
+    assert history["source"] == "plan"
     assert history["attempts"] == 1
 
 
@@ -75,7 +79,6 @@ async def test_no_match_falls_back_to_existing_generation(client, context, fake)
     response = await ask(client, context)
     assert response.status_code == 200, response.text
     assert response.json()["source"] == "generated_sql"
-    assert response.json()["selected_tool"] is None
     assert len(provider.calls) == 2
 
 
@@ -112,7 +115,7 @@ async def test_missing_intent_returns_clarification_not_generated_sql(client, co
             choice(parameters=[LLMParameter(name="region", type="string", value="서울")] * 2),
             "invalid_tool_arguments",
         ),
-        (choice("ambiguous"), "invalid_tool_selection"),
+        (choice("ambiguous"), "invalid_tool_plan"),
     ],
 )
 async def test_bad_selection_fails_without_fallback(client, context, fake, selection, code):
@@ -130,7 +133,6 @@ async def test_bad_selection_fails_without_fallback(client, context, fake, selec
     assert detail["attempts"] == 1
     assert detail["operation"] is None
     assert detail["source"] is None
-    assert detail["selected_tool"] is None
     draft = await client.post("/api/v1/tools/draft", json={"generation_id": generation_id})
     assert draft.status_code == 409
 
@@ -185,7 +187,7 @@ async def test_changes_during_selection_do_not_invoke_new_contract(
         detail = (await client.get(f"/api/v1/generations/{generation_id}")).json()
         assert detail["status"] == "failed"
         assert detail["operation"] is None
-        assert detail["tool_selection"]["tool_name"] == tool["name"]
+        assert detail["tool_selection"]["calls"][0]["tool_name"] == tool["name"]
     else:
         assert "generation_id" not in response.json()["details"]
         assert (await client.get("/api/v1/generations")).json()["items"] == []
@@ -238,8 +240,8 @@ async def test_selected_metric_tool_preserves_binding(client, metric_context, fa
     provider = fake(choice(name="count_orders", parameters=[]))
     response = await metric_ask(client, context)
     assert response.status_code == 200, response.text
-    assert response.json()["source"] == "tool"
-    assert response.json()["metric_binding"]["metric_id"] == "orders_count"
+    assert response.json()["source"] == "plan"
+    assert response.json()["operations"][0]["metric_binding"]["metric_id"] == "orders_count"
     assert len(provider.calls) == 1
 
 
@@ -299,7 +301,7 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
     assert str(record.id) == generation_id
     assert (record.input_tokens, record.output_tokens) == (123, 45)
     assert record.latency_ms >= 0
-    assert record.prompt_version == "tool_selection_v3"
+    assert record.prompt_version == "tool_plan_v2"
     assert "REVIEW_PRIVATE_QUESTION" not in caplog.text
     assert "932847" not in caplog.text
     assert f"generation id={generation_id}" in caplog.text
@@ -309,7 +311,6 @@ async def test_selection_reference_time_is_in_context_timezone(client, context, 
     from datetime import datetime
 
     from sidewit.generation.planners import GenerationInput
-    from sidewit.generation.tool_selection import selection_prompt
     from sidewit.store import ContextRecord
 
     record = ContextRecord(
@@ -322,5 +323,5 @@ async def test_selection_reference_time_is_in_context_timezone(client, context, 
         question="어제",
         reference_time=datetime.fromisoformat("2026-10-12T23:30:00+00:00"),
     )
-    prompt = selection_prompt([], record, request)
+    prompt = plan_prompt([], record, request)
     assert "Reference time: 2026-10-13T08:30:00+09:00" in prompt

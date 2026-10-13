@@ -11,7 +11,7 @@ const result: Extract<GenerateResponse, { status: "ambiguous" }> = {
   context_version: 1,
   reference_time: "2026-10-13T00:00:00Z",
   reason: "Choose a region",
-  clarifications: ["Region?"],
+
   clarification_questions: [{ id: "new", question: "Region?", options: [] }],
 };
 

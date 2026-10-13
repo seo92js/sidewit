@@ -63,10 +63,7 @@ export function DdlImport({
     JSON.stringify(preview.pending_foreign_keys ?? []) !== JSON.stringify(pendingForeignKeys);
   const hasChanges = changes?.changed || pendingChanged;
   // Older servers provide messages only: display all of them without guessing their category.
-  const details =
-    preview?.warning_details ??
-    preview?.warnings.map((message) => ({ code: "unknown", message })) ??
-    [];
+  const details = preview?.warning_details ?? [];
   const ignored = details.filter((w) => w.code === "ignored_statement").map((w) => w.message);
   const warnings = details
     .filter(

@@ -556,19 +556,25 @@ test("schema changes preserve compatible values and reset removed enum choices",
 test("Playground identifies a reused Tool and links to it instead of creating another draft", async () => {
   vi.mocked(request).mockResolvedValue({
     status: "ok",
-    source: "tool",
+    source: "plan",
+    execution: "independent",
     generation_id: "g-tool",
     context_version: 1,
-    selected_tool: { name: "report", version: 3 },
-    operation: {
-      type: "sql",
-      dialect: "postgresql",
-      statement: "SELECT 1",
-      parameters: {},
-      parameter_types: {},
-    },
-    validation: valid,
-    tool_suggestion: null,
+    operations: [
+      {
+        id: "step_1",
+        source: "tool",
+        selected_tool: { name: "report", version: 3 },
+        operation: {
+          type: "sql",
+          dialect: "postgresql",
+          statement: "SELECT 1",
+          parameters: {},
+          parameter_types: {},
+        },
+        validation: valid,
+      },
+    ],
   });
   const qc = client();
   render(
@@ -583,7 +589,7 @@ test("Playground identifies a reused Tool and links to it instead of creating an
   await user.click(screen.getByRole("button", { name: "Generate operation" }));
   const link = await screen.findByRole("link", { name: "report" });
   expect(link.getAttribute("href")).toBe("/tools/report");
-  expect(screen.getByText("saved Tool")).toBeTruthy();
+  expect(screen.getByText(/step_1 · saved Tool/)).toBeTruthy();
   expect(screen.getByText(/v3/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Create Tool draft" })).toBeNull();
   expect(screen.queryByText(/Create and save a Tool before/)).toBeNull();
@@ -597,7 +603,7 @@ const clarification = {
   context_version: 1,
   reference_time: "2026-10-13T01:00:00Z",
   reason: "Choose a date basis.",
-  clarifications: ["Which date?"],
+
   clarification_questions: [
     { id: "g1:0", question: "Which date?", options: ["Created", "Updated"] },
   ],
@@ -616,7 +622,7 @@ test("Clarification preserves the original request and accumulates answers acros
   const second = {
     ...clarification,
     generation_id: "g2",
-    clarifications: ["Which region?"],
+
     clarification_questions: [{ id: "g2:0", question: "Which region?", options: [] }],
   };
   vi.mocked(request)
@@ -870,3 +876,82 @@ test.each(["success", "failure"])(
     qc.clear();
   },
 );
+
+const toolPlanResult = {
+  status: "ok",
+  source: "plan",
+  execution: "independent",
+  generation_id: "plan-id",
+  context_version: 1,
+  operations: ["서울", "부산"].map((region, i) => ({
+    id: `step_${i + 1}`,
+    source: "tool",
+    selected_tool: { name: "report", version: 1 },
+    operation: {
+      type: "sql",
+      dialect: "postgresql",
+      statement: "SELECT COUNT(*) FROM stores WHERE region = :region",
+      parameters: { region },
+      parameter_types: { region: "string" },
+    },
+    validation: valid,
+  })),
+};
+
+test("Default generation and displays all operations without a draft action", async () => {
+  vi.mocked(request).mockResolvedValue(toolPlanResult);
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  expect(screen.queryByRole("checkbox", { name: "Plan with saved Tools" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "서울 부산 매장 수" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  expect(await screen.findByText("Saved Tool plan · 2 operations")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "step_1" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "step_2" })).toBeTruthy();
+  expect(screen.getAllByLabelText("SQL result")).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Copy plan JSON" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create Tool draft" })).toBeNull();
+  expect(request).toHaveBeenCalledWith(
+    "POST",
+    "/generate",
+    expect.objectContaining({ question: "서울 부산 매장 수" }),
+  );
+  qc.clear();
+});
+
+test("Default plan clarification preserves request and prevents continuation after question change", async () => {
+  vi.mocked(request)
+    .mockResolvedValueOnce({
+      status: "ambiguous",
+      generation_id: "plan-question",
+      context_version: 1,
+      reason: "Which regions?",
+
+      clarification_questions: [{ id: "q", question: "Regions?", options: [] }],
+      reference_time: "2026-10-13T00:00:00Z",
+    })
+    .mockResolvedValue(toolPlanResult);
+  const qc = client();
+  playground(qc);
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Compare regions" } });
+  await user.click(screen.getByRole("button", { name: "Generate operation" }));
+  const answer = await screen.findByLabelText("Regions?");
+  fireEvent.change(answer, { target: { value: "서울 부산" } });
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Changed question" } });
+  expect(answer.matches(":disabled")).toBe(true);
+  fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Compare regions" } });
+  await user.click(screen.getByRole("button", { name: "Continue with answers" }));
+  expect(await screen.findByText("Saved Tool plan · 2 operations")).toBeTruthy();
+  expect(request).toHaveBeenLastCalledWith(
+    "POST",
+    "/generate",
+    expect.objectContaining({
+      expected_context_version: 1,
+      reference_time: "2026-10-13T00:00:00Z",
+      clarification_answers: [{ id: "q", question: "Regions?", answer: "서울 부산" }],
+    }),
+  );
+  qc.clear();
+});

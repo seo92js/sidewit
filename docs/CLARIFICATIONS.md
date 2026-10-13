@@ -21,7 +21,6 @@ POST this body to `/api/v1/generate`. An ambiguous response includes:
   "context_version": 2,
   "status": "ambiguous",
   "reason": "리뷰 집계에 사용할 날짜 기준이 필요합니다.",
-  "clarifications": ["어떤 날짜 기준으로 집계할까요?"],
   "clarification_questions": [
     {
       "id": "GENERATION_UUID:0",
@@ -35,7 +34,7 @@ POST this body to `/api/v1/generate`. An ambiguous response includes:
 
 Questions and choices depend on your Context. Render choices as buttons or a selector and always
 offer a free-text answer. An empty `options` list means free text only. Keep the returned IDs;
-do not infer meaning from their format. `clarifications` remains a string list for older clients.
+do not infer meaning from their format. Use `clarification_questions` for both display and follow-up answers.
 
 ## 2. Resubmit with the answer
 
@@ -99,3 +98,8 @@ generation history; they are not written to application logs or the Context/Tool
 The Playground lets users edit previous answers while answering the next round. Replacements
 keep their question IDs. It blocks continuations over 24 answers or 16,000 total characters
 (original question plus clarification questions and answers) before sending them.
+
+
+The default automatic Tool selection also applies to follow-ups; no mode is required.
+Keep the original question, reference time, Context version and answers. The Playground
+preserves request inputs.

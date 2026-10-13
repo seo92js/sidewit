@@ -63,11 +63,6 @@ class ImportResult:
     warning_details: list[Issue]
     pending_foreign_keys: list[PendingForeignKey] = field(default_factory=list)
 
-    @property
-    def warnings(self) -> list[str]:
-        """Legacy messages for API clients that do not consume warning_details yet."""
-        return [warning.message for warning in self.warning_details]
-
 
 def import_ddl(
     existing: ContextDefinition,

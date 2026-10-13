@@ -28,7 +28,7 @@ export function ClarificationForm({
   );
   const questions = [
     ...previousAnswers.map((answer) => ({ ...answer, options: [] as string[] })),
-    ...(result.clarification_questions ?? []),
+    ...result.clarification_questions,
   ];
   const characters =
     Array.from(originalQuestion).length +

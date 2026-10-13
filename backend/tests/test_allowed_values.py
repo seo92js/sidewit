@@ -53,7 +53,9 @@ def test_enum_types_and_check_lists_become_allowed_values():
     assert values(d, "orders.channel") == ["web", "app"]
     assert values(d, "orders.note") == [], "other CHECK expressions are not value lists"
     assert values(d, "orders.id") == []
-    assert not any("CREATE TYPE" in w for w in result.warnings)
+    assert not any(
+        "CREATE TYPE" in w for w in [warning.message for warning in result.warning_details]
+    )
     assert definition_issues(d) == []
 
 
@@ -349,7 +351,9 @@ def test_combined_table_and_column_checks_intersect():
 def test_checks_that_cannot_be_imported_are_reported(column, warning):
     result = imported(f"CREATE TABLE t ({column});")
     assert result.definition.resources[0].fields[0].allowed_values == []
-    assert any(warning in w for w in result.warnings), result.warnings
+    assert any(warning in w for w in [warning.message for warning in result.warning_details]), [
+        warning.message for warning in result.warning_details
+    ]
 
 
 @pytest.mark.parametrize(
@@ -365,7 +369,7 @@ def test_checks_that_cannot_be_imported_are_reported(column, warning):
 def test_checks_that_are_not_value_lists_are_silent(column):
     result = imported(f"CREATE TABLE t ({column});")
     assert all(f.allowed_values == [] for f in result.definition.resources[0].fields)
-    assert result.warnings == []
+    assert [warning.message for warning in result.warning_details] == []
 
 
 async def test_ddl_preview_can_always_be_saved(client):
@@ -429,4 +433,6 @@ def test_real_pg_dump_output_is_imported():
     result = imported(PG_DUMP)
     fields = {f.name: f.allowed_values for f in result.definition.resources[0].fields}
     assert fields == {"status": ["A", "B"], "code": [1, 2], "m": ["ok", "bad"], "n": []}
-    assert not any("t.m" in warning for warning in result.warnings)
+    assert not any(
+        "t.m" in warning for warning in [warning.message for warning in result.warning_details]
+    )

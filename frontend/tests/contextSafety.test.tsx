@@ -42,7 +42,7 @@ const preview: ImportDdlResult = {
     ...context.definition,
     resources: [...context.definition.resources, { name: "imported", fields: [] }],
   },
-  warnings: [],
+  warning_details: [],
 };
 function setup(onRouter?: (router: ReturnType<typeof createMemoryRouter>) => void) {
   const client = new QueryClient({
@@ -160,7 +160,7 @@ test("sequential imports keep local descriptions and rules, then save once", asy
       const name = bodies.length === 1 ? "first" : "second";
       return {
         context_version: 1,
-        warnings: [],
+        warning_details: [],
         pending_foreign_keys: [],
         definition: {
           ...body.base_definition,
@@ -304,7 +304,7 @@ test("replacement requires acknowledgment; failed save retains the applied draft
 test("reimporting equivalent normalized fields is a no-op", async () => {
   vi.mocked(request).mockResolvedValue({
     context_version: 1,
-    warnings: [],
+    warning_details: [],
     pending_foreign_keys: [],
     definition: {
       ...context.definition,
@@ -384,7 +384,6 @@ test("Context navigation cannot discard an in-flight save", async () => {
 test("DDL warning categories use codes even when messages change", async () => {
   vi.mocked(request).mockResolvedValue({
     ...preview,
-    warnings: [],
     warning_details: [
       { code: "ignored_statement", message: "Index omitted (new wording)" },
       { code: "resource_preserved", message: "Existing resource preserved (new wording)" },

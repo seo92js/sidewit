@@ -8,6 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 from sidewit.domain.operation import SqlOperation
 from sidewit.eval.cases import GoldenCase, Suite
+from sidewit.eval.plans import score_plan
 from sidewit.eval.scoring import Failure, score_operation
 
 
@@ -20,7 +21,7 @@ class CaseResult(BaseModel):
     expected_status: str
     # ok | ambiguous | unanswerable | generation_invalid | <api error code>
     actual_status: str
-    # ok only: metric | generated_sql
+    # ok only: metric | generated_sql | plan
     actual_source: str | None = None
     generation_id: str | None
     failures: list[Failure]
@@ -160,25 +161,33 @@ async def _run_case(
             failures=[Failure(expectation="generation", detail="Missing generation id or status.")],
         )
     failures: list[Failure] = []
+    validation_errors = body.get("validation", {}).get("errors", [])
     if status != case.expect.status:
         failures.append(
             Failure(expectation="status", detail=f"expected {case.expect.status}, got {status}")
         )
     elif status == "ok":
-        try:
-            operation = SqlOperation.model_validate(body.get("operation"))
-        except ValidationError:
-            failures.append(Failure(expectation="generation", detail="Malformed SQL operation."))
+        if body.get("source") == "plan":
+            failures, validation_errors = score_plan(case.expect, body, suite.context)
         else:
-            failures = score_operation(
-                case.expect,
-                operation,
-                suite.context.definition,
-                suite.context.timezone,
-                body.get("source"),
-            )
-        if body.get("validation", {}).get("valid") is not True:
-            failures.append(Failure(expectation="validity", detail="API did not report valid SQL."))
+            try:
+                operation = SqlOperation.model_validate(body.get("operation"))
+            except ValidationError:
+                failures.append(
+                    Failure(expectation="generation", detail="Malformed SQL operation.")
+                )
+            else:
+                failures = score_operation(
+                    case.expect,
+                    operation,
+                    suite.context.definition,
+                    suite.context.timezone,
+                    body.get("source"),
+                )
+            if body.get("validation", {}).get("valid") is not True:
+                failures.append(
+                    Failure(expectation="validity", detail="API did not report valid SQL.")
+                )
         source = body.get("source")
         if case.expect.source is not None and source != case.expect.source:
             failures.append(
@@ -191,7 +200,7 @@ async def _run_case(
         actual_source=body.get("source"),
         generation_id=body["generation_id"],
         failures=failures,
-        validation_errors=body.get("validation", {}).get("errors", []),
+        validation_errors=validation_errors,
     )
 
 

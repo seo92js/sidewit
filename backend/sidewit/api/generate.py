@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from sidewit.api.errors import ApiError
 from sidewit.api.state import HistoryDep, StoreDep
@@ -19,6 +19,7 @@ from sidewit.generation.planners import GenerationInput, InvalidGenerateRequest,
 from sidewit.generation.providers import build_provider
 from sidewit.generation.providers.base import LLMProvider
 from sidewit.generation.service import ContextDeleted, generate
+from sidewit.generation.tool_plan import MAX_PLAN_OPERATIONS, PlannedOperation
 from sidewit.generation.tool_selection import ToolSelectionError
 from sidewit.validation.sql_validator import ValidationResult
 
@@ -36,6 +37,8 @@ GENERATION_TIMEOUT_SECONDS = 90
 
 
 class GenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     context_id: uuid.UUID
     question: str = Field(min_length=1, max_length=8000)
     reference_time: AwareDatetime | None = None
@@ -82,18 +85,13 @@ class ToolSuggestion(BaseModel):
 
 # metric: SQL built by the server from a registered metric contract.
 # generated_sql: SQL written by the model and structurally validated; review its meaning.
-Source = Literal["metric", "generated_sql", "tool"]
+Source = Literal["metric", "generated_sql"]
 
 
-class SelectedTool(BaseModel):
-    name: str
-    version: int
-
-
-def source_of(record: GenerationRecord) -> Source:
-    return (
-        "tool" if record.selected_tool else "metric" if record.metric_binding else "generated_sql"
-    )
+def source_of(record: GenerationRecord) -> Source | Literal["plan"]:
+    if record.operations is not None:
+        return "plan"
+    return "metric" if record.metric_binding else "generated_sql"
 
 
 class GenerateOk(BaseModel):
@@ -101,11 +99,19 @@ class GenerateOk(BaseModel):
     context_version: int
     status: Literal["ok"] = "ok"
     source: Source
-    selected_tool: SelectedTool | None = None
     operation: SqlOperation
     validation: ValidationResult
     tool_suggestion: ToolSuggestion | None
     metric_binding: MetricBinding | None = None
+
+
+class GeneratePlanOk(BaseModel):
+    generation_id: uuid.UUID
+    context_version: int
+    status: Literal["ok"] = "ok"
+    source: Literal["plan"] = "plan"
+    execution: Literal["independent"] = "independent"
+    operations: list[PlannedOperation] = Field(min_length=1, max_length=MAX_PLAN_OPERATIONS)
 
 
 class GenerateAmbiguous(BaseModel):
@@ -113,7 +119,6 @@ class GenerateAmbiguous(BaseModel):
     context_version: int
     status: Literal["ambiguous"] = "ambiguous"
     reason: str
-    clarifications: list[str]
     clarification_questions: list[ClarificationQuestion]
     reference_time: datetime
 
@@ -128,7 +133,7 @@ class GenerateUnanswerable(BaseModel):
 @router.post("/generate")
 async def generate_operation(
     body: GenerateRequest, store: StoreDep, history: HistoryDep, provider: ProviderDep
-) -> GenerateOk | GenerateAmbiguous | GenerateUnanswerable:
+) -> GenerateOk | GeneratePlanOk | GenerateAmbiguous | GenerateUnanswerable:
     try:
         async with asyncio.timeout(GENERATION_TIMEOUT_SECONDS):
             return await _generate_operation(body, store, history, provider)
@@ -202,10 +207,11 @@ async def _generate_operation(
 
     match result.outcome:
         case "ok":
+            if record.operations is not None:
+                return GeneratePlanOk(**common, operations=record.operations)
             return GenerateOk(
                 **common,
                 source=source_of(record),
-                selected_tool=record.selected_tool,
                 operation=SqlOperation.model_validate(record.operation),
                 validation=ValidationResult.model_validate(record.validation),
                 tool_suggestion=record.tool_suggestion,
@@ -215,7 +221,6 @@ async def _generate_operation(
             return GenerateAmbiguous(
                 **common,
                 reason=record.reason,
-                clarifications=record.clarifications or [],
                 clarification_questions=record.clarification_questions,
                 reference_time=record.reference_time,
             )
@@ -258,11 +263,10 @@ class GenerationDetail(GenerationSummary):
     # Untrusted model selection, for debugging only; never an invocable operation.
     tool_selection: dict[str, Any] | None = None
     reference_time: datetime
-    selected_tool: SelectedTool | None = None
-    source: Source | None = None  # set for ok generations
+    source: Source | Literal["plan"] | None = None  # set for ok generations
     operation: SqlOperation | None
+    operations: list[PlannedOperation] | None = None
     reason: str | None
-    clarifications: list[str] | None
     clarification_questions: list[ClarificationQuestion]
     clarification_answers: list[ClarificationAnswer]
     tool_suggestion: ToolSuggestion | None

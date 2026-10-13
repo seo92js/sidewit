@@ -14,6 +14,7 @@ Sidewit is not a database proxy: it never connects to a database or executes SQL
 |---|---|
 | Context | Manage schemas, relations, descriptions and business rules; import DDL |
 | Generate | Select a matching saved Tool first; otherwise produce SQL drafts, or return `ambiguous` / `unanswerable` |
+| Tool plans | Automatically select 1–5 independent saved Tool operations; fall back to generation when no complete Tool match exists |
 | Static validation | Check statement type, Context tables and columns, parameter contracts, and supported value policies |
 | Tools | Save and edit reviewed SQL and input contracts; revalidate after Context changes; invoke deterministically |
 | SQL metric contracts | Compile registered aggregates, joins, fixed filters and periods into SQL |
@@ -114,7 +115,7 @@ docker compose run --rm -T --no-deps -v ./examples/ecommerce:/examples:ro api py
 | Step | Request | Input / result |
 |---|---|---|
 | Create Context | `POST /contexts` | Schema, descriptions and rules from [context.json](examples/ecommerce/context.json) |
-| Preview DDL | `POST /contexts/{id}/import-ddl` | [schema.sql](examples/ecommerce/schema.sql) → `context_version`, `definition`, `warnings` |
+| Preview DDL | `POST /contexts/{id}/import-ddl` | [schema.sql](examples/ecommerce/schema.sql) → `context_version`, `definition`, `warning_details` |
 | Save Context | `PUT /contexts/{id}` | Review the preview; send the complete Context and `expected_version` |
 | Generate SQL | `POST /generate` | Context ID, question and reference time → Operation draft |
 | Draft Tool | `POST /tools/draft` | `generation_id` → SQL and input contract |
@@ -145,7 +146,7 @@ An illustrative `operation` from an `ok` response follows. This is an authored e
 
 For `ambiguous`, show `clarification_questions` as choices or a free-text input, then send the
 original request with the user's answers. See [continuing a request](docs/CLARIFICATIONS.md).
-The legacy `clarifications[]` text list remains available. For `unanswerable`, check whether the Context contains the required data. Neither status provides an Operation to execute.
+For `unanswerable`, check whether the Context contains the required data. Neither status provides an Operation to execute.
 
 Example input to the saved Tool's invoke endpoint:
 
@@ -157,11 +158,11 @@ Invoke does not call an LLM or execute SQL. Your application must adapt `:name` 
 
 ### Saved Tool selection
 
-`POST /generate` first asks the model to select one saved Tool from the same Context and extract
-its arguments. The catalog includes the Tool's SQL and input schema, so selection is based on
+By default, `POST /generate` asks the model to select 1–5 saved Tool calls from the same Context and extract
+their arguments. The catalog includes the Tool's SQL and input schema, so selection is based on
 its whole operation rather than just its name. A match invokes the existing deterministic Tool
-service; it never executes SQL. The response uses `source: "tool"` and
-`selected_tool: {"name": "...", "version": 1}`. Review the selected Tool and arguments: static
+service; it never executes SQL. The response uses `source: "plan"` and an `operations` array with per-step
+`selected_tool: {"name": "...", "version": 1}`. Review the selected Tools and arguments: static
 validation cannot prove that they answer the question.
 
 If no Tool matches, the existing metric/SQL generation path runs. Missing inputs or ambiguous
@@ -172,8 +173,7 @@ selection and use the metric path. With no saved Tools, there is no extra model 
 
 Natural-language selection requires an LLM call; direct `/tools/{name}/invoke` still does not.
 Selection and generation share the 90-second request deadline. Catalogs over 100,000 serialized
-characters are rejected with `tool_catalog_too_large` rather than silently truncated. Only one
-Tool is selected per request. New drafts are saved only when you explicitly create a Tool.
+characters are rejected with `tool_catalog_too_large` rather than silently truncated. New drafts are saved only when you explicitly create a Tool.
 
 ### SQL metric contracts
 
@@ -191,7 +191,7 @@ The suites are **regression cases exposed during development and review**, not a
 
 ## Limitations and roadmap
 
-- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, multi-Tool orchestration and Vector/RAG/MCP are not implemented.
+- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, dependent Tool chaining, mixed Tool/generated-SQL plans and Vector/RAG/MCP are not implemented.
 - Static validation does not guarantee executability, absence of side effects, execution cost or business correctness. The application must enforce database roles and function privileges, user and tenant authorization, and time/resource limits. Prose business rules and omitted conditions are not automatically enforced.
 - One API process owns a data directory on a local filesystem. Multiple instances are not supported. Once a Generation leaves memory, it cannot be used to create a Tool draft.
 - All Tool inputs are required. Optional/default/array inputs and Tool version history are not supported. Generate has a 90-second total request budget, including repair.
@@ -221,3 +221,13 @@ or set definition.sql_extensions to ["postgis"]. Sidewit does not install PostGI
 After upgrading, review and revalidate existing Tools: previously accepted functions or
 escape/Unicode string literals may now fail validation. Database privileges, a trusted
 search_path and execution limits remain your application's responsibility.
+
+
+### Multiple saved Tools
+
+Just submit a question in the Playground or to `POST /api/v1/generate`; no mode is needed.
+Sidewit automatically selects one or more saved Tools covering the whole request and returns
+all validated operations together. The same Tool can be selected with different inputs.
+If saved Tools cannot cover the whole request, the existing metric/SQL generation path handles
+the whole question. A response does not mix saved Tools and generated SQL. Applications must
+handle `source: "plan"` with `operations`, as well as single generated/metric `operation` responses. See [Tool plans](docs/TOOL_PLANS.md).

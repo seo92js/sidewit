@@ -147,7 +147,7 @@ def test_dump_check_casts_intersect_enum_values(type_name):
         "replace",
     )
     assert result.definition.resources[0].fields[0].allowed_values == ["ok", "bad"]
-    assert not result.warnings
+    assert not [warning.message for warning in result.warning_details]
 
 
 @pytest.mark.parametrize("cast", ["'ok'::missing", "'nope'::public.mood"])
@@ -160,7 +160,9 @@ def test_import_does_not_invent_unknown_cast_values(cast):
         "replace",
     )
     assert result.definition.resources[0].fields[0].allowed_values == ["ok", "bad"]
-    assert any("not plain literals" in w for w in result.warnings)
+    assert any(
+        "not plain literals" in w for w in [warning.message for warning in result.warning_details]
+    )
 
 
 @pytest.mark.parametrize(

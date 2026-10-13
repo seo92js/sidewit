@@ -45,6 +45,29 @@ docker compose run --rm -T --no-deps -v ./evals:/evals:ro -v ./eval-results:/res
 Exit code: 0 all passed, 1 some case failed, 2 setup error. No SQL is executed. Run results
 are not committed to the repository.
 
+## Evaluating saved Tool plans
+
+A successful saved Tool selection returns `source: plan` and `operations`. One-operation
+plans use the usual SQL expectations. For multiple operations, define expectations per step:
+
+```yaml
+expect:
+  status: ok
+  source: plan
+  steps:
+    - resources: [customers]
+      constraints:
+        - {field: customers.region, op: "=", parameter_value: Seoul}
+    - resources: [customers]
+      constraints:
+        - {field: customers.region, op: "=", parameter_value: Busan}
+```
+
+Do not mix `steps` with top-level SQL expectations. The evaluator requires the exact number
+of operations and matches them one-to-one regardless of order. Each step is independently
+validated; failures identify the expected step and returned step ID. Tool registration is
+still separate from suite setup. Without saved Tools, Generate uses the normal generation path.
+
 ## File-storage acceptance (2026-10-12 KST)
 
 One run per suite against the file-storage candidate, using real provider calls through the

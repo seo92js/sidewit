@@ -85,7 +85,7 @@ export interface MetricBinding {
  * Where an ok operation came from. metric: built by the server from a registered metric
  * contract. generated_sql: written by the model and structurally validated; review its meaning.
  */
-export type OperationSource = "metric" | "generated_sql" | "tool";
+export type OperationSource = "metric" | "generated_sql";
 
 export interface Context {
   id: string;
@@ -148,8 +148,7 @@ export interface ImportDdlRequest {
 export interface ImportDdlResult {
   context_version: number;
   definition: ContextDefinition;
-  warnings: string[];
-  warning_details?: Issue[];
+  warning_details: Issue[];
   pending_foreign_keys?: PendingForeignKey[];
 }
 
@@ -197,11 +196,29 @@ export interface GenerateRequest {
   require_metric?: boolean;
 }
 
+export interface PlannedOperation {
+  id: string;
+  source: "tool";
+  selected_tool: { name: string; version: number };
+  operation: SqlOperation;
+  validation: ValidationResult;
+  metric_binding?: MetricBinding | null;
+}
+
+export interface GeneratePlan {
+  status: "ok";
+  source: "plan";
+  execution: "independent";
+  generation_id: string;
+  context_version: number;
+  operations: PlannedOperation[];
+}
+
 export type GenerateResponse =
+  | GeneratePlan
   | {
       status: "ok";
       source: OperationSource;
-      selected_tool?: { name: string; version: number } | null;
       generation_id: string;
       context_version: number;
       operation: SqlOperation;
@@ -214,9 +231,8 @@ export type GenerateResponse =
       generation_id: string;
       context_version: number;
       reason: string;
-      clarifications: string[];
-      clarification_questions?: ClarificationQuestion[];
-      reference_time?: string;
+      clarification_questions: ClarificationQuestion[];
+      reference_time: string;
     }
   | {
       status: "unanswerable";
@@ -228,8 +244,8 @@ export type GenerateResponse =
 export interface GenerationDetail {
   tool_selection?: Record<string, unknown> | null;
   id: string;
-  source: OperationSource | null;
-  selected_tool?: { name: string; version: number } | null;
+  source: OperationSource | "plan" | null;
+  operations?: PlannedOperation[] | null;
   context_id: string;
   context_version: number;
   question: string;
@@ -243,8 +259,7 @@ export interface GenerationDetail {
   reference_time: string;
   operation: SqlOperation | null;
   reason: string | null;
-  clarifications: string[] | null;
-  clarification_questions?: ClarificationQuestion[];
+  clarification_questions: ClarificationQuestion[];
   clarification_answers?: ClarificationAnswer[];
   tool_suggestion: ToolSuggestion | null;
   validation: ValidationResult | null;

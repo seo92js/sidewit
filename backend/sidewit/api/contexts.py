@@ -102,7 +102,6 @@ class ImportDdlRequest(BaseModel):
 class ImportDdlResult(BaseModel):
     context_version: int
     definition: ContextDefinition
-    warnings: list[str]
     warning_details: list[Issue]
     pending_foreign_keys: list[PendingForeignKey]
 
@@ -253,7 +252,6 @@ async def import_context_ddl(
     return ImportDdlResult(
         context_version=record.version,
         definition=result.definition,
-        warnings=result.warnings,
         warning_details=result.warning_details,
         pending_foreign_keys=result.pending_foreign_keys,
     )

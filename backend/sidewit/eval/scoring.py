@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.operation import SqlOperation
 from sidewit.eval.analysis import AnalysisError, SqlFacts, analyze
-from sidewit.eval.cases import ConstraintExpectation, Expectations
+from sidewit.eval.cases import ConstraintExpectation, OperationExpectations
 from sidewit.validation.sql_validator import (
     CONTRACT_POLICY,
     DEFAULT_POLICY,
@@ -25,7 +25,7 @@ class Failure(BaseModel):
 
 
 def score_operation(
-    expect: Expectations,
+    expect: OperationExpectations,
     operation: SqlOperation,
     context: ContextDefinition,
     timezone: str,

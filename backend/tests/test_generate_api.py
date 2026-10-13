@@ -129,7 +129,6 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
         "tool_suggestion",
         "metric_binding",
         "source",
-        "selected_tool",
     }
     assert body["source"] == "generated_sql"
     assert body["metric_binding"] is None
@@ -236,7 +235,6 @@ async def test_ambiguous_returns_clarifications_without_sql(client, context, fak
         "reason": "Several date fields could define the period.",
         "reference_time": body["reference_time"],
         "clarification_questions": body["clarification_questions"],
-        "clarifications": ["Should the period be based on ordered_at or paid_at?"],
     }
     assert "SELECT" not in res.text
     assert len(provider.calls) == 1, "no repair or second call for ambiguous"

@@ -14,7 +14,9 @@ from tests.test_generate_api import context as context
 from tests.test_generate_api import fake as fake
 from tests.test_metric_api import metric_context as metric_context
 from tests.test_metric_contracts import plan
-from tests.test_tool_selection import choice, saved_tool
+from tests.test_tool_plan import call
+from tests.test_tool_plan import plan as tool_plan
+from tests.test_tool_selection import saved_tool
 
 
 def ambiguous(question="Which region?", options=("서울", "부산")):
@@ -43,7 +45,8 @@ async def test_stateless_answer_survives_history_eviction_and_preserves_time(
     )
     first = await ask(client, context, question="고객 목록", reference_time=None)
     body = first.json()
-    assert body["clarifications"] == ["Which region?"]
+    assert [q["question"] for q in body["clarification_questions"]] == ["Which region?"]
+    assert "clarifications" not in body
     assert body["clarification_questions"][0]["options"] == ["서울", "부산"]
     history.forget_context(UUID(context["id"]))
     payload = continuation(body)
@@ -66,16 +69,18 @@ async def test_stateless_answer_survives_history_eviction_and_preserves_time(
 async def test_answers_reach_tool_selection_and_fallback(client, context, fake):
     await saved_tool(client, context)
     provider = fake(
-        choice("ambiguous", reason="Missing region", clarifications=["Which region?"]),
-        choice(),
-        choice("generate"),
+        tool_plan(
+            [], "ambiguous", "Missing region", [{"question": "Which region?", "options": []}]
+        ),
+        tool_plan([call()]),
+        tool_plan([], "generate"),
         ok("SELECT id FROM customers", []),
     )
     first = (await ask(client, context, question="고객 수")).json()
     payload = continuation(first)
     reused = await ask(client, context, question="고객 수", **payload)
-    assert reused.json()["source"] == "tool"
-    assert reused.json()["operation"]["parameters"] == {"region": "서울"}
+    assert reused.json()["source"] == "plan"
+    assert reused.json()["operations"][0]["operation"]["parameters"] == {"region": "서울"}
     payload["clarification_answers"][0]["answer"] = "지역 조건 없이 고객 id 목록으로 변경"
     generated = await ask(client, context, question="고객 수", **payload)
     assert generated.json()["source"] == "generated_sql"
@@ -228,9 +233,9 @@ def test_structured_question_schema_is_required_for_all_routes():
     from sidewit.generation.dto import LLMGenerationOutput
     from sidewit.generation.metric_plan import LLMHybridPlan, LLMMetricPlan
     from sidewit.generation.providers.gemini import inline_refs
-    from sidewit.generation.tool_selection import ToolSelection
+    from sidewit.generation.tool_plan import ToolPlanSelection
 
-    for model in (LLMGenerationOutput, LLMHybridPlan, LLMMetricPlan, ToolSelection):
+    for model in (LLMGenerationOutput, LLMHybridPlan, LLMMetricPlan, ToolPlanSelection):
         schema = inline_refs(model.model_json_schema())
         question = schema["properties"]["clarifications"]["items"]
         assert question["type"] == "object"

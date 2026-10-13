@@ -71,7 +71,7 @@ async def test_numeric_cast_import_matches_postgres(client, expr, expected):
     assert r.status_code == 200, r.text
     body = r.json()
     actual = body["definition"]["resources"][0]["fields"][0]["allowed_values"]
-    assert actual == [expected] or (actual == [] and body["warnings"]), r.text
+    assert actual == [expected] or (actual == [] and body["warning_details"]), r.text
 
 
 @pytest.mark.parametrize(
