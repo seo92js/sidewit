@@ -321,8 +321,12 @@ Selection uses `tool_plan_v3` and receives saved SQL and input contracts, Contex
 reference time and clarification answers. Successful plans return `status: "ok", source:
 "plan", execution: "independent", operations: [...]`; there is no top-level operation or
 validation, even for one step. Each step contains its ID, source, operation, validation and optional metric binding.
-Saved Tool steps include Tool name/version; generated steps include their task. Generation fallback retains its single-operation
-response (`source: "generated_sql"` or `"metric"`). Clients must handle both response shapes.
+Saved Tool steps include Tool name/version; generated steps include their task. Generation
+fallback uses the same envelope with one step (`step_1`), and top-level source is
+`generated_sql` or `metric`. Source is provenance metadata, never a response-shape switch.
+There is no top-level operation, validation, tool_suggestion or metric_binding.
+A generated_sql or metric source requires exactly one step with the same source;
+contradictory source metadata is rejected by the response model.
 See [Tool plans](TOOL_PLANS.md) for integration details.
 
 Plans may mix saved Tools with generated SQL or metric operations, but never bind results
@@ -342,8 +346,8 @@ arguments and inconsistent routes return 422; incompatible Tools or concurrent T
 changes return 409. These failures never fall back to generation. Missing inputs return
 ambiguous; dependent execution or excessive call counts return unanswerable. Selection of
 Tools, completeness and dependencies are model judgments, not static guarantees. Sidewit
-never executes SQL. A whole plan cannot become one Tool via /tools/draft (409
-plan_not_draftable). Use generation_id plus step_id to draft one generated step; saved Tool
+never executes SQL. A multi-step plan requires a step ID when creating a Tool draft (409
+plan_not_draftable otherwise). Use generation_id plus step_id to draft one generated step; saved Tool
 steps return step_already_saved. Tool create accepts source_step_id alongside
 source_generation_id and preserves the selected step's metric contract.
 
@@ -387,7 +391,14 @@ is required. Re-run normal Tool selection, planning and validation with the supp
 Offered alternatives are excluded from request-literal checks; the planner is instructed not to treat them as user-selected values. Explicit metric
 options still take precedence. See [API integration example](CLARIFICATIONS.md).
 
-A 200 response has one of three shapes:
+Every ambiguous response also includes `continuation_request`, a complete `GenerateRequest`
+body with the normalized original question, all metric options and prior answers. The server
+sets its `reference_time` and `expected_context_version` from this generation. Clients merge
+new answers by ID into `clarification_answers` and POST that body to `/generate`. It is ordinary
+untrusted input, not a session or authorization token; all normal limits and version checks
+apply. Unanswered questions remain outside this body until the user answers them.
+
+A 200 response is a successful single operation or plan, ambiguous, or unanswerable:
 
 ```json
 {
@@ -395,16 +406,22 @@ A 200 response has one of three shapes:
   "context_version": 4,
   "status": "ok",
   "source": "generated_sql",
-  "operation": {
-    "type": "sql",
-    "dialect": "postgresql",
-    "statement": "SELECT ... WHERE c.region = :region AND o.created_at >= :start_date AND o.status = 'COMPLETED' ...",
-    "parameters": { "region": "서울", "start_date": "2026-09-02" },
-    "parameter_types": { "region": "string", "start_date": "date" }
-  },
-  "validation": { "valid": true, "errors": [], "warnings": [], "checks": ["syntax", "statement_policy", "resources", "fields", "parameters", "placeholder_safety"] },
-  "tool_suggestion": { "name": "regional_revenue", "description": "특정 지역의 기간 매출 조회" },
-  "metric_binding": null
+  "execution": "independent",
+  "operations": [{
+    "id": "step_1",
+    "source": "generated_sql",
+    "task": "Revenue for Seoul over the last 30 days",
+    "operation": {
+      "type": "sql",
+      "dialect": "postgresql",
+      "statement": "SELECT ... WHERE c.region = :region AND o.created_at >= :start_date AND o.status = 'COMPLETED' ...",
+      "parameters": { "region": "서울", "start_date": "2026-09-02" },
+      "parameter_types": { "region": "string", "start_date": "date" }
+    },
+    "validation": { "valid": true, "errors": [], "warnings": [], "checks": ["syntax", "statement_policy", "resources", "fields", "parameters", "placeholder_safety"] },
+    "tool_suggestion": { "name": "regional_revenue", "description": "특정 지역의 기간 매출 조회" },
+    "metric_binding": null
+  }]
 }
 ```
 
@@ -416,7 +433,13 @@ A 200 response has one of three shapes:
     "id": "uuid:0",
     "question": "Should revenue be based on completed payments or placed orders?",
     "options": ["Completed payments", "Placed orders"]
-  }] }
+  }],
+  "continuation_request": {
+    "context_id": "context-uuid", "question": "Revenue this month",
+    "reference_time": "2026-10-02T00:00:00Z", "expected_context_version": 4,
+    "clarification_answers": [], "metric_id": null, "date_field": null,
+    "period": null, "require_metric": false
+  } }
 ```
 
 ```json
@@ -458,7 +481,9 @@ Generation flow when no saved Tool is selected:
 
 `POST /tools/draft` makes no LLM call.
 - Requires an in-memory Generation with `status=ok`. Missing records return 404 `generation_not_found`; other statuses return 409 `generation_not_ok`.
-- Plans require `step_id` for a generated/metric step. Omit it for a standalone generation.
+- Select a generated/metric step with `step_id`, including `step_1` for a single result.
+  When there is exactly one step, omission selects it automatically. Multiple steps require an ID.
+  The resolved ID is returned as `source_step_id`; saved Tool steps cannot be drafted again.
 - Drafts are unvalidated starting material. Saving validates them against the Context at that time.
 - Map `operation.parameter_types` one-to-one to `input_schema`. Populate name and description from `tool_suggestion`. For string inputs compared with fields that have allowed values, use those values as the input `enum`.
 - Include `example_arguments` (the Generation's parameters) in the response.
@@ -472,12 +497,14 @@ Generation flow when no saved Tool is selected:
   "operation": { "type": "sql", "statement": "SELECT ... :region ... :start_date ..." },
   "example_arguments": { "region": "서울", "start_date": "2026-09-02" },
   "source_generation_id": "uuid",
+  "source_step_id": "step_1",
   "metric_binding": null
 }
 ```
 
 `source_generation_id` and `source_step_id` in `POST /tools`:
-- For a plan, retain both IDs from the draft; `source_step_id` cannot be supplied alone.
+- Retain both IDs from the draft; `source_step_id` cannot be supplied alone.
+  If it is omitted for a one-step Generation, the selected ID is still persisted.
 - Must reference an in-memory `ok` Generation of the same Context; otherwise return 422 `invalid_source_generation`.
 - A metric Generation passes on its `metric_binding`. Omitting it or sending null cannot remove it, and a different binding cannot replace it. PUT does not change bindings.
 

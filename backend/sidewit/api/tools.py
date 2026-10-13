@@ -15,6 +15,7 @@ from sidewit.domain.operation import SqlOperation
 from sidewit.domain.params import ParamType
 from sidewit.domain.tool import TOOL_NAME_PATTERN, ToolOperation, ToolStatus
 from sidewit.generation.history import GenerationRecord
+from sidewit.generation.operations import operation_steps
 from sidewit.store import ContextRecord, Store, ToolRecord
 from sidewit.tools.service import (
     ContractUnavailable,
@@ -224,25 +225,28 @@ async def draft_tool(body: DraftRequest, store: StoreDep, history: HistoryDep) -
             "generation_not_ok",
             f"Only generations with status 'ok' can be drafted (got '{generation.status}').",
         )
-    source = _generation_source(generation, body.step_id)
+    step_id, source = _generation_source(generation, body.step_id)
     context = _context(store, generation.context_id)
     draft = draft_from_generation(source, context)
-    return ToolDraft.model_validate(draft | {"source_step_id": body.step_id})
+    return ToolDraft.model_validate(draft | {"source_step_id": step_id})
 
 
-def _generation_source(generation: GenerationRecord, step_id: str | None) -> GenerationRecord:
-    if generation.operations is None:
-        if step_id is not None:
-            raise ApiError(422, "invalid_source_step", "This generation has no plan steps.")
-        return generation
+def _generation_source(
+    generation: GenerationRecord, step_id: str | None
+) -> tuple[str, GenerationRecord]:
+    steps = operation_steps(generation)
     if step_id is None:
-        raise ApiError(409, "plan_not_draftable", "Select a generated step to create a Tool draft.")
-    step = next((s for s in generation.operations if s["id"] == step_id), None)
+        if len(steps) != 1:
+            raise ApiError(
+                409, "plan_not_draftable", "Select a generated step to create a Tool draft."
+            )
+        step_id = steps[0]["id"]
+    step = next((s for s in steps if s["id"] == step_id), None)
     if step is None:
         raise ApiError(422, "invalid_source_step", "The selected step does not exist.")
     if step["source"] == "tool":
         raise ApiError(409, "step_already_saved", "This step already references a saved Tool.")
-    return replace(
+    return step_id, replace(
         generation,
         operations=None,
         operation=step["operation"],
@@ -258,6 +262,7 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
     if store.tool(body.name) is not None:
         raise ApiError(409, "tool_name_conflict", f"Tool '{body.name}' already exists.")
     binding = body.metric_binding
+    source_step_id = body.source_step_id
     if body.source_generation_id is not None:
         generation = history.get(body.source_generation_id)
         if generation is None or generation.context_id != context.id or generation.status != "ok":
@@ -266,7 +271,7 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
                 "invalid_source_generation",
                 "source_generation_id must reference a recent ok generation of the same context.",
             )
-        source = _generation_source(generation, body.source_step_id)
+        source_step_id, source = _generation_source(generation, body.source_step_id)
         source_binding = (
             MetricBinding.model_validate(source.metric_binding) if source.metric_binding else None
         )
@@ -288,7 +293,7 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
         context_version=context.version,
         status="valid",
         source_generation_id=body.source_generation_id,
-        source_step_id=body.source_step_id,
+        source_step_id=source_step_id,
         metric_binding=binding.model_dump() if binding else None,
     )
     save_validated_tool(store, tool, context, validation)

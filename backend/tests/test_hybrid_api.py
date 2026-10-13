@@ -75,13 +75,13 @@ async def test_metric_route_is_contract_built(client, hybrid_context):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["source"] == "metric"
-    assert body["metric_binding"] == {
+    assert body["operations"][0]["metric_binding"] == {
         "metric_id": "regional_revenue",
         "time_field": "orders.paid_at",
     }
-    assert "'COMPLETED'" in body["operation"]["statement"]
-    assert body["operation"]["parameters"]["region"] == "서울"
-    assert "metric_contract" in body["validation"]["checks"]
+    assert "'COMPLETED'" in body["operations"][0]["operation"]["statement"]
+    assert body["operations"][0]["operation"]["parameters"]["region"] == "서울"
+    assert "metric_contract" in body["operations"][0]["validation"]["checks"]
     record = await detail(client, body["generation_id"])
     assert (record["prompt_version"], record["source"]) == ("hybrid_v5", "metric")
 
@@ -98,9 +98,9 @@ async def test_sql_route_when_no_metric_fits(client, hybrid_context):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["source"] == "generated_sql"
-    assert body["metric_binding"] is None
-    assert body["operation"]["statement"] == REVENUE_SQL
-    assert "request_literals" in body["validation"]["checks"]
+    assert body["operations"][0]["metric_binding"] is None
+    assert body["operations"][0]["operation"]["statement"] == REVENUE_SQL
+    assert "request_literals" in body["operations"][0]["validation"]["checks"]
 
 
 async def test_sql_route_still_requires_request_values_as_parameters(client, hybrid_context):

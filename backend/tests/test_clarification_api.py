@@ -50,7 +50,14 @@ async def test_stateless_answer_survives_history_eviction_and_preserves_time(
     assert body["clarification_questions"][0]["options"] == ["서울", "부산"]
     history.forget_context(UUID(context["id"]))
     payload = continuation(body)
-    second = await ask(client, context, question="고객 목록", **payload)
+    request = body["continuation_request"]
+    assert request["context_id"] == context["id"]
+    assert request["question"] == "고객 목록"
+    assert request["reference_time"] == body["reference_time"]
+    assert request["expected_context_version"] == body["context_version"]
+    assert request["clarification_answers"] == []
+    request["clarification_answers"] = payload["clarification_answers"]
+    second = await client.post("/api/v1/generate", json=request)
     assert second.status_code == 200, second.text
     assert second.json()["status"] == "ok"
     sent = json.loads(provider.calls[1][1][0].content)
@@ -171,6 +178,8 @@ async def test_metric_date_choices_resolve(client, metric_context, fake):
         await ask(client, metric_context, question="Last month orders", metric_id="orders_count")
     ).json()
     assert first["status"] == "ambiguous"
+    assert first["continuation_request"]["metric_id"] == "orders_count"
+    assert first["continuation_request"]["reference_time"] == first["reference_time"]
     assert first["clarification_questions"][0]["options"] == ["orders.paid_at", "orders.ordered_at"]
     result = await ask(
         client,
@@ -180,7 +189,7 @@ async def test_metric_date_choices_resolve(client, metric_context, fake):
         **continuation(first, "orders.ordered_at"),
     )
     assert result.status_code == 200, result.text
-    assert result.json()["metric_binding"]["time_field"] == "orders.ordered_at"
+    assert result.json()["operations"][0]["metric_binding"]["time_field"] == "orders.ordered_at"
 
 
 async def test_multiple_rounds_preserve_answers(client, context, fake):
@@ -219,7 +228,7 @@ async def test_explicit_metric_option_overrides_answer(client, metric_context, f
         ],
     )
     assert result.status_code == 200, result.text
-    assert result.json()["metric_binding"]["time_field"] == "orders.paid_at"
+    assert result.json()["operations"][0]["metric_binding"]["time_field"] == "orders.paid_at"
 
 
 async def test_missing_clarification_questions_is_provider_failure(client, context, fake):
@@ -267,7 +276,7 @@ async def test_date_answer_uses_structured_intent_not_mentions(
     if field is None:
         assert body["status"] == "ambiguous" and "operation" not in body
     else:
-        assert body["metric_binding"]["time_field"] == field
+        assert body["operations"][0]["metric_binding"]["time_field"] == field
 
 
 async def test_unrelated_later_answer_does_not_override_date_intent(client, metric_context, fake):
@@ -286,7 +295,7 @@ async def test_unrelated_later_answer_does_not_override_date_intent(client, metr
             },
         ],
     )
-    assert result.json()["metric_binding"]["time_field"] == "orders.ordered_at"
+    assert result.json()["operations"][0]["metric_binding"]["time_field"] == "orders.ordered_at"
 
 
 @pytest.mark.parametrize("route", ["generation", "selection", "mixed"])
@@ -354,3 +363,46 @@ async def test_oversized_single_task_questions_are_not_silently_truncated(client
     response = await ask(client, context)
     assert response.json()["status"] == "unanswerable", response.text
     assert "clarification_questions" not in response.json()
+
+
+async def test_continuation_request_preserves_options_and_prior_answers(client, context, fake):
+    fake(ambiguous(), ambiguous("Which category?", ()))
+    first = (await ask(client, context, question="  Customer list  ")).json()
+    request = first["continuation_request"]
+    assert request["question"] == "Customer list"
+    question = first["clarification_questions"][0]
+    request["clarification_answers"] = [
+        {"id": question["id"], "question": question["question"], "answer": "서울"}
+    ]
+    second = await client.post("/api/v1/generate", json=request)
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "ambiguous"
+    assert second.json()["continuation_request"] == request
+    # The returned body remains ordinary untrusted input: changing its version is rejected.
+    request["expected_context_version"] += 1
+    stale = await client.post("/api/v1/generate", json=request)
+    assert stale.status_code == 409
+
+
+async def test_continuation_request_preserves_explicit_metric_options(client, metric_context, fake):
+    fake(
+        plan().model_copy(
+            update={
+                "status": "ambiguous",
+                "reason": "Need details",
+                "clarifications": ambiguous().clarifications,
+            }
+        )
+    )
+    options = {
+        "metric_id": "orders_count",
+        "date_field": "orders.ordered_at",
+        "require_metric": True,
+        "period": {"kind": "previous_month", "days": None},
+    }
+    result = await ask(client, metric_context, question="Order count", **options)
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["status"] == "ambiguous"
+    for key, value in options.items():
+        assert body["continuation_request"][key] == value

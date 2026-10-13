@@ -289,7 +289,8 @@ async def test_default_no_complete_match_generates_whole_question(client, contex
     response = await ask(client, context)
     assert response.status_code == 200, response.text
     assert response.json()["source"] == "generated_sql"
-    assert "operations" not in response.json()
+    assert len(response.json()["operations"]) == 1
+    assert "operation" not in response.json()
     assert len(provider.calls) == 2
     assert "generate: if no saved Tool fits" in provider.calls[0][0]
     record = await detail(client, response.json()["generation_id"])

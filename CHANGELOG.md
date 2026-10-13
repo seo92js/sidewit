@@ -4,7 +4,23 @@
 
 Initial release candidate.
 
+### Breaking changes
+
+- Every successful `POST /generate` response now returns `operations`, even for a single
+  generated SQL or metric result. Read operation, validation, metric_binding and tool_suggestion
+  from each step instead of the top level. No legacy response mode is retained.
+  Tool invoke and administrative generation-history responses are unchanged.
+
+### Fixes
+
+- Reject contradictory generation/step sources before evaluation so generated SQL cannot
+  be checked as a saved Tool. Preserve inferred step IDs in Tool drafts and saved provenance.
+
 ### Features
+
+- Return a ready-to-resubmit `continuation_request` for ambiguous generation responses,
+  preserving options, prior answers, reference time and Context version. Use it in the
+  Playground and document a minimal API client flow.
 
 - Simplify the Playground with collapsed advanced options and visible active settings.
   Summarize previous clarification answers while keeping them editable. Collapse validation
@@ -57,8 +73,9 @@ Initial release candidate.
 
 - Generate automatically selects saved Tools without a mode option. Saved Tool success returns
   `source: "plan"`, `execution: "independent"` and `operations`, including one-call plans.
-  Plans may include generated/metric steps. Whole-question generation retains its single operation. Generation detail includes
-  operations. Selection uses tool_plan_v3.
+  Plans may include generated/metric steps. Whole-question generation also returns an operations
+  array containing one step. Administrative generation detail retains its diagnostic fields.
+  Selection uses tool_plan_v3.
 - Remove legacy single-Tool response handling and duplicate text-only clarification/DDL warning
   fields. Use clarification_questions and warning_details. Unknown Generate request fields
   are rejected instead of silently ignored.

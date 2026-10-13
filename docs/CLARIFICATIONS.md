@@ -29,7 +29,18 @@ POST this body to `/api/v1/generate`. An ambiguous response includes:
       "options": ["리뷰 작성일", "리뷰 수정일"]
     }
   ],
-  "reference_time": "2026-10-13T01:00:00Z"
+  "reference_time": "2026-10-13T01:00:00Z",
+  "continuation_request": {
+    "context_id": "YOUR_CONTEXT_UUID",
+    "question": "이번 달 리뷰왕",
+    "reference_time": "2026-10-13T01:00:00Z",
+    "expected_context_version": 2,
+    "clarification_answers": [],
+    "metric_id": null,
+    "date_field": null,
+    "period": null,
+    "require_metric": false
+  }
 }
 ```
 
@@ -39,7 +50,12 @@ do not infer meaning from their format. Use `clarification_questions` for both d
 
 ## 2. Resubmit with the answer
 
-POST to the same endpoint:
+Use the returned `continuation_request` as the next POST body. It already contains the original
+question, metric options, prior answers, fixed reference time and expected Context version.
+Merge the new answers into its `clarification_answers` by ID, then POST to the same endpoint.
+Do not POST the entire response, and do not retry without collecting an answer.
+
+For example, after adding the answer (null/default metric options omitted here):
 
 ```json
 {
@@ -57,7 +73,7 @@ POST to the same endpoint:
 }
 ```
 
-Preserve the original request's metric options, if any. An explicit request `date_field` takes
+The returned request preserves all original metric options, including an explicit period. An explicit request `date_field` takes
 precedence over free-text answers. Without that override, the Metric planner interprets the
 answer and returns a date-field choice for the server to validate; the compiler never treats a
 field-name mention as a selection. An unresolved choice remains ambiguous. See
@@ -69,18 +85,23 @@ Sidewit evaluates saved Tools and generation again with the added information an
 validation. A new condition may make a previously suitable Tool unsuitable. The response can
 be `ok`, `ambiguous` again, or `unanswerable`; no outcome guarantees execution or business accuracy.
 
-For another clarification round, append new `{id, question, answer}` items and resend all prior
+For another clarification round, use the latest `continuation_request`, append new `{id, question, answer}` items and resend all prior
 answers. To correct an existing answer, replace the item with that ID rather than duplicating it.
 A new independent question should omit the answers and start with a new reference time.
 
 ## Client handling
 
-- `ok`: review the returned Operation; your application decides whether and how to execute it.
+- `ok`: review every step in `operations`; your application
+  decides whether and how to execute them. See [API integration](API_USAGE.md).
 - `ambiguous`: collect the next answers. Do not automatically retry without new user input.
 - `unanswerable`: explain the missing data or definition; changing an answer may not resolve it.
 - `409 context_changed`: retain the user's text, fetch the current Context and start a new request.
   Do not silently replace the expected version on an existing continuation.
 - Other request errors: preserve typed answers for correction or retry. Avoid concurrent retries.
+
+`continuation_request` is an ordinary request body, not a signed token or a session. It
+contains user text, so treat it with the same privacy controls as the original request.
+It does not include the new unanswered questions as empty answers; add them after user input.
 
 No session ID, resume endpoint or persistent conversation store is required. A server restart or
 generation-history expiry does not prevent continuation. The submitted history is caller-owned,

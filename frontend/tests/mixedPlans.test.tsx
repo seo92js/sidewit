@@ -4,8 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 import { request } from "@/api/client";
-import type { GeneratePlan } from "@/api/types";
-import { ToolPlanView } from "@/pages/ToolPlanView";
+import type { GenerateOk } from "@/api/types";
+import { OperationResultView } from "@/pages/OperationResultView";
 import ToolEditorPage from "@/pages/ToolEditorPage";
 
 vi.mock("@/api/client", async (original) => ({
@@ -26,7 +26,7 @@ const operation = {
   parameters: {},
   parameter_types: {},
 };
-const plan: GeneratePlan = {
+const plan: GenerateOk = {
   status: "ok",
   source: "plan",
   execution: "independent",
@@ -55,7 +55,7 @@ const plan: GeneratePlan = {
 test("mixed plan labels provenance and offers drafts only for new operations", () => {
   render(
     <MemoryRouter>
-      <ToolPlanView result={plan} />
+      <OperationResultView result={plan} inputsChanged={false} />
     </MemoryRouter>,
   );
   expect(screen.getByText("Operation plan · 3 operations")).toBeTruthy();

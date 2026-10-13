@@ -190,8 +190,12 @@ export interface GenerateRequest {
   reference_time?: string;
   expected_context_version?: number;
   clarification_answers?: ClarificationAnswer[];
-  metric_id?: string;
-  date_field?: string;
+  metric_id?: string | null;
+  date_field?: string | null;
+  period?: {
+    kind: "rolling_days" | "previous_day" | "previous_week" | "previous_month";
+    days?: number | null;
+  } | null;
   /** Answer only with a registered metric for this request. */
   require_metric?: boolean;
 }
@@ -209,9 +213,9 @@ export type PlannedOperation = PlannedOperationBase &
     | { source: "generated_sql" | "metric"; task: string; tool_suggestion?: ToolSuggestion | null }
   );
 
-export interface GeneratePlan {
+export interface GenerateOk {
   status: "ok";
-  source: "plan";
+  source: OperationSource | "plan";
   execution: "independent";
   generation_id: string;
   context_version: number;
@@ -219,17 +223,7 @@ export interface GeneratePlan {
 }
 
 export type GenerateResponse =
-  | GeneratePlan
-  | {
-      status: "ok";
-      source: OperationSource;
-      generation_id: string;
-      context_version: number;
-      operation: SqlOperation;
-      validation: ValidationResult;
-      tool_suggestion: ToolSuggestion | null;
-      metric_binding?: MetricBinding | null;
-    }
+  | GenerateOk
   | {
       status: "ambiguous";
       generation_id: string;
@@ -237,6 +231,7 @@ export type GenerateResponse =
       reason: string;
       clarification_questions: ClarificationQuestion[];
       reference_time: string;
+      continuation_request: GenerateRequest;
     }
   | {
       status: "unanswerable";

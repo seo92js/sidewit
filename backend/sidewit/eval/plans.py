@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from sidewit.api.generate import GeneratePlanOk
+from sidewit.api.generate import GenerateOk
 from sidewit.eval.cases import Expectations, SuiteContext
 from sidewit.eval.scoring import Failure, score_operation
 
@@ -14,9 +14,9 @@ def score_plan(
     expect: Expectations, body: dict[str, Any], context: SuiteContext
 ) -> tuple[list[Failure], list[dict[str, Any]]]:
     try:
-        plan = GeneratePlanOk.model_validate(body)
+        plan = GenerateOk.model_validate(body)
     except ValidationError:
-        return [Failure(expectation="generation", detail="Malformed Tool plan.")], []
+        return [Failure(expectation="generation", detail="Malformed operation result.")], []
 
     failures = []
     errors = []
