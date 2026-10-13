@@ -219,7 +219,10 @@ async def test_import_ddl_merge_preview_does_not_save(client):
     assert amount["description"] == "실제 결제 금액"
     assert amount["type"] == "decimal(12, 2)"
     assert [f["name"] for f in orders["fields"]][-1] == "status"
-    assert "Resource 'customers' is not in the DDL; kept as is." in body["warnings"]
+    assert "warnings" not in body
+    assert "Resource 'customers' is not in the DDL; kept as is." in [
+        w["message"] for w in body["warning_details"]
+    ]
 
     current = (await client.get(f"/api/v1/contexts/{context['id']}")).json()
     assert current == context

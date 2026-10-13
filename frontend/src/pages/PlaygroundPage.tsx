@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, HelpCircle, Sparkles, Wrench, XCircle } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles, Wrench, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -30,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { generateRequestCurl } from "@/lib/apiRequest";
 
+import { ToolPlanView } from "./ToolPlanView";
 import { ClarificationForm } from "./ClarificationForm";
 
 const CONTEXT_STORAGE = "sidewit.playground.context";
@@ -91,20 +92,14 @@ export default function PlaygroundPage() {
       ? "The Context changed on the server. Generate a new request to continue."
       : continuation &&
           (continuation.request.clarification_answers?.length ?? 0) +
-            (continuation.result.clarification_questions?.length ?? 0) >
+            continuation.result.clarification_questions.length >
             24
         ? "This request reached the clarification limit. Start a new request with the details you have provided."
         : null;
   const send = (payload: GenerateRequest) => {
     generate.mutate(payload, {
       onSuccess: (result) => {
-        setContinuation(
-          result.status === "ambiguous" &&
-            result.clarification_questions?.length &&
-            result.reference_time
-            ? { result, request: payload }
-            : null,
-        );
+        setContinuation(result.status === "ambiguous" ? { result, request: payload } : null);
       },
     });
   };
@@ -145,7 +140,7 @@ export default function PlaygroundPage() {
         <div>
           <h1 className="text-lg font-semibold">Playground</h1>
           <p className="text-sm text-muted-foreground">
-            Ask in natural language. Sidewit first looks for a matching saved Tool, otherwise
+            Ask in natural language. Sidewit selects one or more matching saved Tools, otherwise
             creates a new SQL draft. It never runs SQL; your application does.
           </p>
         </div>
@@ -327,7 +322,7 @@ export default function PlaygroundPage() {
                 {generate.variables.metric_id ??
                   (generate.variables.require_metric
                     ? "Registered metrics only"
-                    : "Saved Tool first, then generation")}
+                    : "Saved Tools first, then generation")}
               </dd>
               <dt>Date basis</dt>
               <dd>{generate.variables.date_field ?? "Question or contract default"}</dd>
@@ -353,9 +348,10 @@ export default function PlaygroundPage() {
             onContinue={continueWith}
           />
         )}
-        {!generate.isPending && generate.data && !continuation && (
-          <GenerateResult result={generate.data} inputsChanged={inputsChanged} />
-        )}
+        {!generate.isPending &&
+          generate.data &&
+          generate.data.status !== "ambiguous" &&
+          !continuation && <GenerateResult result={generate.data} inputsChanged={inputsChanged} />}
         {!generate.isPending && !generate.data && !generate.error && (
           <Empty>
             The generated operation, or why Sidewit could not produce one, appears here.
@@ -396,41 +392,10 @@ function GenerateResult({
   result,
   inputsChanged,
 }: {
-  result: GenerateResponse;
+  result: Exclude<GenerateResponse, { status: "ambiguous" }>;
   inputsChanged: boolean;
 }) {
   const navigate = useNavigate();
-  if (result.status === "ambiguous") {
-    return (
-      <Card className="border-amber-300">
-        <CardHeader>
-          <StatusHeader
-            status="ambiguous"
-            generationId={result.generation_id}
-            contextVersion={result.context_version}
-          />
-          <CardTitle className="flex items-center gap-2 text-base">
-            <HelpCircle className="size-4 text-amber-600" /> The question needs clarification
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <p>{result.reason}</p>
-          <div>
-            <div className="mb-1 text-xs font-medium">Ask the user</div>
-            <ul className="list-disc space-y-1 pl-5">
-              {result.clarifications.map((c, i) => (
-                <li key={i}>{c}</li>
-              ))}
-            </ul>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            No SQL was generated. Rephrase the question or add descriptions/business rules to the
-            context.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
   if (result.status === "unanswerable") {
     return (
       <Card>
@@ -449,6 +414,9 @@ function GenerateResult({
       </Card>
     );
   }
+  if (result.source === "plan") {
+    return <ToolPlanView result={result} />;
+  }
   return (
     <Card>
       <CardHeader>
@@ -461,18 +429,6 @@ function GenerateResult({
       </CardHeader>
       <CardContent className="space-y-4">
         <SourceBadge source={result.source} />
-        {result.selected_tool && (
-          <p className="text-sm">
-            Tool:{" "}
-            <Link
-              className="underline"
-              to={`/tools/${encodeURIComponent(result.selected_tool.name)}`}
-            >
-              {result.selected_tool.name}
-            </Link>{" "}
-            · v{result.selected_tool.version}
-          </p>
-        )}
         {result.metric_binding && (
           <p className="text-sm">
             Metric contract: <code>{result.metric_binding.metric_id}</code>
@@ -494,23 +450,19 @@ function GenerateResult({
           }
         />
         <div className="flex flex-wrap items-center gap-2">
-          {result.source !== "tool" && (
-            <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
-              <Wrench /> {inputsChanged ? "Create draft from previous result" : "Create Tool draft"}
-            </Button>
-          )}
+          <Button onClick={() => navigate(`/tools/new?generation=${result.generation_id}`)}>
+            <Wrench /> {inputsChanged ? "Create draft from previous result" : "Create Tool draft"}
+          </Button>
           {result.tool_suggestion && (
             <span className="text-xs text-muted-foreground">
               suggested: <code className="font-mono">{result.tool_suggestion.name}</code>
             </span>
           )}
         </div>
-        {result.source !== "tool" && (
-          <p className="text-xs text-muted-foreground">
-            Generation history is temporary. Create and save a Tool before this record expires or
-            the server restarts.
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground">
+          Generation history is temporary. Create and save a Tool before this record expires or the
+          server restarts.
+        </p>
       </CardContent>
     </Card>
   );
@@ -587,15 +539,6 @@ function GenerateError({ error }: { error: unknown }) {
 }
 
 function SourceBadge({ source }: { source: OperationSource }) {
-  if (source === "tool")
-    return (
-      <p className="flex flex-wrap items-center gap-2 text-sm">
-        <Badge className="bg-emerald-600 text-white">saved Tool</Badge>
-        <span className="text-muted-foreground">
-          Reused saved SQL. Review the model-selected Tool and arguments.
-        </span>
-      </p>
-    );
   return source === "metric" ? (
     <p className="flex items-center gap-2 text-sm">
       <Badge className="bg-emerald-600 text-white">metric contract</Badge>

@@ -94,7 +94,7 @@ def test_alter_table_foreign_key():
 
 
 def test_warnings_for_schema_qualifier_and_ignored_statements():
-    warnings = run(DDL).warnings
+    warnings = [w.message for w in run(DDL).warning_details]
     assert "Schema qualifier removed: 'public.customers' → 'customers'." in warnings
     assert any(w.startswith("Ignored statement: CREATE INDEX") for w in warnings)
 
@@ -102,7 +102,10 @@ def test_warnings_for_schema_qualifier_and_ignored_statements():
 def test_foreign_key_to_table_outside_ddl_is_skipped_with_warning():
     result = run("CREATE TABLE orders (id int, user_id int REFERENCES users(id));")
     assert result.definition.relations == []
-    assert any("orders.user_id" in w and "not in the context" in w for w in result.warnings)
+    assert any(
+        "orders.user_id" in w and "not in the context" in w
+        for w in [w.message for w in result.warning_details]
+    )
 
 
 def test_composite_foreign_key_is_skipped():
@@ -112,7 +115,7 @@ def test_composite_foreign_key_is_skipped():
     """
     result = run(ddl)
     assert result.definition.relations == []
-    assert any("composite foreign key" in w for w in result.warnings)
+    assert any("composite foreign key" in w for w in [w.message for w in result.warning_details])
 
 
 def test_duplicate_table_and_column_keep_first():
@@ -121,7 +124,7 @@ def test_duplicate_table_and_column_keep_first():
     resource = result.definition.find_resource("t")
     assert [(f.name, f.type) for f in resource.fields] == [("id", "int")]
     assert len(result.definition.resources) == 1
-    assert len(result.warnings) == 2
+    assert len([w.message for w in result.warning_details]) == 2
 
 
 def test_parse_error():
@@ -169,8 +172,12 @@ def test_merge_keeps_items_missing_from_ddl_with_warnings():
     d = result.definition
     assert [r.name for r in d.resources] == ["orders", "audit_log", "customers", "payments"]
     assert field(d, "orders.legacy").type == "text"
-    assert "Field 'orders.legacy' is not in the DDL; kept." in result.warnings
-    assert "Resource 'audit_log' is not in the DDL; kept as is." in result.warnings
+    assert "Field 'orders.legacy' is not in the DDL; kept." in [
+        w.message for w in result.warning_details
+    ]
+    assert "Resource 'audit_log' is not in the DDL; kept as is." in [
+        w.message for w in result.warning_details
+    ]
     assert d.rules == EXISTING.rules
     assert definition_issues(d) == []
 
@@ -218,4 +225,3 @@ def test_warning_codes_preserve_legacy_messages():
         "resource_preserved",
         "pending_foreign_key",
     }
-    assert result.warnings == [w.message for w in result.warning_details]

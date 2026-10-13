@@ -84,7 +84,7 @@ def run(args):
             "expected_version": context["version"],
         },
     )
-    if preview["warnings"]:
+    if preview["warning_details"]:
         raise ExampleError("Example DDL produced warnings; inspect /import-ddl before saving.")
     definition = preview["definition"]
     descriptions = {r["name"]: r for r in body["definition"]["resources"]}
@@ -112,7 +112,7 @@ def run(args):
     result = {
         "context_id": context_id,
         "context_version": context["version"],
-        "ddl_warnings": preview["warnings"],
+        "ddl_warnings": preview["warning_details"],
     }
     if args.context_only:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -124,9 +124,16 @@ def run(args):
     result["status"] = generated["status"]
     if generated["status"] != "ok":
         result["reason"] = generated["reason"]
-        result["clarifications"] = generated.get("clarifications", [])
+        result["clarification_questions"] = generated.get("clarification_questions", [])
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1
+    if generated["source"] == "plan":
+        if not all(step["validation"]["valid"] for step in generated["operations"]):
+            raise ExampleError("Generate did not return a fully validated plan.")
+        result["operations"] = generated["operations"]
+        result["note"] = "Reused saved Tool operations; not executed by Sidewit."
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if not generated["validation"]["valid"]:
         raise ExampleError("Generate did not return a validated operation.")
     draft = call("POST", "/tools/draft", {"generation_id": generated["generation_id"]})

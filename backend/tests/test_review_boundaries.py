@@ -126,7 +126,9 @@ async def test_ddl_and_generation_sql_never_leak_through_dependency_logs(client,
     sql = "CREATE POLICY private_policy ON private_table USING (owner = 'REVIEW_PRIVATE_VALUE')"
     response = await client.post(f"/api/v1/contexts/{context['id']}/import-ddl", json={"ddl": sql})
     assert response.status_code == 200
-    assert response.json()["warnings"]  # Reviewable details remain in the authenticated response.
+    assert response.json()[
+        "warning_details"
+    ]  # Reviewable details remain in the authenticated response.
     provider = FakeProvider([output(sql), output(sql)])
     app.dependency_overrides[get_llm_provider] = lambda: provider
     generated = await client.post(

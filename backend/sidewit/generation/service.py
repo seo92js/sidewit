@@ -16,15 +16,11 @@ from sidewit.generation.clarification import (
 from sidewit.generation.history import GenerationHistory, GenerationRecord
 from sidewit.generation.planners import GenerationInput, StatusOutput, planner_for
 from sidewit.generation.providers.base import LLMError, LLMProvider, Message
-from sidewit.generation.tool_selection import (
-    PROMPT_VERSION as TOOL_PROMPT_VERSION,
+from sidewit.generation.tool_plan import (
+    PROMPT_VERSION as PLAN_PROMPT_VERSION,
 )
-from sidewit.generation.tool_selection import (
-    ToolSelection,
-    ToolSelectionError,
-    invoke_selection,
-    selection_prompt,
-)
+from sidewit.generation.tool_plan import ToolPlanSelection, invoke_plan, plan_prompt
+from sidewit.generation.tool_selection import ToolSelectionError
 from sidewit.security import redact
 from sidewit.store import ContextRecord, Store
 
@@ -83,12 +79,12 @@ async def generate(
     handled = False
     candidates = store.tools_of(context.id) if not request.options.any() else []
     if candidates:
-        tool_prompt = selection_prompt(candidates, context, request)
-        record.prompt_version = TOOL_PROMPT_VERSION
+        tool_prompt = plan_prompt(candidates, context, request)
+        record.prompt_version = PLAN_PROMPT_VERSION
         record.attempts += 1
         try:
             selection_result = await provider.generate_structured(
-                tool_prompt, messages, ToolSelection
+                tool_prompt, messages, ToolPlanSelection
             )
             if selection_result.input_tokens is not None:
                 input_tokens.append(selection_result.input_tokens)
@@ -103,35 +99,30 @@ async def generate(
                     409, "context_changed", "Context changed. Start a new request."
                 )
             selection = selection_result.parsed
-            if selection.route != "tool" and (
-                selection.tool_name is not None or selection.parameters
-            ):
-                raise ToolSelectionError(
-                    422, "invalid_tool_selection", "Unexpected Tool arguments for this route."
-                )
-            if selection.route == "ambiguous":
-                if not selection.reason or not selection.clarifications:
-                    raise ToolSelectionError(
-                        422,
-                        "invalid_tool_selection",
-                        "Tool selection omitted clarification questions.",
-                    )
-                _conclude(record, "ambiguous", selection.reason)
-                _clarify(record, selection.clarifications)
-                outcome, handled = "ambiguous", True
-            elif selection.route == "tool":
-                operation, validation, selected_tool = invoke_selection(
-                    selection, candidates, store, current_context
-                )
-                record.operation = operation.model_dump(mode="json")
-                record.validation = validation.model_dump(mode="json")
-                record.selected_tool = {
-                    "name": selected_tool.name,
-                    "version": selected_tool.version,
-                }
-                record.metric_binding = selected_tool.metric_binding
+            if selection.route == "tools":
+                operations = invoke_plan(selection, candidates, store, current_context)
+                record.operations = [step.model_dump(mode="json") for step in operations]
                 record.status = "ok"
                 outcome, handled = "ok", True
+            elif selection.route == "generate":
+                if selection.calls or selection.clarifications or selection.reason is not None:
+                    raise ToolSelectionError(
+                        422, "invalid_tool_plan", "Inconsistent generation fallback response."
+                    )
+            else:
+                if (
+                    selection.calls
+                    or not selection.reason
+                    or not selection.reason.strip()
+                    or (selection.route == "ambiguous") != bool(selection.clarifications)
+                ):
+                    raise ToolSelectionError(
+                        422, "invalid_tool_plan", "Inconsistent Tool plan response."
+                    )
+                _conclude(record, selection.route, selection.reason)
+                if selection.route == "ambiguous":
+                    _clarify(record, selection.clarifications)
+                outcome, handled = selection.route, True
         except ToolSelectionError as exc:
             # Persist diagnostics and usage through the same finalization as other outcomes.
             # Never resume generation after a failed selection or invocation.
@@ -211,7 +202,6 @@ async def generate(
         and current_context.version != request.expected_context_version
     ):
         _conclude(record, "failed", "Context changed. Start a new request.")
-        record.selected_tool = None
         selection_error = ToolSelectionError(409, "context_changed", record.reason)
     history.add(record)
     if selection_error is not None:
@@ -226,10 +216,10 @@ def _conclude(record: GenerationRecord, status: str, reason: str) -> None:
     record.reason = reason
     record.operation = record.validation = record.tool_suggestion = None
     record.metric_binding = None
+    record.operations = None
 
 
 def _clarify(record: GenerationRecord, questions: list[LLMClarification]) -> None:
-    record.clarifications = [q.question for q in questions]
     record.clarification_questions = [
         {
             "id": f"{record.id}:{index}",

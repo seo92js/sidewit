@@ -211,6 +211,12 @@ async def draft_tool(body: DraftRequest, store: StoreDep, history: HistoryDep) -
             "generation_not_ok",
             f"Only generations with status 'ok' can be drafted (got '{generation.status}').",
         )
+    if generation.operations is not None:
+        raise ApiError(
+            409,
+            "plan_not_draftable",
+            "A Tool plan already contains saved Tools; it cannot become a single Tool draft.",
+        )
     context = _context(store, generation.context_id)
     return ToolDraft.model_validate(draft_from_generation(generation, context))
 

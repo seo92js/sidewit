@@ -232,7 +232,7 @@ def registered_constants(definition: ContextDefinition) -> list[RegisteredConsta
 
 
 def check_context_size(definition: ContextDefinition) -> None:
-    """Bound write/generation inputs without making legacy definitions unreadable."""
+    """Bound write/generation inputs; keep reads available for inspection and recovery."""
     if len(definition.resources) > 100 or sum(len(r.fields) for r in definition.resources) > 1000:
         raise ValueError("Context supports at most 100 resources and 1000 fields.")
     if len(definition.model_dump_json().encode("utf-8")) > 128 * 1024:

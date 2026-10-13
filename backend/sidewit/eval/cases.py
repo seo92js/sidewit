@@ -62,10 +62,7 @@ class AggregateExpectation(_Strict):
     distinct: bool = False
 
 
-class Expectations(_Strict):
-    status: Literal["ok", "ambiguous", "unanswerable"]
-    # ok only: "metric" = built from a registered metric, "generated_sql" = model-written.
-    source: Literal["metric", "generated_sql", "tool"] | None = None
+class OperationExpectations(_Strict):
     resources: list[str] | None = None  # exact set of base resources
     fields: list[str] = []  # must be referenced
     forbidden_fields: list[str] = []
@@ -77,6 +74,21 @@ class Expectations(_Strict):
     forbidden_parameter_values: list[Any] = []  # e.g. Business Rule constants
     forbidden_literals: list[str] = []  # e.g. user values that must be parameters
     forbidden_constructs: list[Construct] = []
+
+
+class Expectations(OperationExpectations):
+    status: Literal["ok", "ambiguous", "unanswerable"]
+    source: Literal["metric", "generated_sql", "plan"] | None = None
+    steps: list[OperationExpectations] | None = Field(default=None, min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def validate_steps(self):
+        if self.steps is not None:
+            if self.status != "ok" or self.source != "plan":
+                raise ValueError("steps require status ok and source plan.")
+            if self.model_fields_set & OperationExpectations.model_fields.keys():
+                raise ValueError("Put SQL expectations inside steps when evaluating a plan.")
+        return self
 
 
 class ReferenceAnswer(_Strict):

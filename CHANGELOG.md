@@ -6,6 +6,16 @@ Initial release candidate.
 
 ### Features
 
+- Evaluate saved Tool plans with independent validation and one-to-one step expectations;
+  remove the unused Playground clarification display branch.
+
+- Automatically select independent saved Tool plans in the API and Playground, falling back
+  to metric/SQL generation when no complete saved Tool match exists. Plans contain 1–5 validated
+  operations with per-step Tool versions, SQL, parameters and validation results. Repeated
+  Tools with different arguments are supported; partial success, duplicate calls, dependent
+  chaining and generated-SQL mixing are not supported.
+
+
 - Fix SQLGlot canonical names for boolean aggregates and string position; remove unreachable
   function allowlist entries. Avoid treating temporal-to-text comparisons as database-clock
   expressions. Lock Tool editing during explicit reloads and preserve drafts on reload failure.
@@ -35,8 +45,17 @@ Initial release candidate.
 
 ### API changes
 
+- Generate automatically selects saved Tools without a mode option. Saved Tool success returns
+  `source: "plan"`, `execution: "independent"` and `operations`, including one-call plans.
+  Generated/metric responses retain their single operation. Generation detail includes
+  operations. Selection uses tool_plan_v2.
+- Remove legacy single-Tool response handling and duplicate text-only clarification/DDL warning
+  fields. Use clarification_questions and warning_details. Unknown Generate request fields
+  are rejected instead of silently ignored.
+
+
 - SQL function policy and timezone-aware Tool selection use prompt versions generate_v10,
-  hybrid_v5 and tool_selection_v3.
+  hybrid_v5 and tool_plan_v2.
 
 - Enforce a closed SQL function allowlist for generation, validation and Tool invocation.
   Context definitions add optional sql_extensions: ["postgis"] for supported spatial functions.
@@ -74,7 +93,7 @@ Initial release candidate.
 - Render rejected SQL as plain text without loading Monaco; show explicit messages for missing generation logs or SQL.
 
 - Ignore SQL comments and quoted contents when suggesting Tool inputs.
-- Classify DDL warnings by stable codes while retaining legacy warning messages.
+- Classify DDL warnings by stable codes in warning_details.
 - Prevent navigation during Context saves and remove unused UI options and stale comments.
 
 - Lock Tool editing during save, delete and contract rebuild requests; preserve input on failure and confirm unsaved navigation.

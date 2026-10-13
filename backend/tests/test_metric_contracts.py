@@ -326,7 +326,7 @@ def test_tampered_fixed_filter_and_date_are_rejected():
 def test_ddl_preserves_contracts_and_warns_on_removed_fields():
     result = import_ddl(definition(), "CREATE TABLE orders (id bigint);", "postgresql", "replace")
     assert result.definition.metrics == definition().metrics
-    assert any("Metric" in w for w in result.warnings)
+    assert any("Metric" in w for w in [warning.message for warning in result.warning_details])
 
 
 def test_planner_schema_has_no_sql_and_portable_required_fields():
