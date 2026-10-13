@@ -393,10 +393,11 @@ export function ContextEditor({ id }: { id: string }) {
         </TabsContent>
         <TabsContent value="metrics" className="space-y-3 pt-3">
           <p className="text-sm text-muted-foreground">
-            Register reviewed aggregate contracts. They are used for Generate only when the context
-            is in <strong>metric</strong> mode: the model then chooses a contract and the server
-            builds the SQL. Fixed filters, aggregation and date fields stay under your control.
-            Business-rule prose is not automatically enforced.
+            Register reviewed aggregate contracts. Generate prioritizes registered metrics: the
+            model chooses a contract and the server builds the SQL. If no metric fits, model-written
+            SQL is available only when allowed by this Context and the request. Fixed filters,
+            aggregation and date fields stay under your control. Business-rule prose is not
+            automatically enforced.
           </p>
           <Label htmlFor="metric-contracts">Metric contracts (JSON array)</Label>
           <Textarea

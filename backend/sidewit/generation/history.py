@@ -34,7 +34,6 @@ class GenerationRecord:
     latency_ms: int = 0
     input_tokens: int | None = None
     output_tokens: int | None = None
-    feedback: str | None = None
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

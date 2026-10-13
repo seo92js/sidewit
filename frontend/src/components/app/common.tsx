@@ -1,11 +1,20 @@
 import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ApiError } from "@/api/client";
 import type { Issue, ValidationResult } from "@/api/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 export function Loading({ label = "Loading…" }: { label?: string }) {
@@ -59,7 +68,7 @@ export function IssueList({
 const ERROR_HINTS: Record<string, string> = {
   version_conflict:
     "Someone else saved this context first. Reload to get the latest version, then re-apply your edits.",
-  unauthorized: "Set a valid API key with the key button in the header.",
+  unauthorized: "Set a valid Sidewit API key with the key button in the header.",
   network_error: "Check that the API is running.",
   llm_not_configured:
     "Configure SIDEWIT_LLM_PROVIDER, SIDEWIT_LLM_MODEL and the provider API key on the server.",
@@ -154,18 +163,54 @@ export function ValidationPanel({ result, label }: { result: ValidationResult; l
 
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  const [fallback, setFallback] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={async () => {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
+    <Dialog
+      open={fallback !== null}
+      onOpenChange={(open) => {
+        if (!open) setFallback(null);
       }}
     >
-      {copied ? <Check /> : <Copy />} {copied ? "Copied" : label}
-    </Button>
+      <DialogTrigger asChild onClick={(event) => event.preventDefault()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={async () => {
+            clearTimeout(timer.current);
+            setCopied(false);
+            try {
+              await navigator.clipboard.writeText(text);
+              setCopied(true);
+              timer.current = setTimeout(() => setCopied(false), 1200);
+            } catch {
+              setFallback(text);
+            }
+          }}
+        >
+          {copied ? <Check /> : <Copy />} {copied ? "Copied" : label}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Copy manually</DialogTitle>
+          <DialogDescription>
+            Clipboard access failed. Select the text below and press ⌘/Ctrl+C, or use your device's
+            copy menu.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          aria-label={`Text to copy: ${label}`}
+          readOnly
+          rows={10}
+          className="font-mono text-xs"
+          value={fallback ?? ""}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }
 

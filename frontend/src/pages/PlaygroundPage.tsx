@@ -1,20 +1,18 @@
-import {
-  ChevronDown,
-  ChevronRight,
-  HelpCircle,
-  Sparkles,
-  ThumbsDown,
-  ThumbsUp,
-  Wrench,
-  XCircle,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, HelpCircle, Sparkles, Wrench, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { ApiError } from "@/api/client";
-import { useContexts, useFeedback, useGenerate, useGeneration } from "@/api/queries";
+import { ApiError, getApiKey } from "@/api/client";
+import { useContexts, useGenerate, useGeneration } from "@/api/queries";
 import type { GenerateRequest, GenerateResponse, OperationSource } from "@/api/types";
-import { Empty, ErrorAlert, IssueList, Loading, ValidationPanel } from "@/components/app/common";
+import {
+  CopyButton,
+  Empty,
+  ErrorAlert,
+  IssueList,
+  Loading,
+  ValidationPanel,
+} from "@/components/app/common";
 import { NativeSelect } from "@/components/app/NativeSelect";
 import { OperationView } from "@/components/app/OperationView";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +22,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+
+import { generateRequestCurl } from "@/lib/apiRequest";
 
 const CONTEXT_STORAGE = "sidewit.playground.context";
 
@@ -224,8 +224,24 @@ export default function PlaygroundPage() {
       <section className="min-w-0 space-y-3">
         {generate.variables && submittedContext && (
           <div className="space-y-2 rounded-md border p-3 text-sm" aria-label="Submitted request">
-            <p className="font-medium">
-              {generate.isPending ? "Request in progress" : "Request for this result"}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium">
+                {generate.isPending ? "Request in progress" : "Request for this result"}
+              </p>
+              <CopyButton
+                label="Copy API request"
+                text={generateRequestCurl(
+                  generate.variables,
+                  window.location.origin,
+                  !!getApiKey(),
+                )}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Copies a curl command for this submitted request. Re-running uses the latest Context
+              and may produce a different result.
+              {getApiKey() &&
+                " Set SIDEWIT_API_KEY in your shell before running; your saved key is not copied."}
             </p>
             <p className="whitespace-pre-wrap break-words">{generate.variables.question}</p>
             <p className="text-xs text-muted-foreground">
@@ -393,7 +409,6 @@ function GenerateResult({
               suggested: <code className="font-mono">{result.tool_suggestion.name}</code>
             </span>
           )}
-          <Feedback generationId={result.generation_id} />
         </div>
         <p className="text-xs text-muted-foreground">
           Generation history is temporary. Create and save a Tool before this record expires or the
@@ -401,30 +416,6 @@ function GenerateResult({
         </p>
       </CardContent>
     </Card>
-  );
-}
-
-function Feedback({ generationId }: { generationId: string }) {
-  const feedback = useFeedback();
-  const sent =
-    feedback.variables?.id === generationId && feedback.isSuccess
-      ? feedback.variables.feedback
-      : null;
-  return (
-    <div className="ml-auto flex items-center gap-1">
-      <span className="text-xs text-muted-foreground">Was this right?</span>
-      {(["up", "down"] as const).map((value) => (
-        <Button
-          key={value}
-          size="icon-sm"
-          variant={sent === value ? "secondary" : "ghost"}
-          aria-label={value === "up" ? "Good result" : "Bad result"}
-          onClick={() => feedback.mutate({ id: generationId, feedback: value })}
-        >
-          {value === "up" ? <ThumbsUp /> : <ThumbsDown />}
-        </Button>
-      ))}
-    </div>
   );
 }
 

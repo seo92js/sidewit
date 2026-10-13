@@ -15,6 +15,10 @@ Initial release candidate.
 - Docker deployment, an optional management UI, and regression evaluation suites.
 - Apache-2.0 license.
 
+### Removed
+
+- Removed the temporary thumbs-up/down feedback UI, its generation feedback endpoint and response field. Feedback was not persisted or used by generation.
+
 ### Fixes
 
 - Preserve unsaved Tool edits when background refreshes fail.

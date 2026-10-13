@@ -191,7 +191,6 @@ id, context_id, context_version, question, reference_time,
 status            -- "ok" | "ambiguous" | "unanswerable" | "failed"
 operation, reason, clarifications, tool_suggestion, validation, metric_binding,
 provider, model, prompt_version, attempts, latency_ms, input_tokens, output_tokens,
-feedback          -- "up" | "down" | null
 created_at
 ```
 
@@ -369,7 +368,6 @@ created_at
 7. 전체 처리에는 90초 deadline을 적용한다. Provider 호출 timeout은 60초이고 최초 호출과 repair가 이 deadline을 공유한다. 초과하면 504 `generation_timeout`이며 Generation 기록이 남지 않을 수 있다. nginx는 100초, UI 요청은 110초까지 기다린다.
 8. LLM 응답을 기다리는 동안 Context를 잠그지 않는다. 그 사이 Context가 삭제되면 404 `context_not_found`다.
 
-`POST /generations/{id}/feedback` `{ "feedback": "up" | "down" }`
 `GET /generations?context_id=&limit=` (메모리의 최근 기록)
 `GET /generations/{id}` (디버그용 상세. 실패한 Generation의 SQL과 검증 결과 포함)
 

@@ -194,7 +194,6 @@ class GenerationSummary(BaseModel):
     context_version: int
     question: str
     status: str
-    feedback: Literal["up", "down"] | None
     provider: str
     model: str
     prompt_version: str
@@ -218,10 +217,6 @@ class GenerationDetail(GenerationSummary):
 
 class GenerationList(BaseModel):
     items: list[GenerationSummary]
-
-
-class FeedbackRequest(BaseModel):
-    feedback: Literal["up", "down"]
 
 
 def _get_generation(history: HistoryDep, generation_id: uuid.UUID) -> GenerationRecord:
@@ -253,12 +248,3 @@ async def get_generation(generation_id: uuid.UUID, history: HistoryDep) -> Gener
     detail = GenerationDetail.model_validate(record, from_attributes=True)
     detail.source = source_of(record) if record.status == "ok" else None
     return detail
-
-
-@router.post("/generations/{generation_id}/feedback")
-async def set_feedback(
-    generation_id: uuid.UUID, body: FeedbackRequest, history: HistoryDep
-) -> GenerationSummary:
-    record = _get_generation(history, generation_id)
-    record.feedback = body.feedback
-    return GenerationSummary.model_validate(record, from_attributes=True)
