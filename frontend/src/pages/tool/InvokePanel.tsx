@@ -28,7 +28,7 @@ export function InvokePanel({
   busy?: boolean;
 }) {
   const location = useLocation();
-  const invoke = useInvokeTool(tool.name, tool.version);
+  const invoke = useInvokeTool(tool.id, tool.version);
   const inputs = orderedInputs(tool.input_schema);
   const example =
     (location.state as { exampleArguments?: Record<string, unknown> } | null)?.exampleArguments ??

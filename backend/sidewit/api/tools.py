@@ -63,6 +63,7 @@ class VersionRequest(BaseModel):
 
 class ToolUpdate(ToolFields):
     expected_version: int = Field(ge=1)
+    name: str | None = Field(default=None, pattern=TOOL_NAME_PATTERN)
 
 
 class ToolActivation(VersionRequest):
@@ -134,6 +135,7 @@ class InvokeRequest(BaseModel):
 
 
 class InvokeResult(BaseModel):
+    tool_id: uuid.UUID
     validation: ValidationResult
     tool: str
     tool_version: int
@@ -174,10 +176,10 @@ def _context(store: Store, context_id: uuid.UUID) -> ContextRecord:
     return context
 
 
-def _tool(store: Store, name: str) -> ToolRecord:
-    tool = store.tool(name)
+def _tool(store: Store, tool_id: uuid.UUID) -> ToolRecord:
+    tool = store.tool_by_id(tool_id)
     if tool is None:
-        raise ApiError(404, "tool_not_found", f"Tool '{name}' does not exist.")
+        raise ApiError(404, "tool_not_found", f"Tool '{tool_id}' does not exist.")
     return tool
 
 
@@ -212,9 +214,9 @@ async def list_tools(store: StoreDep, context_id: uuid.UUID | None = None) -> To
     return ToolList(items=[_out(t, store) for t in tools])
 
 
-@router.get("/tools/{name}")
-async def get_tool(name: str, store: StoreDep) -> ToolOut:
-    return _out(_tool(store, name), store)
+@router.get("/tools/{tool_id}")
+async def get_tool(tool_id: uuid.UUID, store: StoreDep) -> ToolOut:
+    return _out(_tool(store, tool_id), store)
 
 
 @router.post("/tools/draft")
@@ -308,22 +310,27 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
     return _out(tool, store)
 
 
-@router.put("/tools/{name}")
-async def update_tool(name: str, body: ToolUpdate, store: StoreDep) -> ToolOut:
-    tool = _tool(store, name)
+@router.put("/tools/{tool_id}")
+async def update_tool(tool_id: uuid.UUID, body: ToolUpdate, store: StoreDep) -> ToolOut:
+    tool = _tool(store, tool_id)
     context = _context(store, tool.context_id)
     _check_version(tool, body.expected_version)
+    next_name = body.name if body.name is not None else tool.name
+    if next_name != tool.name and store.tool(next_name) is not None:
+        raise ApiError(409, "tool_name_conflict", f"Tool '{next_name}' already exists.")
     validation = validate_tool(
         context, body.input_schema, body.operation.statement, tool_binding(tool)
     )
     _require_valid(validation)
 
     operation = body.operation.model_dump()
-    if (tool.description, tool.input_schema, tool.operation) != (
+    if (tool.name, tool.description, tool.input_schema, tool.operation) != (
+        next_name,
         body.description,
         body.input_schema,
         operation,
     ):
+        tool.name = next_name
         tool.description = body.description
         tool.input_schema = body.input_schema
         tool.operation = operation
@@ -332,9 +339,9 @@ async def update_tool(name: str, body: ToolUpdate, store: StoreDep) -> ToolOut:
     return _out(tool, store)
 
 
-@router.patch("/tools/{name}")
-async def set_tool_enabled(name: str, body: ToolActivation, store: StoreDep) -> ToolOut:
-    tool = _tool(store, name)
+@router.patch("/tools/{tool_id}")
+async def set_tool_enabled(tool_id: uuid.UUID, body: ToolActivation, store: StoreDep) -> ToolOut:
+    tool = _tool(store, tool_id)
     context = _context(store, tool.context_id)
     _check_version(tool, body.expected_version)
     if tool.enabled == body.enabled:
@@ -355,11 +362,11 @@ async def set_tool_enabled(name: str, body: ToolActivation, store: StoreDep) -> 
     return _out(tool, store)
 
 
-@router.post("/tools/{name}/refresh-contract")
-async def refresh_contract(name: str, body: VersionRequest, store: StoreDep) -> ToolOut:
+@router.post("/tools/{tool_id}/refresh-contract")
+async def refresh_contract(tool_id: uuid.UUID, body: VersionRequest, store: StoreDep) -> ToolOut:
     """Rebuild a metric-bound Tool's SQL and inputs from its current contract. The Tool keeps
     its name, description and binding; the version increases when anything changes."""
-    tool = _tool(store, name)
+    tool = _tool(store, tool_id)
     context = _context(store, tool.context_id)
     _check_version(tool, body.expected_version)
     try:
@@ -378,15 +385,15 @@ async def refresh_contract(name: str, body: VersionRequest, store: StoreDep) -> 
     return _out(tool, store)
 
 
-@router.delete("/tools/{name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_tool(name: str, store: StoreDep) -> Response:
-    store.delete_tool(_tool(store, name))
+@router.delete("/tools/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tool(tool_id: uuid.UUID, store: StoreDep) -> Response:
+    store.delete_tool(_tool(store, tool_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/tools/{name}/invoke")
-async def invoke_tool(name: str, body: InvokeRequest, store: StoreDep) -> InvokeResult:
-    tool = _tool(store, name)
+@router.post("/tools/{tool_id}/invoke")
+async def invoke_tool(tool_id: uuid.UUID, body: InvokeRequest, store: StoreDep) -> InvokeResult:
+    tool = _tool(store, tool_id)
     context = _context(store, tool.context_id)
     if body.expected_version is not None:
         _check_version(tool, body.expected_version)
@@ -409,6 +416,7 @@ async def invoke_tool(name: str, body: InvokeRequest, store: StoreDep) -> Invoke
             {"errors": [i.model_dump() for i in e.errors]},
         ) from e
     return InvokeResult(
+        tool_id=tool.id,
         validation=validation,
         tool=tool.name,
         tool_version=tool.version,

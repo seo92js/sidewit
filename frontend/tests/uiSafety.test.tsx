@@ -73,14 +73,15 @@ function client() {
     defaultOptions: { queries: { staleTime: Infinity, retry: false } },
   });
   qc.setQueryData(["contexts"], [context]);
-  qc.setQueryData(["tools", "report"], tool);
+  qc.setQueryData(["tools", "t"], tool);
+  qc.setQueryData(["tools"], [tool]);
   return qc;
 }
-function editor(qc: QueryClient, path = "/tools/report") {
+function editor(qc: QueryClient, path = "/tools/t") {
   const router = createMemoryRouter(
     [
       { path: "/tools/new", element: <ToolEditorPage /> },
-      { path: "/tools/:name", element: <ToolEditorPage /> },
+      { path: "/tools/:id", element: <ToolEditorPage /> },
       { path: "/tools", element: <div>Tool listing</div> },
     ],
     { initialEntries: [path] },
@@ -116,8 +117,8 @@ test("Tool navigation protects unsaved edits until explicitly discarded", async 
 test("First save locks edits and navigates without a discard prompt", async () => {
   let resolve!: (v: Tool) => void;
   const pending = new Promise<Tool>((r) => (resolve = r));
-  vi.mocked(request).mockImplementation(async (_method, path) =>
-    path === "/tools" ? pending : valid,
+  vi.mocked(request).mockImplementation(async (method, path) =>
+    path === "/tools" ? (method === "POST" ? pending : { items: [tool] }) : valid,
   );
   const qc = client();
   editor(qc, "/tools/new");
@@ -139,7 +140,7 @@ test("First save locks edits and navigates without a discard prompt", async () =
     expect(screen.getByLabelText("Description")).toHaveProperty("value", "submitted description"),
   );
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByLabelText("Name")).toHaveProperty("disabled", true);
+  expect(screen.getByLabelText("Name")).toHaveProperty("disabled", false);
   qc.clear();
 });
 
@@ -151,7 +152,7 @@ test("Rebuild locks edits until the response is applied", async () => {
   );
   const qc = client();
   const bound = { ...tool, metric_binding: { metric_id: "count", time_field: null } };
-  qc.setQueryData(["tools", "report"], bound);
+  qc.setQueryData(["tools", "t"], bound);
   editor(qc);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Rebuild from contract" }));
@@ -227,6 +228,7 @@ test("Invoke parameter rows belong to the result even after Tool schema changes"
     },
   };
   const response = {
+    tool_id: "t",
     tool_version: 1,
     context_version: 1,
     validation: valid,
@@ -283,11 +285,11 @@ test.each(["create", "rebuild"])(
     );
     const qc = client();
     if (action === "rebuild")
-      qc.setQueryData(["tools", "report"], {
+      qc.setQueryData(["tools", "t"], {
         ...tool,
         metric_binding: { metric_id: "count", time_field: null },
       });
-    editor(qc, action === "create" ? "/tools/new" : "/tools/report");
+    editor(qc, action === "create" ? "/tools/new" : "/tools/t");
     const user = userEvent.setup();
     if (action === "create") {
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "report" } });
@@ -416,7 +418,7 @@ test.each(["tool", "contexts"])(
     await act(async () => {
       await qc
         .fetchQuery({
-          queryKey: source === "tool" ? ["tools", "report"] : ["contexts"],
+          queryKey: source === "tool" ? ["tools", "t"] : ["contexts"],
           queryFn: async () => {
             throw new Error("temporary connection failure");
           },
@@ -429,7 +431,7 @@ test.each(["tool", "contexts"])(
     expect(screen.getByLabelText("Description")).toHaveProperty("value", "valuable unsaved edits");
     await act(async () => {
       qc.setQueryData(
-        source === "tool" ? ["tools", "report"] : ["contexts"],
+        source === "tool" ? ["tools", "t"] : ["contexts"],
         source === "tool" ? { ...tool } : [{ ...context }],
       );
     });
@@ -471,7 +473,7 @@ test("a changed boolean input displays and submits the same reset value", async 
   expect(screen.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
   vi.mocked(request).mockRejectedValue(new Error("stop after capturing request"));
   await userEvent.setup().click(screen.getByRole("button", { name: "Invoke Tool" }));
-  expect(request).toHaveBeenCalledWith("POST", "/tools/report/invoke", {
+  expect(request).toHaveBeenCalledWith("POST", "/tools/t/invoke", {
     arguments: { active: false },
     expected_version: 2,
   });
@@ -581,7 +583,7 @@ test("Playground identifies a reused Tool and links to it instead of creating an
       {
         id: "step_1",
         source: "tool",
-        selected_tool: { name: "report", version: 3 },
+        selected_tool: { id: "t", name: "report", version: 3 },
         operation: {
           type: "sql",
           dialect: "postgresql",
@@ -605,7 +607,7 @@ test("Playground identifies a reused Tool and links to it instead of creating an
   fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Run my report" } });
   await user.click(screen.getByRole("button", { name: "Generate operation" }));
   const link = await screen.findByRole("link", { name: "report" });
-  expect(link.getAttribute("href")).toBe("/tools/report");
+  expect(link.getAttribute("href")).toBe("/tools/t");
   expect(screen.getByText(/step_1 · saved Tool/)).toBeTruthy();
   expect(screen.getByText(/v3/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Create Tool draft" })).toBeNull();
@@ -806,7 +808,7 @@ test("Tool conflict preserves edits, reloads explicitly, and saves with the new 
       }
       return { ...remote, ...(body as object), version: 3 };
     }
-    if (method === "GET" && path === "/tools/report") return remote;
+    if (method === "GET" && path === "/tools/t") return remote;
     return valid;
   });
   const qc = client();
@@ -830,7 +832,7 @@ test("Tool conflict preserves edits, reloads explicitly, and saves with the new 
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith(
       "PUT",
-      "/tools/report",
+      "/tools/t",
       expect.objectContaining({ expected_version: 2 }),
     ),
   );
@@ -878,19 +880,19 @@ test.each(["success", "failure"])(
       reject = fail;
     });
     vi.mocked(request).mockImplementation(async (method, path) => {
-      if (method === "GET" && path === "/tools/report") return pending;
+      if (method === "GET" && path === "/tools/t") return pending;
       return valid;
     });
     const qc = client();
     editor(qc);
     fireEvent.change(screen.getByLabelText("Description"), { target: { value: "old draft" } });
     await act(async () => {
-      qc.setQueryData(["tools", "report"], remote);
+      qc.setQueryData(["tools", "t"], remote);
     });
     fireEvent.click(
       await screen.findByRole("button", { name: "Reload latest (discards your edits)" }),
     );
-    await waitFor(() => expect(request).toHaveBeenCalledWith("GET", "/tools/report"));
+    await waitFor(() => expect(request).toHaveBeenCalledWith("GET", "/tools/t"));
     const field = screen.getByLabelText("Description");
     expect(field.matches(":disabled")).toBe(true);
     fireEvent.change(field, { target: { value: "new edit during reload" } });
@@ -920,7 +922,7 @@ const toolPlanResult = {
   operations: ["서울", "부산"].map((region, i) => ({
     id: `step_${i + 1}`,
     source: "tool",
-    selected_tool: { name: "report", version: 1 },
+    selected_tool: { id: "t", name: "report", version: 1 },
     operation: {
       type: "sql",
       dialect: "postgresql",

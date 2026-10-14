@@ -10,6 +10,7 @@ from tests.test_generate_api import ask, detail, ok
 from tests.test_generate_api import context as context
 from tests.test_generate_api import fake as fake
 from tests.test_tool_selection import saved_tool
+from tests.tool_urls import tool_path
 
 
 def call(region="서울", name="count_customers"):
@@ -47,7 +48,7 @@ async def test_repeated_tool_with_distinct_inputs_returns_validated_independent_
     ]
     for step in body["operations"]:
         assert step["source"] == "tool"
-        assert step["selected_tool"] == {"name": tool["name"], "version": 1}
+        assert step["selected_tool"] == {"id": tool["id"], "name": tool["name"], "version": 1}
         assert step["operation"]["statement"] == tool["operation"]["statement"]
         assert step["validation"]["valid"]
     assert len(provider.calls) == 1
@@ -192,7 +193,7 @@ async def test_changed_second_tool_returns_conflict_without_first_operation(clie
 
     async def select(*args):
         update = await client.put(
-            "/api/v1/tools/other",
+            tool_path("other"),
             json={
                 "description": "Changed",
                 "expected_version": second["version"],

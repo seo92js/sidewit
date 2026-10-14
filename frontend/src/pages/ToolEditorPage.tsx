@@ -109,17 +109,17 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 export default function ToolEditorPage() {
-  const { name } = useParams();
+  const { id } = useParams();
   const [search] = useSearchParams();
-  const generationId = name ? undefined : (search.get("generation") ?? undefined);
-  const tool = useTool(name);
-  const stepId = name ? undefined : (search.get("step") ?? undefined);
+  const generationId = id ? undefined : (search.get("generation") ?? undefined);
+  const tool = useTool(id);
+  const stepId = id ? undefined : (search.get("step") ?? undefined);
   const draft = useToolDraft(generationId, stepId);
   const contexts = useContexts();
 
   if (tool.isLoading || draft.isLoading || contexts.isLoading) return <Loading />;
   if (tool.error && !tool.data)
-    return <ErrorAlert error={tool.error} title={`Could not load tool ${name}`} />;
+    return <ErrorAlert error={tool.error} title={`Could not load tool ${id}`} />;
   if (contexts.error && !contexts.data)
     return <ErrorAlert error={contexts.error} title="Could not load contexts" />;
 
@@ -189,7 +189,7 @@ export default function ToolEditorPage() {
         </Alert>
       )}
       <ToolForm
-        key={tool.data?.name ?? `${generationId ?? "blank"}:${stepId ?? ""}`}
+        key={tool.data?.id ?? `${generationId ?? "blank"}:${stepId ?? ""}`}
         initial={initial}
         saved={tool.data}
       />
@@ -199,13 +199,13 @@ export default function ToolEditorPage() {
 
 function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const navigate = useNavigate();
-  const latest = useTool(saved?.name);
+  const latest = useTool(saved?.id);
   const contexts = useContexts();
   const create = useCreateTool();
-  const update = useUpdateTool(saved?.name ?? "");
+  const update = useUpdateTool(saved?.id ?? "");
   const remove = useDeleteTool();
-  const activation = useSetToolEnabled(saved?.name ?? "");
-  const refresh = useRefreshContract(saved?.name ?? "");
+  const activation = useSetToolEnabled(saved?.id ?? "");
+  const refresh = useRefreshContract(saved?.id ?? "");
   const [reloading, setReloading] = useState(false);
   const busy =
     reloading ||
@@ -224,6 +224,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const reload = (tool: Tool) => {
     setForm((previous) => ({
       ...previous,
+      name: tool.name,
       description: tool.description,
       statement: tool.operation.statement,
       rows: rowsFromSchema(tool.input_schema),
@@ -271,11 +272,13 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const dirty =
     !saved ||
     JSON.stringify({
+      name: form.name,
       description: form.description.trim(),
       inputSchema,
       statement: form.statement,
     }) !==
       JSON.stringify({
+        name: saved.name,
         description: saved.description,
         inputSchema: schemaFromRows(rowsFromSchema(saved.input_schema)),
         statement: saved.operation.statement,
@@ -285,7 +288,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     !!form.description.trim() &&
     !!form.contextId &&
     (!saved || saved.version === baseVersion) &&
-    !(update.error instanceof ApiError && update.error.status === 409) &&
+    !(update.error instanceof ApiError && update.error.error === "version_conflict") &&
     validationCurrent &&
     !!validation.data?.valid &&
     dirty;
@@ -300,8 +303,12 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     };
     if (saved) {
       update.mutate(
-        { ...body, expected_version: baseVersion ?? saved.version },
-        { onSuccess: (tool) => setBaseVersion(tool.version) },
+        { ...body, name: form.name, expected_version: baseVersion ?? saved.version },
+        {
+          onSuccess: (tool) => {
+            setBaseVersion(tool.version);
+          },
+        },
       );
     } else {
       create.mutate(
@@ -315,7 +322,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
         },
         {
           onSuccess: (tool) =>
-            goAfterWrite(`/tools/${tool.name}`, { exampleArguments: form.exampleArguments }),
+            goAfterWrite(`/tools/${tool.id}`, { exampleArguments: form.exampleArguments }),
         },
       );
     }
@@ -410,13 +417,17 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
                 id="tool-name"
                 className="font-mono"
                 value={form.name}
-                disabled={!!saved}
                 onChange={(e) => set({ name: e.target.value })}
                 placeholder="regional_revenue"
               />
-              {!saved && form.name && !nameValid && (
+              {form.name && !nameValid && (
                 <p className="text-xs text-destructive">
                   snake_case: lowercase letters, digits and “_”, starting with a letter (max 64).
+                </p>
+              )}
+              {saved && (
+                <p className="text-xs text-muted-foreground">
+                  Renaming keeps this Tool’s ID and API address unchanged.
                 </p>
               )}
             </div>
@@ -680,7 +691,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
                 disabled={remove.isPending}
                 onClick={() =>
                   confirm(`Delete tool "${saved.name}"?`) &&
-                  remove.mutate(saved.name, { onSuccess: () => goAfterWrite("/tools") })
+                  remove.mutate(saved.id, { onSuccess: () => goAfterWrite("/tools") })
                 }
               >
                 <Trash2 /> Delete

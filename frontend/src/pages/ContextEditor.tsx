@@ -460,7 +460,7 @@ function RevalidationNotice({ revalidation }: { revalidation: Revalidation }) {
         <p>Invalid tools cannot be invoked (409) until the tool or this context is fixed.</p>
         {revalidation.invalid.map((tool) => (
           <div key={tool.name}>
-            <Link className="font-mono text-sm underline" to={`/tools/${tool.name}`}>
+            <Link className="font-mono text-sm underline" to={`/tools/${tool.id}`}>
               {tool.name}
             </Link>
             <IssueList issues={tool.errors} />

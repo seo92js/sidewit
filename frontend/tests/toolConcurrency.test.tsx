@@ -63,19 +63,20 @@ test("server refetch preserves edits and the editor's original version", async (
     defaultOptions: { queries: { staleTime: Infinity, retry: false } },
   });
   client.setQueryData(["contexts"], [context]);
-  client.setQueryData(["tools", tool.name], tool);
+  client.setQueryData(["tools", tool.id], tool);
+  client.setQueryData(["tools"], [tool]);
   render(
     <QueryClientProvider client={client}>
       <RouterProvider
-        router={createMemoryRouter([{ path: "/tools/:name", element: <ToolEditorPage /> }], {
-          initialEntries: ["/tools/report"],
+        router={createMemoryRouter([{ path: "/tools/:id", element: <ToolEditorPage /> }], {
+          initialEntries: ["/tools/tool-id"],
         })}
       />
     </QueryClientProvider>,
   );
   fireEvent.change(screen.getByLabelText("Description"), { target: { value: "my unsaved edits" } });
   await act(async () => {
-    client.setQueryData(["tools", tool.name], { ...tool, version: 2, description: "remote edit" });
+    client.setQueryData(["tools", tool.id], { ...tool, version: 2, description: "remote edit" });
   });
   expect(screen.getByLabelText("Description")).toHaveProperty("value", "my unsaved edits");
   expect(await screen.findByText("Tool changed on the server")).toBeTruthy();
@@ -128,12 +129,13 @@ test.each(["valid", "invalid", "error"] as const)(
       defaultOptions: { queries: { staleTime: Infinity, retry: false } },
     });
     client.setQueryData(["contexts"], [context]);
-    client.setQueryData(["tools", tool.name], tool);
+    client.setQueryData(["tools", tool.id], tool);
+    client.setQueryData(["tools"], [tool]);
     render(
       <QueryClientProvider client={client}>
         <RouterProvider
-          router={createMemoryRouter([{ path: "/tools/:name", element: <ToolEditorPage /> }], {
-            initialEntries: ["/tools/report"],
+          router={createMemoryRouter([{ path: "/tools/:id", element: <ToolEditorPage /> }], {
+            initialEntries: ["/tools/tool-id"],
           })}
         />
       </QueryClientProvider>,

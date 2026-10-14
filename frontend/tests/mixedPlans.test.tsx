@@ -36,7 +36,7 @@ const plan: GenerateOk = {
     {
       id: "step_1",
       source: "tool",
-      selected_tool: { name: "existing", version: 1 },
+      selected_tool: { id: "existing-id", name: "existing", version: 1 },
       operation,
       validation,
     },
@@ -61,7 +61,7 @@ test("mixed plan labels provenance and offers drafts only for new operations", (
   expect(screen.getByText("Operation plan · 3 operations")).toBeTruthy();
   expect(screen.getByText("New SQL draft · review before use")).toBeTruthy();
   expect(screen.getByRole("link", { name: "existing" }).getAttribute("href")).toBe(
-    "/tools/existing",
+    "/tools/existing-id",
   );
   expect(screen.queryByRole("link", { name: "Create Tool draft from step_1" })).toBeNull();
   expect(
@@ -104,13 +104,13 @@ test("draft loading and saving preserve step identity within the same generation
       };
     }
     if (path === "/validate") return validation;
-    if (path === "/tools") return { name: "saved" };
+    if (path === "/tools") return { id: "tool", name: "saved" };
     throw new Error(`Unexpected request ${path}`);
   });
   const router = createMemoryRouter(
     [
       { path: "/tools/new", element: <ToolEditorPage /> },
-      { path: "/tools/saved", element: <div>Saved</div> },
+      { path: "/tools/tool", element: <div>Saved</div> },
     ],
     { initialEntries: ["/tools/new?generation=gen&step=step_2"] },
   );

@@ -11,6 +11,7 @@ from sidewit.validation.sql_validator import (
     allowed_values_by_parameter,
     validate_sql_operation,
 )
+from tests.tool_urls import tool_path
 
 
 def definition(type_name="public.mood"):
@@ -131,7 +132,7 @@ async def test_intermediate_enum_cast_cannot_hide_an_invalid_parameter(client):
     # Truncating 'okay' first would yield 'ok', but the first enum cast must fail.
     for value, expected in [("ok", 200), ("okay", 422)]:
         invoked = await client.post(
-            "/api/v1/tools/enum_chain/invoke", json={"arguments": {"m": value}}
+            tool_path("enum_chain", "/invoke"), json={"arguments": {"m": value}}
         )
         assert invoked.status_code == expected, invoked.text
 
@@ -202,12 +203,12 @@ async def test_enum_cast_tool_save_invoke_preserves_application_sql(
     assert saved.status_code == 201, saved.text
     assert saved.json()["operation"]["statement"] == sql
     invoked = await client.post(
-        "/api/v1/tools/enum_cast/invoke", json={"arguments": {"m": "ok"} if parameters else {}}
+        tool_path("enum_cast", "/invoke"), json={"arguments": {"m": "ok"} if parameters else {}}
     )
     assert invoked.status_code == 200, invoked.text
     assert invoked.json()["operation"]["statement"] == sql
     if parameters:
         rejected = await client.post(
-            "/api/v1/tools/enum_cast/invoke", json={"arguments": {"m": "meh"}}
+            tool_path("enum_cast", "/invoke"), json={"arguments": {"m": "meh"}}
         )
         assert rejected.status_code == 422, rejected.text

@@ -74,13 +74,13 @@ export default function ToolsPage() {
 }
 
 function ToolRow({ tool, contextName }: { tool: Tool; contextName: string }) {
-  const activation = useSetToolEnabled(tool.name);
+  const activation = useSetToolEnabled(tool.id);
   return (
     <TableRow>
       <TableCell>
         <Link
           className="font-mono text-sm underline-offset-2 hover:underline"
-          to={`/tools/${tool.name}`}
+          to={`/tools/${tool.id}`}
         >
           {tool.name}
         </Link>

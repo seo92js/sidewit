@@ -112,7 +112,7 @@ updates cannot change the binding either; manually bound Tools receive the same 
 The saved SQL AST and input types must match the compiled contract. Whitespace, comments and
 identifier quoting that resolves to the same name are accepted; arbitrary SQL rewrites are not.
 Context changes revalidate Tools, and incompatible invocation returns 409. Use
-`POST /tools/{name}/refresh-contract` with `expected_version` (UI: **Rebuild from contract**)
+`POST /tools/{tool_id}/refresh-contract` with `expected_version` (UI: **Rebuild from contract**)
 to rebuild against the current definition. SQL and input names/types are read-only in the bound
 Tool editor. An unavailable date binding returns 409 `metric_contract_unavailable`; it is never
 silently replaced. Contract edits that leave SQL and input types unchanged need no rebuild.

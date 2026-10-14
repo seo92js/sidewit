@@ -10,6 +10,7 @@ from sidewit.generation.dto import LLMGenerationOutput, LLMParameter, LLMToolSug
 from sidewit.generation.prompt import PROMPT_VERSION
 from sidewit.generation.providers.fake import FakeProvider
 from sidewit.main import app
+from tests.tool_urls import tool_path
 
 
 def output(case):
@@ -223,7 +224,7 @@ async def test_fixture_generate_draft_save_and_deterministic_invoke(
     assert saved.json()["status"] == "valid"
     for _ in range(2):
         response = await eval_client.post(
-            "/tools/fixture_tool/invoke", json={"arguments": arguments}
+            tool_path("fixture_tool", "/invoke", prefix="/tools"), json={"arguments": arguments}
         )
         assert response.status_code == 200
         assert response.json()["operation"]["parameters"] == arguments

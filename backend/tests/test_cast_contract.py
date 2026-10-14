@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sidewit.domain.dialect import cast_value
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_validation_boundaries import create_context
+from tests.tool_urls import tool_path
 
 
 @pytest.mark.parametrize(
@@ -84,7 +85,7 @@ async def test_invalid_runtime_cast_is_rejected(client, target, value, allowed):
         },
     )
     assert r.status_code == 201, r.text
-    r = await client.post("/api/v1/tools/cast_probe/invoke", json={"arguments": {"s": value}})
+    r = await client.post(tool_path("cast_probe", "/invoke"), json={"arguments": {"s": value}})
     assert r.status_code == 422, r.text
 
 

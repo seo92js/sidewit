@@ -6,10 +6,13 @@ Initial release candidate.
 
 ### Breaking changes
 
+- Tool resource URLs now use the immutable UUID: `/tools/{tool_id}` and its invoke/refresh
+  subpaths. Use `id` from create/list/get or `selected_tool.id`; names are editable labels.
+  Name-based resource URLs are removed. Invoke responses also include `tool_id`.
+
 - Every successful `POST /generate` response now returns `operations`, even for a single
   generated SQL or metric result. Read operation, validation, metric_binding and tool_suggestion
   from each step instead of the top level. No legacy response mode is retained.
-  Tool invoke and administrative generation-history responses are unchanged.
 
 ### Fixes
 
@@ -20,6 +23,9 @@ Initial release candidate.
   be checked as a saved Tool. Preserve inferred step IDs in Tool drafts and saved provenance.
 
 ### Features
+
+- Allow renaming saved Tools in the editor and update API. Preserve identity and activation,
+  reject duplicate names, and keep atomic file writes independent of mutable names.
 
 - Add persisted Tool activation, independent of SQL validity. Disabled Tools remain editable
   but are excluded from selection and invocation. Re-enabling validates against the current

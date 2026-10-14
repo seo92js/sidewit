@@ -16,7 +16,7 @@ Sidewit is not a database proxy: it never connects to a database or executes SQL
 | Generate | Select a matching saved Tool first; otherwise produce SQL drafts, or return `ambiguous` / `unanswerable` |
 | Tool plans | Return 1–5 independent operations, reusing saved Tools and generating uncovered parts |
 | Static validation | Check statement type, Context tables and columns, parameter contracts, and supported value policies |
-| Tools | Save and edit reviewed SQL and input contracts; enable/disable reuse; revalidate after Context changes; invoke deterministically |
+| Tools | Save, rename and edit reviewed SQL and input contracts; enable/disable reuse; revalidate after Context changes; invoke deterministically |
 | SQL metric contracts | Compile registered aggregates, joins, fixed filters and periods into SQL |
 | Management UI | Edit Contexts, review generated Operations, save and invoke Tools |
 
@@ -124,7 +124,10 @@ docker compose run --rm -T --no-deps -v ./examples/ecommerce:/examples:ro api py
 | Generate SQL | `POST /generate` | Context ID, question and reference time → Operation draft |
 | Draft Tool | `POST /tools/draft` | `generation_id` + `step_id` (optional for one step) → SQL and input contract |
 | Save Tool | `POST /tools` | Review the draft and omit `example_arguments` before saving |
-| Invoke | `POST /tools/{name}/invoke` | `arguments` → SQL, binding values, versions and validation result |
+| Invoke | `POST /tools/{tool_id}/invoke` | `arguments` → SQL, binding values, versions and validation result |
+
+Use the saved Tool's `id` for resource URLs. Renaming changes its label and version while
+its UUID and API/UI addresses stay the same; names are never used as resource addresses.
 
 Example Generate request, using the bundled Korean-language fixture:
 
@@ -169,7 +172,7 @@ By default, `POST /generate` asks the model to select 1–5 saved Tool calls fro
 their arguments. The catalog includes the Tool's SQL and input schema, so selection is based on
 its whole operation rather than just its name. A match invokes the existing deterministic Tool
 service; it never executes SQL. The response uses `source: "plan"` and an `operations` array with per-step
-`selected_tool: {"name": "...", "version": 1}`. Review the selected Tools and arguments: static
+`selected_tool: {"id": "uuid", "name": "...", "version": 1}`. Review the selected Tools and arguments: static
 validation cannot prove that they answer the question.
 
 If Tools cover only part of the question, the existing metric/SQL generation path fills the gaps.
@@ -179,7 +182,7 @@ Tool/Context changes fail explicitly; they do not silently fall back to new SQL.
 explicit metric options (`metric_id`, `date_field`, `period`, or `require_metric: true`) skip Tool
 selection and use the metric path. With no saved Tools, there is no extra model call.
 
-Natural-language selection requires an LLM call; direct `/tools/{name}/invoke` still does not.
+Natural-language selection requires an LLM call; direct `/tools/{tool_id}/invoke` still does not.
 Selection and generation share the 90-second request deadline. Catalogs over 100,000 serialized
 characters are rejected with `tool_catalog_too_large` rather than silently truncated. New drafts are saved only when you explicitly create a Tool.
 

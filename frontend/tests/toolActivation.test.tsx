@@ -53,7 +53,7 @@ function client() {
   });
   qc.setQueryData(["contexts"], [context]);
   qc.setQueryData(["tools"], [tool]);
-  qc.setQueryData(["tools", tool.name], tool);
+  qc.setQueryData(["tools", tool.id], tool);
   return qc;
 }
 function list(qc: QueryClient) {
@@ -66,8 +66,8 @@ function list(qc: QueryClient) {
   );
 }
 function editor(qc: QueryClient) {
-  const router = createMemoryRouter([{ path: "/tools/:name", element: <ToolEditorPage /> }], {
-    initialEntries: ["/tools/report"],
+  const router = createMemoryRouter([{ path: "/tools/:id", element: <ToolEditorPage /> }], {
+    initialEntries: ["/tools/t"],
   });
   render(
     <QueryClientProvider client={qc}>
@@ -92,7 +92,7 @@ test("Tool list waits for activation to be saved and updates its version", async
   fireEvent.click(button);
   await waitFor(() => expect(button).toHaveProperty("disabled", true));
   expect(screen.getByText("Enabled")).toBeTruthy();
-  expect(request).toHaveBeenCalledWith("PATCH", "/tools/report", {
+  expect(request).toHaveBeenCalledWith("PATCH", "/tools/t", {
     expected_version: 1,
     enabled: false,
   });
@@ -100,7 +100,7 @@ test("Tool list waits for activation to be saved and updates its version", async
   await act(async () => resolve(current));
   expect(await screen.findByRole("button", { name: "Enable report" })).toBeTruthy();
   expect(screen.getByText("Disabled")).toBeTruthy();
-  expect(qc.getQueryData(["tools", "report"])).toEqual(current);
+  expect(qc.getQueryData(["tools", "t"])).toEqual(current);
   qc.clear();
 });
 
@@ -123,7 +123,7 @@ test("activation conflict refreshes the row before another change", async () => 
   expect(screen.getByText("Changed on server")).toBeTruthy();
   fireEvent.click(enable);
   await waitFor(() =>
-    expect(request).toHaveBeenCalledWith("PATCH", "/tools/report", {
+    expect(request).toHaveBeenCalledWith("PATCH", "/tools/t", {
       expected_version: 2,
       enabled: true,
     }),
@@ -162,7 +162,7 @@ test.each([
   expect(screen.getByText("Disabled")).toBeTruthy();
   fireEvent.click(enable);
   await waitFor(() =>
-    expect(request).toHaveBeenCalledWith("PATCH", "/tools/report", {
+    expect(request).toHaveBeenCalledWith("PATCH", "/tools/t", {
       expected_version: 2,
       enabled: true,
     }),
@@ -184,7 +184,7 @@ test("failed activation refreshes the editor without discarding local edits", as
         message: "Storage failed",
         details: {},
       });
-    if (method === "GET" && path === "/tools/report") return current;
+    if (method === "GET" && path === "/tools/t") return current;
     return validation;
   });
   const qc = client();
@@ -250,7 +250,7 @@ test("editor uses the activation version for the next SQL save", async () => {
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith(
       "PUT",
-      "/tools/report",
+      "/tools/t",
       expect.objectContaining({ expected_version: 2, description: "Changed" }),
     ),
   );

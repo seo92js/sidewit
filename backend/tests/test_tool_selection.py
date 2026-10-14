@@ -64,7 +64,7 @@ async def test_reuses_exact_saved_sql_and_reports_provenance(client, context, fa
     body = response.json()
     assert body["source"] == "plan"
     step = body["operations"][0]
-    assert step["selected_tool"] == {"name": tool["name"], "version": 1}
+    assert step["selected_tool"] == {"id": tool["id"], "name": tool["name"], "version": 1}
     assert step["operation"]["statement"] == tool["operation"]["statement"]
     assert step["operation"]["parameters"] == {"region": "서울"}
     assert len(provider.calls) == 1
@@ -176,7 +176,7 @@ async def test_changes_during_selection_do_not_invoke_new_contract(
             changed.version += 1
             store.save_context(changed)
         else:
-            await client.delete(f"/api/v1/tools/{tool['name']}")
+            await client.delete(f"/api/v1/tools/{tool['id']}")
             await client.delete(f"/api/v1/contexts/{context['id']}")
         return StructuredResult(parsed=choice())
 
@@ -261,7 +261,7 @@ async def test_enum_violation_does_not_fall_back(client, context, fake):
     tool = await saved_tool(client, context)
     tool["input_schema"]["properties"]["region"]["enum"] = ["서울"]
     response = await client.put(
-        f"/api/v1/tools/{tool['name']}",
+        f"/api/v1/tools/{tool['id']}",
         json={
             "description": tool["description"],
             "input_schema": tool["input_schema"],

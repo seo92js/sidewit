@@ -166,8 +166,8 @@ def run(args):
     draft["name"] = args.tool_name
     draft["description"] = draft["description"] or question["question"]
     # All model-produced material is revalidated by the save endpoint.
-    call("POST", "/tools", draft)
-    invoked = call("POST", f"/tools/{args.tool_name}/invoke", {"arguments": arguments})
+    saved = call("POST", "/tools", draft)
+    invoked = call("POST", f"/tools/{saved['id']}/invoke", {"arguments": arguments})
     result["tool"] = invoked["tool"]
     result["operation"] = invoked["operation"]
     result["validation"] = step["validation"]

@@ -2,6 +2,7 @@ import pytest
 
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_validation_boundaries import create_context
+from tests.tool_urls import tool_path
 
 D = {
     "resources": [
@@ -40,9 +41,9 @@ async def test_transformed_invoke_matches_validate(client, rhs):
         },
     )
     assert r.status_code == 201, r.text
-    r = await client.post("/api/v1/tools/probe/invoke", json={"arguments": {"s": "AX"}})
+    r = await client.post(tool_path("probe", "/invoke"), json={"arguments": {"s": "AX"}})
     assert r.status_code == 200, r.text
-    r = await client.post("/api/v1/tools/probe/invoke", json={"arguments": {"s": "ZX"}})
+    r = await client.post(tool_path("probe", "/invoke"), json={"arguments": {"s": "ZX"}})
     assert r.status_code == 422, r.text
 
 

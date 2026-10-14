@@ -3,6 +3,7 @@
 Nothing here calls an LLM, executes SQL or connects to an application database.
 """
 
+import uuid
 from typing import Any
 
 from pydantic import BaseModel
@@ -49,6 +50,7 @@ class ContractUnavailable(Exception):
 
 
 class InvalidTool(BaseModel):
+    id: uuid.UUID
     name: str
     errors: list[Issue]
 
@@ -139,7 +141,7 @@ def revalidate_context_tools(store: Store, context: ContextRecord) -> Revalidati
         if result.valid:
             summary.valid.append(tool.name)
         else:
-            summary.invalid.append(InvalidTool(name=tool.name, errors=result.errors))
+            summary.invalid.append(InvalidTool(id=tool.id, name=tool.name, errors=result.errors))
     return summary
 
 

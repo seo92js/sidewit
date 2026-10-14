@@ -12,7 +12,11 @@ def step(index, value="서울", statement=None):
     return {
         "id": f"step_{index}",
         "source": "tool",
-        "selected_tool": {"name": "count_customers", "version": 1},
+        "selected_tool": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "count_customers",
+            "version": 1,
+        },
         "operation": {
             "type": "sql",
             "dialect": "postgresql",

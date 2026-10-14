@@ -14,7 +14,7 @@ This document defines the implementation contract for Sidewit v0.1. If the imple
    - A **Tool** reuses a reviewed, saved Operation and its input contract. The same inputs deterministically produce the same Operation, without guaranteeing database execution or business correctness.
    - The **calling application** controls database privileges, user and tenant access, whether to execute, and time and resource limits.
 2. **Operation ≠ Tool.** An Operation is an execution plan. A Tool is a reusable interface combining a validated Operation template with an input contract (JSON Schema).
-3. **Generated operations are probabilistic. Saved tools are deterministic.** `/generate` uses an LLM; `/tools/{name}/invoke` does not.
+3. **Generated operations are probabilistic. Saved tools are deterministic.** `/generate` uses an LLM; `/tools/{tool_id}/invoke` does not.
 4. **Sidewit does not connect to any database.** It accepts no application database credentials and does not execute SQL or EXPLAIN. Its own state (Contexts and Tools) is stored as files in a data directory (§11).
 5. **Sidewit admits what it cannot answer.** Unanswerable or ambiguous questions return `unanswerable` or `ambiguous` without producing SQL.
 6. **Validation is static.** It parses SQL to check statement types, Context scope, names, parameter contracts and supported value policies (§7). It does not guarantee actual type/function compatibility, executability, cost, function side effects or Business Rule compliance. SELECT describes a statement type, not harmlessness. Checks stay within their supported static scope and reject input when a required check cannot be performed.
@@ -279,7 +279,7 @@ Common behavior:
   "revalidation": {
     "checked": 3,
     "valid": ["regional_revenue", "monthly_sales"],
-    "invalid": [{ "name": "customer_orders", "errors": [{ "code": "unknown_field", "message": "...", "ref": "orders.amount" }] }]
+    "invalid": [{ "id": "uuid", "name": "customer_orders", "errors": [{ "code": "unknown_field", "message": "...", "ref": "orders.amount" }] }]
   }
 }
 ```
@@ -474,15 +474,20 @@ Generation flow when no saved Tool is selected:
 | Method | Path | Description |
 |---|---|---|
 | GET | `/tools?context_id=` | List, including status |
-| GET | `/tools/{name}` | Retrieve |
+| GET | `/tools/{tool_id}` | Retrieve |
 | POST | `/tools/draft` | Draft from a Generation `{generation_id, step_id?}` without saving |
 | POST | `/tools` | Create `{context_id, name, description, input_schema, operation, source_generation_id?, source_step_id?, enabled?}`. Validation failure returns 422 `tool_validation_failed` (`details.validation_errors`, `details.warnings`); a name conflict returns 409 `tool_name_conflict` |
-| PUT | `/tools/{name}` | Update `{expected_version, description, input_schema, operation}`. Version mismatch returns 409 `version_conflict`. Name and Context cannot change. Content changes increment version by one. Validation failure returns 422 and leaves the Tool unchanged |
-| PATCH | `/tools/{name}` | Change activation `{expected_version, enabled}`. Requires a JSON boolean; increments version only when changed. Enabling revalidates against the current Context; failure returns 422 `tool_validation_failed` and keeps the Tool disabled. Disabling works even for invalid/stale Tools. Conflicts return 409 `version_conflict` |
-| DELETE | `/tools/{name}` | Delete |
+| PUT | `/tools/{tool_id}` | Update `{expected_version, description, input_schema, operation, name?}`. An omitted/null name keeps the current name; Context cannot change. Renaming requires a unique valid Tool name, preserves the Tool ID and increments version once with other edits. Name conflicts return 409 `tool_name_conflict`; version mismatch returns 409 `version_conflict`. Validation failure returns 422 and leaves the Tool unchanged. API paths use the immutable Tool UUID, so renaming or reusing a name cannot retarget a request |
+| PATCH | `/tools/{tool_id}` | Change activation `{expected_version, enabled}`. Requires a JSON boolean; increments version only when changed. Enabling revalidates against the current Context; failure returns 422 `tool_validation_failed` and keeps the Tool disabled. Disabling works even for invalid/stale Tools. Conflicts return 409 `version_conflict` |
+| DELETE | `/tools/{tool_id}` | Delete |
 | POST | `/validate` | Validation without saving, for editors: `{context_id, operation, input_schema?}`. With `input_schema`, run Tool validation (§7.5); also supplying `operation.parameter_types`/`parameters` returns 422 `invalid_validate_request`. Otherwise validate SQL using those parameter fields. Always uses `DEFAULT_POLICY`; this is not a Generate-compatibility check |
-| POST | `/tools/{name}/invoke` | Deterministic invocation `{arguments, expected_version?}` |
-| POST | `/tools/{name}/refresh-contract` | Requires `{expected_version}` (409 on conflict). Rebuilds a metric-bound Tool's SQL and inputs from the current contract. Preserves input descriptions/enums when types match. Changes increment version by one. An unbound Tool or unavailable metric/date binding returns 409 `metric_contract_unavailable` |
+| POST | `/tools/{tool_id}/invoke` | Deterministic invocation `{arguments, expected_version?}` |
+| POST | `/tools/{tool_id}/refresh-contract` | Requires `{expected_version}` (409 on conflict). Rebuilds a metric-bound Tool's SQL and inputs from the current contract. Preserves input descriptions/enums when types match. Changes increment version by one. An unbound Tool or unavailable metric/date binding returns 409 `metric_contract_unavailable` |
+
+All Tool resource paths use the UUID returned as `id` by create/list/get. Names are editable
+labels used in model selection, not resource addresses. A malformed UUID returns 422; an
+unknown/deleted UUID returns 404. No name-based resource routes or aliases are supported.
+`selected_tool` includes this UUID as `id`; invoke returns it as `tool_id`.
 
 `POST /tools/draft` makes no LLM call.
 - Requires an in-memory Generation with `status=ok`. Missing records return 404 `generation_not_found`; other statuses return 409 `generation_not_ok`.
@@ -526,7 +531,7 @@ After a failed activation request, the UI re-reads availability and versions bef
 change, because a write may have committed despite a storage error or lost response.
 This refresh preserves local edits and does not automatically retry the write.
 
-`POST /tools/{name}/invoke`
+`POST /tools/{tool_id}/invoke`
 
 ```json
 { "arguments": { "region": "서울", "start_date": "2026-09-02" }, "expected_version": 3 }
@@ -534,6 +539,7 @@ This refresh preserves local edits and does not automatically retry the write.
 
 ```json
 {
+  "tool_id": "uuid",
   "tool": "regional_revenue",
   "tool_version": 3,
   "context_version": 4,
@@ -780,7 +786,7 @@ Question ──/generate──▶ Generation (in memory)
                      Context changes → Revalidate ─┬─▶ valid (context_version updated)
                                                    └─▶ invalid → Edit and revalidate → valid
                                                     │
-                                               /tools/{name}/invoke → SQL Operation
+                                               /tools/{tool_id}/invoke → SQL Operation
 ```
 
 ---
@@ -901,6 +907,10 @@ The UI is a React SPA with three screens. Every function is available through th
 - Editor: name, description, input editor (name/type/format/description/enum) and Monaco SQL editor. Debounce `/validate` calls while editing and show errors inline. Explain that `NOW()` is allowed and validation is not a Generate-compatibility check.
 - Enable [Save] only after validation against the current edits and Context version. After Context changes, do not reuse an old passing verdict while revalidation is pending or failed. If the Tool changes elsewhere, notify the user without discarding edits; version conflicts return 409.
 - Metric-bound Tools have read-only SQL and input names/types; **Rebuild from contract** updates them.
+- Saved Tool names remain editable. Save validates the name and SQL and keeps the same
+  `/tools/{tool_id}` editor address. Duplicate-name errors preserve edits and allow
+  choosing another name. If another request renamed the Tool, preserve local edits and offer
+  explicit reload by ID; never silently replace the editor contents.
 - Test invocation panel: form initialized with `example_arguments`, with the response displayed as JSON.
 
 - Lock inputs and SQL editing during save, delete or contract rebuild requests. On failure, unlock without discarding inputs.
@@ -922,13 +932,17 @@ Sidewit uses no database. State lives in files under the data directory (`SIDEWI
 ```
 /data
 ├─ contexts/<context_id>.json
-└─ tools/<tool_name>.json
+└─ tools/<tool_id>.json
 ```
 
 - Files use UTF-8 JSON, sorted keys and two-space indentation for readable diffs. Numbers are preserved without precision loss.
 - **At startup**, read and validate every file. Unreadable directory listings or any format/integrity error (invalid JSON, failed Context validation, duplicate names, Tools referencing missing Contexts, etc.) report the path and cause and prevent startup. Missing directories are created empty; unreadable directories are never treated as empty.
 - **Writes** use a temporary file in the same directory, fsync, rename and parent-directory fsync. One API process serializes changes synchronously without intervening awaits. Save the Context before Tool revalidation results. This is not a multi-file transaction: failures or interruptions can leave partial changes, so clients must retrieve current versions. Tools tied to older Context versions are revalidated before invocation. Failed writes restore memory and validation caches; if files cannot be reloaded, the API fails closed with 503 and requires restart.
 - Version conflicts (`expected_version`) and name conflicts use current in-memory state.
+- New Tool files use immutable UUID filenames. Existing name-based files retain their paths;
+  the Tool name is read from the JSON contents. Renaming updates one file atomically without
+  moving or deleting it. Duplicate Tool IDs or names prevent startup. Renames invalidate cached
+  validation and in-flight plans; historical generation snapshots keep their original names.
 - Tool validation caches belong to each store instance. Context/Tool saves invalidate related verdicts; recovery and shutdown clear the cache. Caching does not eliminate all SQL reparsing: invocation always checks actual input values.
 - **Use one instance and one API worker.** Hold the data directory's `.lock` for the process lifetime; a second process opening the same directory refuses to start. Use a local filesystem. Network shares and multiple instances are unsupported.
 - Manual file changes take effect only after restart, and a running Sidewit may overwrite them. Stop Sidewit before editing files directly.
