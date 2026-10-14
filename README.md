@@ -16,9 +16,13 @@ Sidewit is not a database proxy: it never connects to a database or executes SQL
 | Generate | Select a matching saved Tool first; otherwise produce SQL drafts, or return `ambiguous` / `unanswerable` |
 | Tool plans | Return 1–5 independent operations, reusing saved Tools and generating uncovered parts |
 | Static validation | Check statement type, Context tables and columns, parameter contracts, and supported value policies |
-| Tools | Save and edit reviewed SQL and input contracts; revalidate after Context changes; invoke deterministically |
+| Tools | Save and edit reviewed SQL and input contracts; enable/disable reuse; revalidate after Context changes; invoke deterministically |
 | SQL metric contracts | Compile registered aggregates, joins, fixed filters and periods into SQL |
 | Management UI | Edit Contexts, review generated Operations, save and invoke Tools |
+
+Use **Enable/Disable** in the Tools list or editor to keep a Tool without using it. Disabled
+Tools are excluded from automatic selection and direct invocation. Re-enabling checks the
+current Context; new Tools are enabled by default. Context policy still controls new SQL generation.
 
 ## Architecture
 
@@ -195,7 +199,7 @@ The suites are **regression cases exposed during development and review**, not a
 
 ## Limitations and roadmap
 
-- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, dependent Tool chaining, mixed Tool/generated-SQL plans and Vector/RAG/MCP are not implemented.
+- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, dependent Tool chaining and Vector/RAG/MCP are not implemented.
 - Static validation does not guarantee executability, absence of side effects, execution cost or business correctness. The application must enforce database roles and function privileges, user and tenant authorization, and time/resource limits. Prose business rules and omitted conditions are not automatically enforced.
 - One API process owns a data directory on a local filesystem. Multiple instances are not supported. Once a Generation leaves memory, it cannot be used to create a Tool draft.
 - All Tool inputs are required. Optional/default/array inputs and Tool version history are not supported. Generate has a 90-second total request budget, including repair.

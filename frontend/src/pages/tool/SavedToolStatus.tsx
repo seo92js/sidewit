@@ -14,6 +14,9 @@ export function SavedToolStatus({
   rebuilding,
   rebuildError,
   busy,
+  onToggle,
+  activating,
+  activationError,
 }: {
   tool: Tool;
   currentContextVersion?: number;
@@ -23,10 +26,25 @@ export function SavedToolStatus({
   rebuilding: boolean;
   rebuildError: unknown;
   busy: boolean;
+  onToggle: () => void;
+  activating: boolean;
+  activationError: unknown;
 }) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant={tool.enabled ? "secondary" : "outline"}>
+          {tool.enabled ? "Enabled" : "Disabled"}
+        </Badge>
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={dirty || busy}
+          onClick={onToggle}
+          title={dirty ? "Save or discard your edits first" : undefined}
+        >
+          {activating ? "Updating…" : tool.enabled ? "Disable Tool" : "Enable Tool"}
+        </Button>
         <ToolStatusBadge status={tool.status} />
         <Badge variant="secondary" className="font-mono">
           v{tool.version}
@@ -37,17 +55,20 @@ export function SavedToolStatus({
         </span>
         {tool.metric_binding && (
           <span className="ml-auto flex items-center gap-2">
-            {dirty && (
-              <span className="text-xs text-muted-foreground">
-                Save or discard your edits first
-              </span>
-            )}
             <Button variant="outline" size="xs" disabled={dirty || busy} onClick={onRebuild}>
               <RefreshCw /> {rebuilding ? "Rebuilding…" : "Rebuild from contract"}
             </Button>
           </span>
         )}
       </div>
+      {dirty && <p className="text-xs text-muted-foreground">Save or discard your edits first</p>}
+      {!tool.enabled && (
+        <p className="text-sm text-muted-foreground">
+          Disabled Tools are excluded from automatic selection and cannot be invoked. You can still
+          edit this Tool.
+        </p>
+      )}
+      <ErrorAlert error={activationError} title="Could not change Tool availability" />
       {tool.validation && <ValidationPanel result={tool.validation} label="Saved Tool checks" />}
       <ErrorAlert error={rebuildError} title="Could not rebuild from the contract" />
       {tool.status === "invalid" && (

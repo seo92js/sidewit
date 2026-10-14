@@ -18,7 +18,15 @@ import { orderedInputs, paramType } from "./inputSchema";
 // undefined: not entered yet. "" is a real string value (an enum may list it).
 type FieldValue = string | boolean | undefined;
 
-export function InvokePanel({ tool, dirty }: { tool: Tool; dirty: boolean }) {
+export function InvokePanel({
+  tool,
+  dirty,
+  busy = false,
+}: {
+  tool: Tool;
+  dirty: boolean;
+  busy?: boolean;
+}) {
   const location = useLocation();
   const invoke = useInvokeTool(tool.name, tool.version);
   const inputs = orderedInputs(tool.input_schema);
@@ -80,6 +88,7 @@ export function InvokePanel({ tool, dirty }: { tool: Tool; dirty: boolean }) {
   const allShownPerField = otherIssues?.length === 0 && Object.keys(fieldErrors).length > 0;
 
   const submit = () => {
+    if (!tool.enabled || busy || invoke.isPending) return;
     const args: Record<string, unknown> = {};
     const errors: Record<string, string> = {};
     for (const name of inputs) {
@@ -109,6 +118,11 @@ export function InvokePanel({ tool, dirty }: { tool: Tool; dirty: boolean }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!tool.enabled && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Enable this Tool before invoking it.
+          </p>
+        )}
         {inputs.length === 0 && (
           <p className="text-sm text-muted-foreground">This tool has no inputs.</p>
         )}
@@ -182,7 +196,7 @@ export function InvokePanel({ tool, dirty }: { tool: Tool; dirty: boolean }) {
             </div>
           );
         })}
-        <Button onClick={submit} disabled={invoke.isPending}>
+        <Button onClick={submit} disabled={invoke.isPending || busy || !tool.enabled}>
           <Play /> {invoke.isPending ? "Resolving…" : "Invoke Tool"}
         </Button>
         <ErrorAlert

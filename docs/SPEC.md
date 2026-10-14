@@ -164,6 +164,7 @@ Contents of a Tool file (§11):
   "version": 3,
   "context_version": 4,
   "status": "valid",
+  "enabled": true,
   "validation_errors": [],
   "validation": { "valid": true, "errors": [], "warnings": [], "checks": ["..."] },
   "source_generation_id": "uuid | null",
@@ -174,9 +175,12 @@ Contents of a Tool file (§11):
 ```
 
 - `name` matches `^[a-z][a-z0-9_]{0,63}$` and is globally unique.
+- `enabled` defaults to `true` and controls reuse/invocation independently of SQL validation.
+  Disabled Tools remain visible and editable. Older Tool files without this field load as enabled.
 - `status` is `valid | invalid | stale`. `context_version` is the Context version against which the Tool was last found valid.
 - `validation` contains the most recent validation result. Non-blocking warnings are preserved in retrieval and invocation responses.
-- Editing a Tool increments `version` by one. Version history is not retained.
+- Editing a Tool or changing `enabled` increments `version` by one. Repeating the same
+  activation value with the current version is a no-op. Version history is not retained.
 - A Tool's `operation` contains no values, only a statement template. Its `dialect` comes from the Context.
 - `source_generation_id` is a provenance reference only; the Tool survives after that Generation leaves memory.
 - `metric_binding` is present only on Tools created from metric contracts (§5.4).
@@ -472,8 +476,9 @@ Generation flow when no saved Tool is selected:
 | GET | `/tools?context_id=` | List, including status |
 | GET | `/tools/{name}` | Retrieve |
 | POST | `/tools/draft` | Draft from a Generation `{generation_id, step_id?}` without saving |
-| POST | `/tools` | Create `{context_id, name, description, input_schema, operation, source_generation_id?, source_step_id?}`. Validation failure returns 422 `tool_validation_failed` (`details.validation_errors`, `details.warnings`); a name conflict returns 409 `tool_name_conflict` |
+| POST | `/tools` | Create `{context_id, name, description, input_schema, operation, source_generation_id?, source_step_id?, enabled?}`. Validation failure returns 422 `tool_validation_failed` (`details.validation_errors`, `details.warnings`); a name conflict returns 409 `tool_name_conflict` |
 | PUT | `/tools/{name}` | Update `{expected_version, description, input_schema, operation}`. Version mismatch returns 409 `version_conflict`. Name and Context cannot change. Content changes increment version by one. Validation failure returns 422 and leaves the Tool unchanged |
+| PATCH | `/tools/{name}` | Change activation `{expected_version, enabled}`. Requires a JSON boolean; increments version only when changed. Enabling revalidates against the current Context; failure returns 422 `tool_validation_failed` and keeps the Tool disabled. Disabling works even for invalid/stale Tools. Conflicts return 409 `version_conflict` |
 | DELETE | `/tools/{name}` | Delete |
 | POST | `/validate` | Validation without saving, for editors: `{context_id, operation, input_schema?}`. With `input_schema`, run Tool validation (§7.5); also supplying `operation.parameter_types`/`parameters` returns 422 `invalid_validate_request`. Otherwise validate SQL using those parameter fields. Always uses `DEFAULT_POLICY`; this is not a Generate-compatibility check |
 | POST | `/tools/{name}/invoke` | Deterministic invocation `{arguments, expected_version?}` |
@@ -507,6 +512,19 @@ Generation flow when no saved Tool is selected:
   If it is omitted for a one-step Generation, the selected ID is still persisted.
 - Must reference an in-memory `ok` Generation of the same Context; otherwise return 422 `invalid_source_generation`.
 - A metric Generation passes on its `metric_binding`. Omitting it or sending null cannot remove it, and a different binding cannot replace it. PUT does not change bindings.
+
+Tool activation is persisted. PUT edits and contract refresh preserve it; Context updates
+still revalidate disabled Tools. Automatic selection includes only enabled Tools, and
+invocation returns 409 `tool_disabled` before validation/argument processing when disabled.
+All-disabled catalogs skip selection and use the normal generation policy. Disabling a Tool
+controls its reuse, not access to Context resources: new SQL may still answer the same question.
+Already returned operations cannot be revoked by changing this flag.
+
+The Tools list and editor provide Enable/Disable controls. The editor requires saving or
+discarding local edits first; status mutations refresh versions and preserve edit-conflict guards.
+After a failed activation request, the UI re-reads availability and versions before another
+change, because a write may have committed despite a storage error or lost response.
+This refresh preserves local edits and does not automatically retry the write.
 
 `POST /tools/{name}/invoke`
 

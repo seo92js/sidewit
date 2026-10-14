@@ -172,6 +172,26 @@ export function useUpdateTool(name: string) {
   });
 }
 
+export function useSetToolEnabled(name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { expected_version: number; enabled: boolean }) =>
+      request<Tool>("PATCH", `/tools/${name}`, body),
+    onError: async () => {
+      // A failed response can still follow a committed write. Read back availability
+      // and versions before allowing another change; do not retry the write itself.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: keys.tool(name), exact: true }),
+        qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
+      ]);
+    },
+    onSuccess: async (tool) => {
+      qc.setQueryData(keys.tool(name), tool);
+      await qc.invalidateQueries({ queryKey: keys.tools, exact: true });
+    },
+  });
+}
+
 export function useDeleteTool() {
   const qc = useQueryClient();
   return useMutation({

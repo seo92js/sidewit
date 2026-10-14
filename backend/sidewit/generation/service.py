@@ -82,7 +82,11 @@ async def generate(
     errors: list[Issue] = []
     selection_error: ToolSelectionError | None = None
     handled = False
-    candidates = store.tools_of(context.id) if not request.options.any() else []
+    candidates = (
+        [tool for tool in store.tools_of(context.id) if tool.enabled]
+        if not request.options.any()
+        else []
+    )
     if candidates:
         tool_prompt = plan_prompt(candidates, context, request)
         record.prompt_version = PLAN_PROMPT_VERSION
