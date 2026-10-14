@@ -16,6 +16,7 @@ from sidewit.validation.sql_validator import (
 )
 from tests.test_generate_api import ok
 from tests.test_metric_api import ask, install
+from tests.tool_urls import tool_path
 
 # importer -------------------------------------------------------------------------------
 
@@ -275,7 +276,7 @@ async def test_tool_draft_and_invoke_accept_only_allowed_values(client, zone_con
     body |= {"name": "zone_members", "description": "Members", "context_id": zone_context["id"]}
     assert (await client.post("/api/v1/tools", json=body)).status_code == 201
     bad = await client.post(
-        "/api/v1/tools/zone_members/invoke", json={"arguments": {"zone": "Kyoto"}}
+        tool_path("zone_members", "/invoke"), json={"arguments": {"zone": "Kyoto"}}
     )
     assert bad.status_code == 422
     assert bad.json()["details"]["errors"][0]["code"] == "argument_not_in_enum"

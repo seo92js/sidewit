@@ -6,6 +6,7 @@ from sidewit.domain.context import ContextDefinition
 from sidewit.validation.input_schema import input_schema_for
 from sidewit.validation.sql_validator import validate_sql_operation
 from tests.test_validation_boundaries import DEFINITION, create_context, create_tool
+from tests.tool_urls import tool_path
 
 
 @pytest.mark.parametrize(
@@ -28,7 +29,7 @@ async def test_query_parameter_domain_at_save_and_invoke(client, comparison):
     # Exercise both initial validation and cached invocation, with both legal values.
     for value, expected in [("A", 200), ("OUTSIDE", 422), ("B", 200), ("OUTSIDE", 422)]:
         response = await client.post(
-            "/api/v1/tools/review_tool/invoke", json={"arguments": {"status": value}}
+            tool_path("review_tool", "/invoke"), json={"arguments": {"status": value}}
         )
         assert response.status_code == expected, response.text
         if expected == 422:

@@ -9,6 +9,7 @@ from sidewit.generation.history import GenerationRecord
 from sidewit.main import app
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_validation_boundaries import create_context, create_tool
+from tests.tool_urls import tool_path
 
 DEFINITION = {"resources": [{"name": "orders", "fields": [{"name": "id", "type": "bigint"}]}]}
 
@@ -17,10 +18,10 @@ async def test_tool_updates_require_the_editor_version(client):
     context = await create_context(client, DEFINITION)
     tool = await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
     body = {k: tool[k] for k in ("description", "input_schema", "operation")}
-    missing = await client.put("/api/v1/tools/review_tool", json=body)
+    missing = await client.put(tool_path("review_tool"), json=body)
     assert missing.status_code == 422
     updated = await client.put(
-        "/api/v1/tools/review_tool",
+        tool_path("review_tool"),
         json=body
         | {
             "expected_version": 1,
@@ -29,14 +30,14 @@ async def test_tool_updates_require_the_editor_version(client):
     )
     assert updated.status_code == 200, updated.text
     stale = await client.put(
-        "/api/v1/tools/review_tool",
+        tool_path("review_tool"),
         json=body | {"expected_version": 1, "description": "old editor"},
     )
     assert stale.status_code == 409 and stale.json()["error"] == "version_conflict"
-    current = (await client.get("/api/v1/tools/review_tool")).json()
+    current = (await client.get(tool_path("review_tool"))).json()
     assert current["operation"] == updated.json()["operation"]
     invoked = await client.post(
-        "/api/v1/tools/review_tool/invoke", json={"arguments": {}, "expected_version": 1}
+        tool_path("review_tool", "/invoke"), json={"arguments": {}, "expected_version": 1}
     )
     assert invoked.status_code == 409
 
@@ -52,7 +53,7 @@ async def test_nonblocking_warnings_survive_save_and_invoke(client):
     sql = "SELECT o.id FROM orders o JOIN customers c ON c.id = o.id"
     tool = await create_tool(client, context, sql, input_schema_for({}))
     assert "undeclared_relation" in {w["code"] for w in tool["validation"]["warnings"]}
-    invoked = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+    invoked = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     assert invoked.json()["validation"] == tool["validation"]
 
 
@@ -64,9 +65,9 @@ async def test_stale_tool_that_no_longer_validates_is_blocked_on_invoke(client, 
     record.status = "stale"
     record.validation = None
     store.save_tool(record)
-    res = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+    res = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     assert res.status_code == 409
-    stored = (await client.get("/api/v1/tools/review_tool")).json()
+    stored = (await client.get(tool_path("review_tool"))).json()
     assert stored["status"] == "invalid"
     assert [e["code"] for e in stored["validation"]["errors"]] == ["unknown_field"]
 
@@ -205,6 +206,6 @@ async def test_history_eviction_preserves_saved_tools(client, store, history):
     assert history.get(records[0].id) is None
     assert history.get(records[1].id) is records[1]
     assert (await client.get(f"/api/v1/generations/{records[0].id}")).status_code == 404
-    res = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+    res = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     assert res.status_code == 200
     assert store.tool(tool["name"]).source_generation_id == records[0].id

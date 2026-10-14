@@ -4,6 +4,7 @@ from sidewit.domain.context import ContextDefinition
 from sidewit.validation.input_schema import input_schema_for
 from sidewit.validation.sql_validator import validate_sql_operation
 from tests.test_validation_boundaries import DEFINITION, create_context, create_tool
+from tests.tool_urls import tool_path
 
 
 @pytest.mark.parametrize(
@@ -17,7 +18,7 @@ async def test_cte_and_subquery_preserve_context_value_constraints(client, state
     ctx = await create_context(client, DEFINITION)
     await create_tool(client, ctx, statement, input_schema_for({"status": "string"}))
     response = await client.post(
-        "/api/v1/tools/review_tool/invoke", json={"arguments": {"status": "OUTSIDE"}}
+        tool_path("review_tool", "/invoke"), json={"arguments": {"status": "OUTSIDE"}}
     )
     assert response.status_code == 422, response.text
 
@@ -241,10 +242,10 @@ async def test_tool_invoke_rejects_value_outside_domain_through_text_cast_subque
     ctx = await create_context(client, ACTIVE_ONLY.to_json())
     sql = "SELECT s FROM (SELECT status::text AS s FROM orders) q WHERE s = :s"
     await create_tool(client, ctx, sql, input_schema_for({"s": "string"}))
-    bad = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {"s": "X"}})
+    bad = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {"s": "X"}})
     assert bad.status_code == 422, bad.text
     assert bad.json()["details"]["errors"][0]["code"] == "value_not_allowed"
-    ok = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {"s": "ACTIVE"}})
+    ok = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {"s": "ACTIVE"}})
     assert ok.status_code == 200, ok.text
 
 
@@ -252,6 +253,6 @@ async def test_tool_invoke_enforces_context_values_through_all(client):
     ctx = await create_context(client, ACTIVE_ONLY.to_json())
     sql = "SELECT status FROM orders WHERE status != ALL(ARRAY[:s])"
     await create_tool(client, ctx, sql, input_schema_for({"s": "string"}))
-    bad = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {"s": "X"}})
+    bad = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {"s": "X"}})
     assert bad.status_code == 422, bad.text
     assert bad.json()["details"]["errors"][0]["code"] == "value_not_allowed"

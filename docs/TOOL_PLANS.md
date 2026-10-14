@@ -10,12 +10,15 @@ mode is required. Steps that consume another step's result are not supported.
 
 There is one automatic selection flow; the Generate API has no mode option.
 Only enabled Tools enter the catalog. Disable a Tool without deleting its SQL using
-`PATCH /api/v1/tools/{name}` with `{"expected_version": 1, "enabled": false}`.
+`PATCH /api/v1/tools/{tool_id}` with `{"expected_version": 1, "enabled": false}`.
 Direct invocation then returns `409 tool_disabled`. Re-enable with the latest version and
 `enabled: true`; the Tool must pass current Context validation. With all Tools disabled,
 generation handles the question normally, subject to Context policy. Disabling a Tool does
 not prohibit generating new SQL for the same intent. Changes during selection or mixed
 planning invalidate the old Tool version; no partial plan is returned.
+Renaming a Tool through `PUT /api/v1/tools/{tool_id}` also increments its version and
+invalidates in-flight plans. Keep using the same Tool UUID for subsequent requests. Its activation,
+SQL contract and provenance are preserved; historical results keep their original names.
 
 ## Request
 
@@ -54,7 +57,7 @@ Each plan operation contains:
 |---|---|
 | id | Server-assigned step_1, step_2, etc.; unique within this response |
 | source | tool, generated_sql or metric; identifies provenance |
-| selected_tool | Saved Tool name and version; present only for source tool |
+| selected_tool | Saved Tool UUID, name snapshot and version; present only for source tool |
 | task | Question covered by a generated/metric step |
 | tool_suggestion | Suggested name/description for a generated step, when available |
 | operation | SQL dialect, statement, bound parameters and parameter types |

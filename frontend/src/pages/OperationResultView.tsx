@@ -35,10 +35,7 @@ export function OperationResultView({
               {index + 1}.{" "}
               {step.source === "tool" ? (
                 <>
-                  <Link
-                    className="underline"
-                    to={`/tools/${encodeURIComponent(step.selected_tool.name)}`}
-                  >
+                  <Link className="underline" to={`/tools/${step.selected_tool.id}`}>
                     {step.selected_tool.name}
                   </Link>{" "}
                   · v{step.selected_tool.version}

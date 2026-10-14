@@ -19,7 +19,7 @@ from tests.test_tools_api import tool as tool
 
 async def toggle(client, tool, enabled, expected_version=None):
     return await client.patch(
-        f"/api/v1/tools/{tool['name']}",
+        f"/api/v1/tools/{tool['id']}",
         json={
             "enabled": enabled,
             "expected_version": tool["version"] if expected_version is None else expected_version,
@@ -46,7 +46,7 @@ async def test_disable_preserves_contract_and_blocks_invoke(client, tool):
     ):
         assert disabled[field] == tool[field]
     assert (await client.get("/api/v1/tools")).json()["items"][0]["enabled"] is False
-    invoked = await client.post(f"/api/v1/tools/{tool['name']}/invoke", json={"arguments": ARGS})
+    invoked = await client.post(f"/api/v1/tools/{tool['id']}/invoke", json={"arguments": ARGS})
     assert invoked.status_code == 409
     assert invoked.json()["error"] == "tool_disabled"
     assert "operation" not in invoked.json()
@@ -54,7 +54,7 @@ async def test_disable_preserves_contract_and_blocks_invoke(client, tool):
     assert enabled.status_code == 200, enabled.text
     assert enabled.json()["version"] == disabled["version"] + 1
     assert (
-        await client.post(f"/api/v1/tools/{tool['name']}/invoke", json={"arguments": ARGS})
+        await client.post(f"/api/v1/tools/{tool['id']}/invoke", json={"arguments": ARGS})
     ).status_code == 200
 
 
@@ -84,7 +84,7 @@ async def test_failed_activation_requires_reading_persisted_state(
         response = await toggle(client, tool, False)
     assert response.status_code == 503
     assert response.json()["error"] == "storage_unavailable"
-    current = (await client.get(f"/api/v1/tools/{tool['name']}")).json()
+    current = (await client.get(f"/api/v1/tools/{tool['id']}")).json()
     assert current["enabled"] is not committed
     assert current["version"] == tool["version"] + int(committed)
     # The current version, rather than the failed request's version, makes retry safe.
@@ -94,7 +94,7 @@ async def test_failed_activation_requires_reading_persisted_state(
 async def test_disabled_tool_can_be_edited_without_being_enabled(client, tool):
     disabled = (await toggle(client, tool, False)).json()
     response = await client.put(
-        f"/api/v1/tools/{tool['name']}",
+        f"/api/v1/tools/{tool['id']}",
         json={
             "expected_version": disabled["version"],
             "description": "Edited while disabled",
@@ -110,16 +110,16 @@ async def test_disabled_tool_can_be_edited_without_being_enabled(client, tool):
 async def test_disabled_invalid_tool_requires_repair_before_enable(client, context, tool):
     disabled = (await toggle(client, tool, False)).json()
     await update_context(client, context, renamed_amount())
-    invalid = (await client.get(f"/api/v1/tools/{tool['name']}")).json()
+    invalid = (await client.get(f"/api/v1/tools/{tool['id']}")).json()
     assert invalid["status"] == "invalid" and invalid["enabled"] is False
     failed = await toggle(client, invalid, True)
     assert failed.status_code == 422
     assert failed.json()["error"] == "tool_validation_failed"
-    unchanged = (await client.get(f"/api/v1/tools/{tool['name']}")).json()
+    unchanged = (await client.get(f"/api/v1/tools/{tool['id']}")).json()
     assert unchanged["enabled"] is False
     assert unchanged["version"] == disabled["version"]
     fixed = await client.put(
-        f"/api/v1/tools/{tool['name']}",
+        f"/api/v1/tools/{tool['id']}",
         json={
             "expected_version": invalid["version"],
             "description": tool["description"],
@@ -137,7 +137,7 @@ async def test_disabled_invalid_tool_requires_repair_before_enable(client, conte
 
 async def test_invalid_tool_can_still_be_disabled(client, context, tool):
     await update_context(client, context, renamed_amount())
-    invalid = (await client.get(f"/api/v1/tools/{tool['name']}")).json()
+    invalid = (await client.get(f"/api/v1/tools/{tool['id']}")).json()
     assert invalid["status"] == "invalid"
     disabled = await toggle(client, invalid, False)
     assert disabled.status_code == 200
@@ -149,7 +149,7 @@ async def test_invalid_tool_can_still_be_disabled(client, context, tool):
 async def test_activation_requires_a_boolean(client, tool, value):
     response = await toggle(client, tool, value)
     assert response.status_code == 422
-    assert (await client.get(f"/api/v1/tools/{tool['name']}")).json()["enabled"] is True
+    assert (await client.get(f"/api/v1/tools/{tool['id']}")).json()["enabled"] is True
 
 
 async def test_create_disabled_and_file_restart(client, context, store, tmp_path):
@@ -165,12 +165,12 @@ async def test_create_disabled_and_file_restart(client, context, store, tmp_path
 
 
 async def test_older_tool_files_default_to_enabled(client, tool, store, tmp_path):
-    path = tmp_path / "data" / "tools" / f"{tool['name']}.json"
+    path = tmp_path / "data" / "tools" / f"{tool['id']}.json"
     payload = json.loads(path.read_text())
     payload.pop("enabled")
     path.write_text(json.dumps(payload))
     store.restore()
-    assert (await client.get(f"/api/v1/tools/{tool['name']}")).json()["enabled"] is True
+    assert (await client.get(f"/api/v1/tools/{tool['id']}")).json()["enabled"] is True
 
 
 async def test_disabled_catalog_entries_are_not_sent_to_model(client, context, fake):

@@ -3,7 +3,7 @@
 Records live in memory and are written through to one JSON file each:
 
     <data_dir>/contexts/<context_id>.json
-    <data_dir>/tools/<tool_name>.json
+    <data_dir>/tools/<tool_id>.json
 
 Concurrency model: one process owns the directory. Every mutation runs synchronously on the
 event loop (no `await` between reading the current state and writing the file), so a request
@@ -15,6 +15,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import tempfile
 import uuid
 from collections import OrderedDict
@@ -155,6 +156,9 @@ class Store:
         self._tools_dir = root / "tools"
         self.contexts: dict[uuid.UUID, ContextRecord] = {}
         self.tools: dict[str, ToolRecord] = {}
+        self._tool_names: dict[uuid.UUID, str] = {}
+        # Existing name-based files keep their path; renaming changes one file atomically.
+        self._tool_paths: dict[uuid.UUID, Path] = {}
         # Structural verdicts belong to this snapshot; actual invoke values are always checked.
         self._tool_checks: OrderedDict[tuple[uuid.UUID, int, uuid.UUID, int], ValidationResult] = (
             OrderedDict()
@@ -196,6 +200,10 @@ class Store:
 
     def tool(self, name: str) -> ToolRecord | None:
         return deepcopy(self.tools.get(name))
+
+    def tool_by_id(self, tool_id: uuid.UUID) -> ToolRecord | None:
+        name = self._tool_names.get(tool_id)
+        return deepcopy(self.tools.get(name)) if name is not None else None
 
     def tools_of(self, context_id: uuid.UUID) -> list[ToolRecord]:
         return sorted(
@@ -245,10 +253,19 @@ class Store:
 
     def save_tool(self, record: ToolRecord) -> None:
         self.require_available()
+        occupied = self.tools.get(record.name)
+        if occupied is not None and occupied.id != record.id:
+            raise StoreError("Tool name is already in use.", operation="write")
+        previous_name = self._tool_names.get(record.id)
+        path = self._tool_paths.get(record.id, self._tools_dir / f"{record.id}.json")
         self._forget_tool_checks(record.id)
         record.updated_at = _now()
-        self._write(self._tools_dir / f"{record.name}.json", record)
+        self._write(path, record)
+        if previous_name is not None and previous_name != record.name:
+            self.tools.pop(previous_name)
         self.tools[record.name] = deepcopy(record)
+        self._tool_names[record.id] = record.name
+        self._tool_paths[record.id] = path
 
     def delete_context(self, record: ContextRecord) -> None:
         self.require_available()
@@ -258,8 +275,10 @@ class Store:
     def delete_tool(self, record: ToolRecord) -> None:
         self.require_available()
         self._forget_tool_checks(record.id)
-        self._unlink(self._tools_dir / f"{record.name}.json")
+        self._unlink(self._tool_paths[record.id])
         self.tools.pop(record.name, None)
+        self._tool_names.pop(record.id, None)
+        self._tool_paths.pop(record.id, None)
 
     def _forget_tool_checks(self, tool_id: uuid.UUID) -> None:
         for key in list(self._tool_checks):
@@ -317,6 +336,7 @@ class Store:
         problems: list[str] = []
         contexts: dict[uuid.UUID, ContextRecord] = {}
         tools: dict[str, ToolRecord] = {}
+        tool_paths: dict[uuid.UUID, Path] = {}
         for path in _json_files(self._contexts_dir):
             parsed = _parse(path, _ContextFile, problems)
             if parsed is None:
@@ -338,20 +358,25 @@ class Store:
             parsed = _parse(path, _ToolFile, problems)
             if parsed is None:
                 continue
-            if path.stem != parsed.name:
-                problems.append(f"{path}: file name must be the Tool name '{parsed.name}'")
+            if path.stem != str(parsed.id) and re.fullmatch(TOOL_NAME_PATTERN, path.stem) is None:
+                problems.append(f"{path}: file name must be the Tool id or a legacy Tool name")
             elif parsed.context_id not in contexts:
                 problems.append(f"{path}: Context {parsed.context_id} does not exist")
-            elif any(t.id == parsed.id for t in tools.values()):
+            elif parsed.id in tool_paths:
                 problems.append(f"{path}: duplicate Tool id {parsed.id}")
+            elif parsed.name in tools:
+                problems.append(f"{path}: duplicate Tool name '{parsed.name}'")
             else:
                 tools[parsed.name] = ToolRecord(**_fields(parsed, ToolRecord))
+                tool_paths[parsed.id] = path
         if problems:
             raise StoreError(
                 "Invalid data files:\n" + "\n".join(f"  {p}" for p in problems),
                 operation="validate",
             )
         self.contexts, self.tools = contexts, tools
+        self._tool_names = {t.id: t.name for t in tools.values()}
+        self._tool_paths = tool_paths
         self._available = True
         log.info("Loaded %d Contexts and %d Tools", len(self.contexts), len(self.tools))
 

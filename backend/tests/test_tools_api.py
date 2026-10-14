@@ -6,6 +6,7 @@ from sidewit.api.generate import get_llm_provider
 from sidewit.generation.dto import LLMGenerationOutput, LLMParameter, LLMToolSuggestion
 from sidewit.generation.providers.fake import FakeProvider
 from sidewit.main import app
+from tests.tool_urls import tool_path
 
 DEFINITION = {
     "resources": [
@@ -84,7 +85,7 @@ async def tool(client, context):
 
 
 async def invoke(client, name="regional_revenue", arguments=ARGS):
-    return await client.post(f"/api/v1/tools/{name}/invoke", json={"arguments": arguments})
+    return await client.post(tool_path(name, "/invoke"), json={"arguments": arguments})
 
 
 async def update_context(client, context, definition):
@@ -123,7 +124,7 @@ async def test_create_tool(client, context, tool):
     assert tool["operation"] == {"type": "sql", "statement": SQL}
     assert tool["input_schema"] == SCHEMA
 
-    assert (await client.get("/api/v1/tools/regional_revenue")).json() == tool
+    assert (await client.get(tool_path("regional_revenue"))).json() == tool
     listed = (await client.get(f"/api/v1/tools?context_id={context['id']}")).json()["items"]
     assert [t["name"] for t in listed] == ["regional_revenue"]
 
@@ -216,7 +217,7 @@ async def test_update_revalidates_and_increments_version(client, context, tool):
         "input_schema": SCHEMA,
         "operation": {"type": "sql", "statement": SQL + " GROUP BY c.region"},
     }
-    res = await client.put("/api/v1/tools/regional_revenue", json=body)
+    res = await client.put(tool_path("regional_revenue"), json=body)
     assert res.status_code == 200
     updated = res.json()
     assert updated["version"] == 2
@@ -224,33 +225,34 @@ async def test_update_revalidates_and_increments_version(client, context, tool):
     assert updated["id"] == tool["id"]
 
     body["expected_version"] = updated["version"]
-    unchanged = await client.put("/api/v1/tools/regional_revenue", json=body)
+    unchanged = await client.put(tool_path("regional_revenue"), json=body)
     assert unchanged.json()["version"] == 2
 
     bad = body | {"operation": {"type": "sql", "statement": "SELECT nope FROM orders"}}
-    res = await client.put("/api/v1/tools/regional_revenue", json=bad)
+    res = await client.put(tool_path("regional_revenue"), json=bad)
     assert res.status_code == 422
-    current = (await client.get("/api/v1/tools/regional_revenue")).json()
+    current = (await client.get(tool_path("regional_revenue"))).json()
     assert current["version"] == 2
     assert current["operation"] == body["operation"]
 
 
-async def test_update_cannot_rename_or_move(client, context, tool):
+async def test_update_cannot_move_to_another_context(client, context, tool):
     body = {
         "description": "x",
         "input_schema": SCHEMA,
         "operation": {"type": "sql", "statement": SQL},
-        "name": "other",
+        "expected_version": tool["version"],
+        "context_id": context["id"],
     }
-    res = await client.put("/api/v1/tools/regional_revenue", json=body)
+    res = await client.put(tool_path("regional_revenue"), json=body)
     assert res.status_code == 422
     assert res.json()["error"] == "invalid_request"
 
 
 async def test_delete_tool(client, context, tool):
-    assert (await client.delete("/api/v1/tools/regional_revenue")).status_code == 204
-    assert (await client.get("/api/v1/tools/regional_revenue")).status_code == 404
-    assert (await client.delete("/api/v1/tools/regional_revenue")).status_code == 404
+    assert (await client.delete(tool_path("regional_revenue"))).status_code == 204
+    assert (await client.get(tool_path("regional_revenue"))).status_code == 404
+    assert (await client.delete(tool_path("regional_revenue"))).status_code == 404
 
 
 # invoke ---------------------------------------------------------------------------------
@@ -263,6 +265,7 @@ async def test_invoke_returns_canonical_operation_without_llm(client, context, t
     assert res.json() == {
         "validation": tool["validation"],
         "tool": "regional_revenue",
+        "tool_id": tool["id"],
         "tool_version": 1,
         "context_version": context["version"],
         "operation": {
@@ -320,7 +323,7 @@ async def test_invoke_rejects_invalid_arguments(client, context, tool, arguments
     "body", [{"region": "서울"}, {"arguments": ARGS, "metadata": {}}, {"arguments": []}]
 )
 async def test_invoke_requires_arguments_envelope(client, context, tool, body):
-    res = await client.post("/api/v1/tools/regional_revenue/invoke", json=body)
+    res = await client.post(tool_path("regional_revenue", "/invoke"), json=body)
     assert res.status_code == 422
     assert res.json()["error"] == "invalid_request"
 
@@ -356,12 +359,12 @@ async def test_context_change_invalidates_affected_tool(client, context, tool):
     assert [t["name"] for t in revalidation["invalid"]] == ["regional_revenue"]
     assert revalidation["invalid"][0]["errors"][0]["code"] == "unknown_field"
 
-    broken = (await client.get("/api/v1/tools/regional_revenue")).json()
+    broken = (await client.get(tool_path("regional_revenue"))).json()
     assert broken["status"] == "invalid"
     assert broken["context_version"] == 1, "last version it was valid against"
     assert broken["validation_errors"][0]["ref"] == "orders.amount"
 
-    unaffected = (await client.get("/api/v1/tools/customer_regions")).json()
+    unaffected = (await client.get(tool_path("customer_regions"))).json()
     assert (unaffected["status"], unaffected["context_version"]) == ("valid", 2)
 
     res = await invoke(client)
@@ -389,7 +392,7 @@ async def test_invalid_tool_can_be_fixed_by_update(client, context, tool):
         "input_schema": SCHEMA,
         "operation": {"type": "sql", "statement": SQL.replace("o.amount", "o.payment_amount")},
     }
-    res = await client.put("/api/v1/tools/regional_revenue", json=body)
+    res = await client.put(tool_path("regional_revenue"), json=body)
     assert res.status_code == 200
     assert (res.json()["status"], res.json()["version"], res.json()["context_version"]) == (
         "valid",
@@ -409,7 +412,7 @@ async def test_stale_tool_is_revalidated_on_invoke(client, context, tool, store)
     res = await invoke(client)
     assert res.status_code == 200
     assert res.json()["context_version"] == 5
-    assert (await client.get("/api/v1/tools/regional_revenue")).json()["context_version"] == 5
+    assert (await client.get(tool_path("regional_revenue"))).json()["context_version"] == 5
 
 
 async def test_context_with_tools_cannot_be_deleted(client, context, tool):
@@ -418,7 +421,7 @@ async def test_context_with_tools_cannot_be_deleted(client, context, tool):
     assert res.json()["error"] == "context_has_tools"
     assert res.json()["details"] == {"tools": ["regional_revenue"]}
 
-    await client.delete("/api/v1/tools/regional_revenue")
+    await client.delete(tool_path("regional_revenue"))
     assert (await client.delete(f"/api/v1/contexts/{context['id']}")).status_code == 204
 
 
@@ -490,7 +493,7 @@ async def test_draft_from_generation_is_not_saved(client, context, omit_step):
     assert saved.status_code == 201
     assert saved.json()["source_generation_id"] == generation_id
     assert saved.json()["source_step_id"] == "step_1"
-    stored = await client.get(f"/api/v1/tools/{saved.json()['name']}")
+    stored = await client.get(f"/api/v1/tools/{saved.json()['id']}")
     assert stored.json()["source_step_id"] == "step_1"
     assert (await invoke(client, arguments=draft["example_arguments"])).status_code == 200
 

@@ -17,6 +17,7 @@ from sidewit.main import app
 from sidewit.store import Store, StoreError
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_validation_boundaries import create_context, create_tool
+from tests.tool_urls import tool_path
 
 DEFINITION = {"resources": [{"name": "orders", "fields": [{"name": "id", "type": "bigint"}]}]}
 
@@ -73,7 +74,7 @@ async def test_unreadable_directory_cannot_publish_partial_recovery(
     store.restore()
     assert (await client.get("/api/v1/health")).status_code == 200
     assert (
-        await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+        await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     ).status_code == 200
 
 
@@ -122,7 +123,7 @@ async def test_restart_keeps_tool_and_exact_values_but_forgets_generations(clien
     )
     expected = (
         await client.post(
-            "/api/v1/tools/review_tool/invoke", json={"arguments": {"id": 9007199254740993}}
+            tool_path("review_tool", "/invoke"), json={"arguments": {"id": 9007199254740993}}
         )
     ).json()
     root = store.root
@@ -133,9 +134,9 @@ async def test_restart_keeps_tool_and_exact_values_but_forgets_generations(clien
     try:
         loaded = (await client.get(f"/api/v1/contexts/{context['id']}")).json()
         assert loaded["definition"] == context["definition"]
-        assert (await client.get("/api/v1/tools/review_tool")).json() == tool
+        assert (await client.get(tool_path("review_tool"))).json() == tool
         actual = await client.post(
-            "/api/v1/tools/review_tool/invoke", json={"arguments": {"id": 9007199254740993}}
+            tool_path("review_tool", "/invoke"), json={"arguments": {"id": 9007199254740993}}
         )
         assert actual.json() == expected
         assert (await client.get("/api/v1/generations")).json() == {"items": []}
@@ -173,7 +174,7 @@ async def test_partial_context_update_cannot_leave_current_wrong_tool(client, st
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
     assert (
-        await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+        await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     ).status_code == 200
     replace = os.replace
 
@@ -197,7 +198,7 @@ async def test_partial_context_update_cannot_leave_current_wrong_tool(client, st
     reopened = Store(store.root)
     app.dependency_overrides[get_store] = lambda: reopened
     try:
-        invoke = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+        invoke = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
         assert invoke.status_code == 409
         assert "unknown_field" in invoke.text
         restored = await client.put(
@@ -205,7 +206,7 @@ async def test_partial_context_update_cannot_leave_current_wrong_tool(client, st
         )
         assert restored.status_code == 200
         assert (
-            await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+            await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
         ).status_code == 200
     finally:
         reopened.close()
@@ -251,7 +252,7 @@ async def test_concurrent_tool_edits_have_one_winner(client):
     responses = await asyncio.gather(
         *(
             client.put(
-                "/api/v1/tools/review_tool",
+                tool_path("review_tool"),
                 json=body | {"expected_version": 1, "description": description},
             )
             for description in ("first", "second")
@@ -308,7 +309,7 @@ async def test_invalid_context_file_prevents_startup(client, store, change):
 async def test_malformed_tool_file_prevents_startup(client, store, change):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    path = store.root / "tools/review_tool.json"
+    path = store.root / "tools" / f"{store.tool('review_tool').id}.json"
     path.write_text(json.dumps(json.loads(path.read_text()) | change))
     store.close()
     with pytest.raises(StoreError, match="Invalid data files"):
@@ -318,7 +319,7 @@ async def test_malformed_tool_file_prevents_startup(client, store, change):
 async def test_externally_changed_tool_is_revalidated_on_restart(client, store):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    path = store.root / "tools/review_tool.json"
+    path = store.root / "tools" / f"{store.tool('review_tool').id}.json"
     data = json.loads(path.read_text())
     data["operation"]["statement"] = "SELECT missing FROM orders"
     path.write_text(json.dumps(data))
@@ -326,7 +327,7 @@ async def test_externally_changed_tool_is_revalidated_on_restart(client, store):
     reopened = Store(store.root)
     app.dependency_overrides[get_store] = lambda: reopened
     try:
-        result = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {}})
+        result = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
         assert result.status_code == 409
     finally:
         reopened.close()
@@ -335,9 +336,9 @@ async def test_externally_changed_tool_is_revalidated_on_restart(client, store):
 async def test_restore_discards_cached_verdict_even_when_file_versions_are_unchanged(client, store):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    url = "/api/v1/tools/review_tool/invoke"
+    url = tool_path("review_tool", "/invoke")
     assert (await client.post(url, json={"arguments": {}})).status_code == 200
-    path = store.root / "tools/review_tool.json"
+    path = store.root / "tools" / f"{store.tool('review_tool').id}.json"
     data = json.loads(path.read_text())
     data["operation"]["statement"] = "SELECT missing FROM orders"
     path.write_text(json.dumps(data))
@@ -345,7 +346,7 @@ async def test_restore_discards_cached_verdict_even_when_file_versions_are_uncha
     result = await client.post(url, json={"arguments": {}})
     assert result.status_code == 409
     assert "unknown_field" in result.text
-    tool = (await client.get("/api/v1/tools/review_tool")).json()
+    tool = (await client.get(tool_path("review_tool"))).json()
     assert tool["status"] == "invalid"
     assert tool["validation_errors"] == tool["validation"]["errors"]
 
@@ -353,11 +354,11 @@ async def test_restore_discards_cached_verdict_even_when_file_versions_are_uncha
 async def test_stores_do_not_share_verdicts_for_identical_ids_and_versions(client, store, tmp_path):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    url = "/api/v1/tools/review_tool/invoke"
+    url = tool_path("review_tool", "/invoke")
     assert (await client.post(url, json={"arguments": {}})).status_code == 200
     other_root = tmp_path / "other"
     shutil.copytree(store.root, other_root)
-    path = other_root / "tools/review_tool.json"
+    path = other_root / "tools" / f"{store.tool('review_tool').id}.json"
     data = json.loads(path.read_text())
     data["operation"]["statement"] = "SELECT missing FROM orders"
     path.write_text(json.dumps(data))
@@ -375,7 +376,7 @@ async def test_stores_do_not_share_verdicts_for_identical_ids_and_versions(clien
 async def test_saving_context_invalidates_verdicts_even_without_version_increment(client, store):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    url = "/api/v1/tools/review_tool/invoke"
+    url = tool_path("review_tool", "/invoke")
     assert (await client.post(url, json={"arguments": {}})).status_code == 200
     record = store.context_named(context["name"])
     record.definition["resources"][0]["fields"] = [{"name": "other", "type": "bigint"}]

@@ -73,7 +73,7 @@ export default function App() {
           <Route path="/contexts/:id" element={<ContextsPage />} />
           <Route path="/tools" element={<ToolsPage />} />
           <Route path="/tools/new" element={<ToolEditorPage />} />
-          <Route path="/tools/:name" element={<ToolEditorPage />} />
+          <Route path="/tools/:id" element={<ToolEditorPage />} />
           <Route path="*" element={<Navigate to="/playground" replace />} />
         </Routes>
       </main>

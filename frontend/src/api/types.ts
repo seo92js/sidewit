@@ -120,7 +120,7 @@ export interface ContextUpdate {
 export interface Revalidation {
   checked: number;
   valid: string[];
-  invalid: { name: string; errors: Issue[] }[];
+  invalid: { id: string; name: string; errors: Issue[] }[];
 }
 
 export interface ContextUpdateResult {
@@ -209,7 +209,7 @@ interface PlannedOperationBase {
 
 export type PlannedOperation = PlannedOperationBase &
   (
-    | { source: "tool"; selected_tool: { name: string; version: number } }
+    | { source: "tool"; selected_tool: { id: string; name: string; version: number } }
     | { source: "generated_sql" | "metric"; task: string; tool_suggestion?: ToolSuggestion | null }
   );
 
@@ -323,6 +323,7 @@ export interface ToolCreate {
 
 export interface ToolUpdate {
   expected_version: number;
+  name?: string;
   description: string;
   input_schema: InputSchema;
   operation: ToolOperation;
@@ -341,6 +342,7 @@ export interface ToolDraft {
 }
 
 export interface InvokeResult {
+  tool_id: string;
   validation: ValidationResult;
   tool: string;
   tool_version: number;

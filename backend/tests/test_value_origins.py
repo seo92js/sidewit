@@ -2,6 +2,7 @@ import pytest
 
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_validation_boundaries import create_context
+from tests.tool_urls import tool_path
 
 D = {
     "resources": [
@@ -39,7 +40,7 @@ async def test_projected_parameter_still_constrained(client, rhs):
     )
     assert r.status_code == 201, r.text
     for value, expected in [("A", 200), ("OUTSIDE", 422), ("B", 200)]:
-        r = await client.post("/api/v1/tools/probe/invoke", json={"arguments": {"s": value}})
+        r = await client.post(tool_path("probe", "/invoke"), json={"arguments": {"s": value}})
         assert r.status_code == expected, r.text
         checked = await client.post(
             "/api/v1/validate",

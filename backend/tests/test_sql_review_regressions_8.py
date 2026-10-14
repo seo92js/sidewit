@@ -2,6 +2,7 @@ import pytest
 
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_validation_boundaries import create_context
+from tests.tool_urls import tool_path
 
 D = {
     "resources": [
@@ -46,5 +47,5 @@ async def test_subquery_parameter_domain(client, rhs):
         },
     )
     assert r.status_code == 201, r.text
-    r = await client.post("/api/v1/tools/probe_tool/invoke", json={"arguments": {"s": "OUTSIDE"}})
+    r = await client.post(tool_path("probe_tool", "/invoke"), json={"arguments": {"s": "OUTSIDE"}})
     assert r.status_code == 422, r.text

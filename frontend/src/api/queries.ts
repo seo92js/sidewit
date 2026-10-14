@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError, request } from "./client";
+import { request } from "./client";
 import type {
   Context,
   ContextCreate,
@@ -27,7 +27,7 @@ const keys = {
   contexts: ["contexts"] as const,
   context: (id: string) => ["contexts", id] as const,
   tools: ["tools"] as const,
-  tool: (name: string) => ["tools", name] as const,
+  tool: (id: string) => ["tools", id] as const,
   generation: (id: string) => ["generations", id] as const,
 };
 
@@ -123,11 +123,11 @@ export function useTools() {
   });
 }
 
-export function useTool(name: string | undefined) {
+export function useTool(id: string | undefined) {
   return useQuery({
-    queryKey: keys.tool(name ?? ""),
-    queryFn: () => request<Tool>("GET", `/tools/${name}`),
-    enabled: !!name,
+    queryKey: keys.tool(id ?? ""),
+    queryFn: () => request<Tool>("GET", `/tools/${id}`),
+    enabled: !!id,
   });
 }
 
@@ -150,43 +150,46 @@ export function useCreateTool() {
   return useMutation({
     mutationFn: (body: ToolCreate) => request<Tool>("POST", "/tools", body),
     onSuccess: (tool) => {
-      qc.setQueryData(keys.tool(tool.name), tool);
+      qc.setQueryData(keys.tool(tool.id), tool);
       qc.invalidateQueries({ queryKey: keys.tools, exact: true });
     },
   });
 }
 
-export function useUpdateTool(name: string) {
+export function useUpdateTool(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: ToolUpdate) => request<Tool>("PUT", `/tools/${name}`, body),
-    onError: (error) => {
-      if (error instanceof ApiError && error.status === 409) {
-        qc.invalidateQueries({ queryKey: keys.tool(name), exact: true });
-      }
+    mutationFn: (body: ToolUpdate) => request<Tool>("PUT", `/tools/${id}`, body),
+    onError: async () => {
+      // The write may have committed even if its response was lost. Refresh the same
+      // identity without retrying the write or replacing the local editor contents.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
+        qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
+      ]);
     },
     onSuccess: (tool) => {
-      qc.setQueryData(keys.tool(name), tool);
+      qc.setQueryData(keys.tool(tool.id), tool);
       qc.invalidateQueries({ queryKey: keys.tools, exact: true });
     },
   });
 }
 
-export function useSetToolEnabled(name: string) {
+export function useSetToolEnabled(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { expected_version: number; enabled: boolean }) =>
-      request<Tool>("PATCH", `/tools/${name}`, body),
+      request<Tool>("PATCH", `/tools/${id}`, body),
     onError: async () => {
       // A failed response can still follow a committed write. Read back availability
       // and versions before allowing another change; do not retry the write itself.
       await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.tool(name), exact: true }),
+        qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
         qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
       ]);
     },
     onSuccess: async (tool) => {
-      qc.setQueryData(keys.tool(name), tool);
+      qc.setQueryData(keys.tool(id), tool);
       await qc.invalidateQueries({ queryKey: keys.tools, exact: true });
     },
   });
@@ -195,38 +198,38 @@ export function useSetToolEnabled(name: string) {
 export function useDeleteTool() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => request<void>("DELETE", `/tools/${name}`),
+    mutationFn: (id: string) => request<void>("DELETE", `/tools/${id}`),
     // As for contexts: drop the deleted detail instead of refetching it, and do not wait.
-    onSuccess: (_, name) => {
-      qc.removeQueries({ queryKey: keys.tool(name), exact: true });
+    onSuccess: (_, id) => {
+      qc.removeQueries({ queryKey: keys.tool(id), exact: true });
       qc.invalidateQueries({ queryKey: keys.tools, exact: true });
     },
   });
 }
 
 /** Rebuild a metric-bound Tool's SQL and inputs from its current contract. */
-export function useRefreshContract(name: string) {
+export function useRefreshContract(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (expected_version: number) =>
-      request<Tool>("POST", `/tools/${name}/refresh-contract`, { expected_version }),
+      request<Tool>("POST", `/tools/${id}/refresh-contract`, { expected_version }),
     onSuccess: (tool) => {
-      qc.setQueryData(keys.tool(name), tool);
+      qc.setQueryData(keys.tool(id), tool);
       qc.invalidateQueries({ queryKey: keys.tools, exact: true });
     },
   });
 }
 
-export function useInvokeTool(name: string, expectedVersion: number) {
+export function useInvokeTool(id: string, expectedVersion: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (args: Record<string, unknown>) =>
-      request<InvokeResult>("POST", `/tools/${name}/invoke`, {
+      request<InvokeResult>("POST", `/tools/${id}/invoke`, {
         arguments: args,
         expected_version: expectedVersion,
       }),
     // Invoke may revalidate a stale tool, which changes its status.
-    onSettled: () => qc.invalidateQueries({ queryKey: keys.tool(name) }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.tool(id) }),
   });
 }
 

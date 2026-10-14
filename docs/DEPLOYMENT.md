@@ -8,7 +8,8 @@ SQL.
 ## What the data directory holds
 
 - `contexts/*.json`: schema, descriptions, Business Rules, allowed values and metric contracts.
-- `tools/*.json`: reviewed SQL templates and their input contracts.
+- `tools/<tool_id>.json`: reviewed SQL templates and their input contracts. Existing name-based
+  files remain supported in place; names are stored inside the files and can be changed in the UI/API.
 
 Treat the directory and its backups as sensitive: Contexts describe your data model and may
 list real code values. Generations (questions, generated SQL, parameter values) are kept only

@@ -1,6 +1,7 @@
 """Bounded independent saved Tool operations with automatic generation routing."""
 
 import json
+import uuid
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -36,6 +37,7 @@ class ToolPlanSelection(BaseModel):
 
 
 class SelectedTool(BaseModel):
+    id: uuid.UUID
     name: str
     version: int
 
@@ -128,7 +130,7 @@ def invoke_plan(
         operations.append(
             PlannedToolOperation(
                 id=f"step_{index}",
-                selected_tool=SelectedTool(name=tool.name, version=tool.version),
+                selected_tool=SelectedTool(id=tool.id, name=tool.name, version=tool.version),
                 operation=operation,
                 validation=validation,
                 metric_binding=tool.metric_binding,

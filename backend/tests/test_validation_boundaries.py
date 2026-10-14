@@ -9,6 +9,7 @@ from sidewit.domain.context import ContextDefinition
 from sidewit.validation.input_schema import input_schema_for
 from sidewit.validation.metric_contract import metric_template
 from sidewit.validation.sql_validator import validate_sql_operation
+from tests.tool_urls import tool_path
 
 
 async def create_context(client, definition):
@@ -68,7 +69,7 @@ async def test_manual_tool_cannot_invoke_value_outside_context(client):
         input_schema_for({"status": "string"}),
     )
     response = await client.post(
-        "/api/v1/tools/review_tool/invoke", json={"arguments": {"status": "OUTSIDE"}}
+        tool_path("review_tool", "/invoke"), json={"arguments": {"status": "OUTSIDE"}}
     )
     assert response.status_code == 422, (
         f"forbidden value returned: {response.status_code} {response.text}"
@@ -84,7 +85,7 @@ async def test_context_shrink_invalidates_old_enum(client):
     definition["resources"][0]["fields"][0]["allowed_values"] = ["A"]
     updated = await update_context(client, context, definition)
     response = await client.post(
-        "/api/v1/tools/review_tool/invoke", json={"arguments": {"status": "B"}}
+        tool_path("review_tool", "/invoke"), json={"arguments": {"status": "B"}}
     )
     assert updated["revalidation"]["invalid"][0]["errors"][0]["code"] == "input_enum_conflict"
     assert response.status_code == 409
@@ -118,7 +119,7 @@ async def test_refresh_removed_bound_time_field_returns_conflict(client):
     definition["metrics"][0]["default_time_field"] = None
     await update_context(client, context, definition)
     response = await client.post(
-        "/api/v1/tools/review_tool/refresh-contract", json={"expected_version": 1}
+        tool_path("review_tool", "/refresh-contract"), json={"expected_version": 1}
     )
     assert response.status_code == 409, response.text
 
@@ -251,11 +252,13 @@ async def test_context_values_enforced_without_tool_enum(
     )
     for _ in range(2):
         response = await client.post(
-            "/api/v1/tools/review_tool/invoke", json={"arguments": {"v": good}}
+            tool_path("review_tool", "/invoke"), json={"arguments": {"v": good}}
         )
         assert response.status_code == 200, response.text
         assert response.json()["operation"]["parameters"]["v"] == good
-    response = await client.post("/api/v1/tools/review_tool/invoke", json={"arguments": {"v": bad}})
+    response = await client.post(
+        tool_path("review_tool", "/invoke"), json={"arguments": {"v": bad}}
+    )
     assert response.status_code == 422
     assert response.json()["details"]["errors"][0]["code"] == "value_not_allowed"
 
@@ -282,7 +285,7 @@ async def test_shared_parameter_uses_intersection_of_field_values(client):
     await create_tool(client, context, statement, input_schema_for({"v": "string"}))
     for value, code in [("A", 422), ("B", 200), ("C", 422)]:
         response = await client.post(
-            "/api/v1/tools/review_tool/invoke", json={"arguments": {"v": value}}
+            tool_path("review_tool", "/invoke"), json={"arguments": {"v": value}}
         )
         assert response.status_code == code, response.text
 

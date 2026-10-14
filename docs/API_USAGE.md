@@ -91,6 +91,13 @@ can correct it without retyping. See [clarification limits and version rules](CL
 
 ## Handle errors separately
 
+Saved Tool resource URLs use the immutable UUID returned by create/list/get as `id`, or by
+generation as `selected_tool.id`. Use `POST /api/v1/tools/{tool_id}/invoke` with `arguments`
+and optional `expected_version`. Invoke returns `tool_id`, the current name and version.
+Renaming changes the name and version, while the ID, API address and UI editor address stay
+the same. Never use a Tool name in a resource URL; a name reused by another Tool does not
+change which identity an existing request targets.
+
 | Result | Application action |
 | --- | --- |
 | `200 ambiguous` | Ask the user; do not automatically retry. |

@@ -9,6 +9,7 @@ from sidewit.generation.metric_plan import LLMPeriod
 from sidewit.generation.providers.fake import FakeProvider
 from sidewit.main import app
 from tests.test_metric_contracts import DEFINITION, plan
+from tests.tool_urls import tool_path
 
 
 @pytest.fixture
@@ -86,8 +87,8 @@ async def test_bound_end_to_end_and_deterministic_invoke(client, metric_context)
     detail = (await client.get(f"/api/v1/generations/{generation['generation_id']}")).json()
     assert detail["prompt_version"] == "metric_plan_v3"
     provider = install()  # any call would fail
-    first = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
-    second = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
+    first = await client.post(tool_path("count_orders", "/invoke"), json={"arguments": {}})
+    second = await client.post(tool_path("count_orders", "/invoke"), json={"arguments": {}})
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json()
     assert "COUNT(*)" in first.json()["operation"]["statement"]
@@ -102,12 +103,12 @@ async def test_bound_tool_edits_cannot_change_count_or_binding(client, metric_co
         "type": "sql",
         "statement": tool["operation"]["statement"].replace("COUNT(*)", 'COUNT("orders"."id")'),
     }
-    res = await client.put("/api/v1/tools/count_orders", json=body)
+    res = await client.put(tool_path("count_orders"), json=body)
     assert res.status_code == 422
     assert "metric_contract_mismatch" in res.text
     body["operation"] = tool["operation"]
     body["metric_binding"] = None
-    assert (await client.put("/api/v1/tools/count_orders", json=body)).status_code == 422
+    assert (await client.put(tool_path("count_orders"), json=body)).status_code == 422
 
 
 async def test_changing_metric_invalidates_bound_tool(client, metric_context):
@@ -126,7 +127,7 @@ async def test_changing_metric_invalidates_bound_tool(client, metric_context):
     )
     assert res.status_code == 200
     assert res.json()["revalidation"]["invalid"][0]["name"] == "count_orders"
-    invoke = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
+    invoke = await client.post(tool_path("count_orders", "/invoke"), json={"arguments": {}})
     assert invoke.status_code == 409
 
 
@@ -323,9 +324,9 @@ async def test_metric_options_without_registered_metrics_are_rejected_before_the
 
 async def test_invoke_of_a_current_bound_tool_does_not_write(client, metric_context):
     tool, _ = await saved(client, metric_context)
-    first = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
+    first = await client.post(tool_path("count_orders", "/invoke"), json={"arguments": {}})
     assert first.status_code == 200
-    after = (await client.get("/api/v1/tools/count_orders")).json()
+    after = (await client.get(tool_path("count_orders"))).json()
     assert after["updated_at"] == tool["updated_at"]
 
 
@@ -335,11 +336,11 @@ async def test_refresh_contract_rebuilds_sql_and_keeps_descriptions(client, metr
     definition = copy.deepcopy(current["definition"])
     definition["metrics"][0]["aggregate"] = {"kind": "non_null_count", "field": "orders.id"}
     assert (await put_context(client, metric_context, definition=definition)).status_code == 200
-    stale = (await client.get("/api/v1/tools/count_orders")).json()
+    stale = (await client.get(tool_path("count_orders"))).json()
     assert stale["status"] == "invalid"
 
     res = await client.post(
-        "/api/v1/tools/count_orders/refresh-contract", json={"expected_version": 1}
+        tool_path("count_orders", "/refresh-contract"), json={"expected_version": 1}
     )
     assert res.status_code == 200, res.text
     refreshed = res.json()
@@ -347,11 +348,11 @@ async def test_refresh_contract_rebuilds_sql_and_keeps_descriptions(client, metr
     assert refreshed["version"] == stale["version"] + 1
     assert "COUNT(orders.id)" in refreshed["operation"]["statement"]
     assert refreshed["metric_binding"] == stale["metric_binding"]
-    invoked = await client.post("/api/v1/tools/count_orders/invoke", json={"arguments": {}})
+    invoked = await client.post(tool_path("count_orders", "/invoke"), json={"arguments": {}})
     assert invoked.status_code == 200
 
     again = await client.post(
-        "/api/v1/tools/count_orders/refresh-contract",
+        tool_path("count_orders", "/refresh-contract"),
         json={"expected_version": refreshed["version"]},
     )
     assert again.json()["version"] == refreshed["version"], "no change, no new version"
@@ -378,7 +379,7 @@ async def test_refresh_contract_keeps_input_descriptions(client, metric_context)
     assert (await client.post("/api/v1/tools", json=body)).status_code == 201
 
     refreshed = (
-        await client.post("/api/v1/tools/revenue/refresh-contract", json={"expected_version": 1})
+        await client.post(tool_path("revenue", "/refresh-contract"), json={"expected_version": 1})
     ).json()
     assert refreshed["input_schema"]["properties"]["region"]["description"] == "Sales region"
     assert refreshed["input_schema"]["required"] == ["region", "start_at", "end_at"]
@@ -400,7 +401,7 @@ async def test_refresh_contract_requires_a_bound_tool_with_a_registered_metric(
         "operation": {"type": "sql", "statement": "SELECT COUNT(*) FROM orders"},
     }
     assert (await client.post("/api/v1/tools", json=tool_body)).status_code == 201
-    res = await client.post("/api/v1/tools/manual/refresh-contract", json={"expected_version": 1})
+    res = await client.post(tool_path("manual", "/refresh-contract"), json={"expected_version": 1})
     assert res.status_code == 409 and res.json()["error"] == "metric_contract_unavailable"
 
     await saved(client, metric_context)
@@ -409,6 +410,6 @@ async def test_refresh_contract_requires_a_bound_tool_with_a_registered_metric(
     definition["metrics"] = [m for m in definition["metrics"] if m["id"] != "orders_count"]
     assert (await put_context(client, metric_context, definition=definition)).status_code == 200
     res = await client.post(
-        "/api/v1/tools/count_orders/refresh-contract", json={"expected_version": 1}
+        tool_path("count_orders", "/refresh-contract"), json={"expected_version": 1}
     )
     assert res.status_code == 409 and "no longer registered" in res.json()["message"]

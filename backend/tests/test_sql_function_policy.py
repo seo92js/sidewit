@@ -158,7 +158,7 @@ async def test_stale_tool_status_is_derived_without_overwriting_record(client, s
     record = store.context(UUID(context["id"]))
     record.version += 1
     store.save_context(record)
-    response = await client.get(f"/api/v1/tools/{tool['name']}")
+    response = await client.get(f"/api/v1/tools/{tool['id']}")
     assert response.json()["status"] == "stale"
     assert response.json()["validation"] is None
     listing = await client.get("/api/v1/tools")
