@@ -64,6 +64,7 @@ class ToolRecord:
     operation: dict[str, Any]
     context_version: int
     status: str
+    enabled: bool = True
     version: int = 1
     validation_errors: list[dict[str, Any]] = field(default_factory=list)
     validation: dict[str, Any] | None = None
@@ -130,6 +131,7 @@ class _ToolFile(BaseModel):
     version: int = Field(ge=1)
     context_version: int = Field(ge=1)
     status: ToolStatus
+    enabled: bool = Field(default=True, strict=True)
     validation_errors: list[Issue]
     validation: ValidationResult | None
     source_generation_id: uuid.UUID | None

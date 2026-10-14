@@ -30,6 +30,10 @@ from sidewit.validation.sql_validator import (
 )
 
 
+class ToolDisabled(Exception):
+    pass
+
+
 class ToolInvalid(Exception):
     def __init__(self, errors: list[Issue]) -> None:
         self.errors = errors
@@ -155,6 +159,8 @@ def is_current(tool: ToolRecord, context: ContextRecord) -> bool:
 def invoke(
     store: Store, tool: ToolRecord, context: ContextRecord, arguments: dict[str, Any]
 ) -> tuple[SqlOperation, ValidationResult]:
+    if not tool.enabled:
+        raise ToolDisabled("Tool is disabled.")
     result = store.tool_check(tool, context)
     if result is None:
         result = validate_tool(

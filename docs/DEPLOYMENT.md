@@ -78,7 +78,7 @@ input returns a validation error rather than an unhandled server error.
 
 ## Versions and conflicts
 
-Context updates, Tool updates and `refresh-contract` require the last observed
+Context updates, Tool updates, activation changes and `refresh-contract` require the last observed
 `expected_version`; conflicts return 409 and must be reconciled, not retried blindly. Invoke
 optionally accepts `expected_version`; otherwise inspect the returned Tool version before
 executing.

@@ -13,10 +13,17 @@ Initial release candidate.
 
 ### Fixes
 
+- Re-read Tool availability and versions after failed activation requests, including storage
+  errors and lost responses. Preserve local edits and avoid automatically retrying writes.
+
 - Reject contradictory generation/step sources before evaluation so generated SQL cannot
   be checked as a saved Tool. Preserve inferred step IDs in Tool drafts and saved provenance.
 
 ### Features
+
+- Add persisted Tool activation, independent of SQL validity. Disabled Tools remain editable
+  but are excluded from selection and invocation. Re-enabling validates against the current
+  Context; version changes reject stale plans. Add list/editor controls and conflict handling.
 
 - Return a ready-to-resubmit `continuation_request` for ambiguous generation responses,
   preserving options, prior answers, reference time and Context version. Use it in the

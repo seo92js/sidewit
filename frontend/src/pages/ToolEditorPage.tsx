@@ -10,6 +10,7 @@ import {
   useTool,
   useToolDraft,
   useUpdateTool,
+  useSetToolEnabled,
   useRefreshContract,
   validate,
 } from "@/api/queries";
@@ -203,10 +204,16 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
   const create = useCreateTool();
   const update = useUpdateTool(saved?.name ?? "");
   const remove = useDeleteTool();
+  const activation = useSetToolEnabled(saved?.name ?? "");
   const refresh = useRefreshContract(saved?.name ?? "");
   const [reloading, setReloading] = useState(false);
   const busy =
-    reloading || create.isPending || update.isPending || refresh.isPending || remove.isPending;
+    reloading ||
+    create.isPending ||
+    update.isPending ||
+    refresh.isPending ||
+    remove.isPending ||
+    activation.isPending;
   const allowedNavigation = useRef<string | null>(null);
   const goAfterWrite = (path: string, state?: object) => {
     allowedNavigation.current = path;
@@ -356,6 +363,15 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
           {saved && (
             <SavedToolStatus
               tool={saved}
+              activationError={activation.error}
+              activating={activation.isPending}
+              onToggle={() => {
+                if (dirty || busy) return;
+                activation.mutate(
+                  { expected_version: saved.version, enabled: !saved.enabled },
+                  { onSuccess: reload },
+                );
+              }}
               currentContextVersion={context?.version}
               dirty={dirty}
               busy={busy}
@@ -679,7 +695,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
 
         <div className="min-w-0">
           {saved ? (
-            <InvokePanel tool={saved} dirty={dirty} />
+            <InvokePanel tool={saved} dirty={dirty} busy={busy} />
           ) : (
             <Card>
               <CardContent className="pt-6 text-sm text-muted-foreground">

@@ -290,6 +290,7 @@ export interface ToolOperation {
 export type ToolStatus = "valid" | "invalid" | "stale";
 
 export interface Tool {
+  enabled: boolean;
   id: string;
   context_id: string;
   name: string;
@@ -309,6 +310,7 @@ export interface Tool {
 }
 
 export interface ToolCreate {
+  enabled?: boolean;
   context_id: string;
   name: string;
   description: string;

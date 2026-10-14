@@ -12,7 +12,13 @@ from sidewit.generation.dto import LLMParameter
 from sidewit.generation.parameters import convert_parameter
 from sidewit.generation.planners import GenerationInput
 from sidewit.store import ContextRecord, Store, ToolRecord
-from sidewit.tools.service import InvalidArguments, ToolInvalid, effective_status, invoke
+from sidewit.tools.service import (
+    InvalidArguments,
+    ToolDisabled,
+    ToolInvalid,
+    effective_status,
+    invoke,
+)
 from sidewit.validation.input_schema import parameter_types
 from sidewit.validation.sql_validator import ValidationResult
 
@@ -90,6 +96,8 @@ def invoke_selection(
         arguments[parameter.name] = convert_parameter(parameter.value, parameter.type)
     try:
         operation, validation = invoke(store, current, context, arguments)
+    except ToolDisabled as exc:
+        raise ToolSelectionError(409, "tool_disabled", "Selected Tool is disabled.") from exc
     except ToolInvalid as exc:
         raise ToolSelectionError(
             409,

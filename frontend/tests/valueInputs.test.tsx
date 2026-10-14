@@ -85,6 +85,7 @@ function tool(enumValues: string[]): Tool {
     version: 1,
     context_version: 1,
     status: "valid",
+    enabled: true,
     validation_errors: [],
     validation: null,
     source_generation_id: null,

@@ -20,6 +20,7 @@ from sidewit.store import ContextRecord, Store, ToolRecord
 from sidewit.tools.service import (
     ContractUnavailable,
     InvalidArguments,
+    ToolDisabled,
     ToolInvalid,
     contract_snapshot,
     draft_from_generation,
@@ -64,7 +65,12 @@ class ToolUpdate(ToolFields):
     expected_version: int = Field(ge=1)
 
 
+class ToolActivation(VersionRequest):
+    enabled: bool = Field(strict=True)
+
+
 class ToolCreate(ToolFields):
+    enabled: bool = Field(default=True, strict=True)
     context_id: uuid.UUID
     name: str = Field(pattern=TOOL_NAME_PATTERN)
     source_generation_id: uuid.UUID | None = None
@@ -88,6 +94,7 @@ class ToolOut(BaseModel):
     version: int
     context_version: int
     status: ToolStatus
+    enabled: bool
     validation_errors: list[Issue]
     validation: ValidationResult | None
     source_generation_id: uuid.UUID | None
@@ -292,6 +299,7 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
         version=1,
         context_version=context.version,
         status="valid",
+        enabled=body.enabled,
         source_generation_id=body.source_generation_id,
         source_step_id=source_step_id,
         metric_binding=binding.model_dump() if binding else None,
@@ -321,6 +329,29 @@ async def update_tool(name: str, body: ToolUpdate, store: StoreDep) -> ToolOut:
         tool.operation = operation
         tool.version += 1
     save_validated_tool(store, tool, context, validation)
+    return _out(tool, store)
+
+
+@router.patch("/tools/{name}")
+async def set_tool_enabled(name: str, body: ToolActivation, store: StoreDep) -> ToolOut:
+    tool = _tool(store, name)
+    context = _context(store, tool.context_id)
+    _check_version(tool, body.expected_version)
+    if tool.enabled == body.enabled:
+        return _out(tool, store)
+    if body.enabled:
+        validation = validate_tool(
+            context, tool.input_schema, tool.operation["statement"], tool_binding(tool)
+        )
+        _require_valid(validation)
+        tool.enabled = True
+        tool.version += 1
+        save_validated_tool(store, tool, context, validation)
+    else:
+        # Disabling must remain possible even when the SQL is invalid or stale.
+        tool.enabled = False
+        tool.version += 1
+        store.save_tool(tool)
     return _out(tool, store)
 
 
@@ -361,6 +392,8 @@ async def invoke_tool(name: str, body: InvokeRequest, store: StoreDep) -> Invoke
         _check_version(tool, body.expected_version)
     try:
         operation, validation = invoke(store, tool, context, body.arguments)
+    except ToolDisabled as e:
+        raise ApiError(409, "tool_disabled", "Tool is disabled. Enable it before invoking.") from e
     except ToolInvalid as e:
         raise ApiError(
             409,

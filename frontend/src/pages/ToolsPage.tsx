@@ -1,7 +1,8 @@
 import { Plus } from "lucide-react";
 import { Link } from "react-router";
 
-import { useContexts, useTools } from "@/api/queries";
+import { useContexts, useTools, useSetToolEnabled } from "@/api/queries";
+import type { Tool } from "@/api/types";
 import { Empty, ErrorAlert, Loading } from "@/components/app/common";
 import { ToolStatusBadge } from "@/components/app/ToolStatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -53,7 +54,8 @@ export default function ToolsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Availability</TableHead>
+              <TableHead>Validation</TableHead>
               <TableHead>Context</TableHead>
               <TableHead>Version</TableHead>
               <TableHead>Inputs</TableHead>
@@ -62,52 +64,76 @@ export default function ToolsPage() {
           </TableHeader>
           <TableBody>
             {tools.data.map((tool) => (
-              <TableRow key={tool.id}>
-                <TableCell>
-                  <Link
-                    className="font-mono text-sm underline-offset-2 hover:underline"
-                    to={`/tools/${tool.name}`}
-                  >
-                    {tool.name}
-                  </Link>
-                  {tool.metric_binding && (
-                    <Badge
-                      variant="outline"
-                      className="ml-2"
-                      title={`Built from metric ${tool.metric_binding.metric_id}`}
-                    >
-                      metric
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <ToolStatusBadge status={tool.status} />
-                  {tool.status === "invalid" && (
-                    <span className="ml-2 text-xs text-destructive">
-                      {tool.validation_errors[0]?.code}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {contextName(tool.context_id)}{" "}
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {tool.status === "valid"
-                      ? `v${tool.context_version}`
-                      : `last valid v${tool.context_version}`}
-                  </span>
-                </TableCell>
-                <TableCell className="font-mono text-xs">v{tool.version}</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {tool.input_schema.required.join(", ") || "—"}
-                </TableCell>
-                <TableCell className="max-w-md truncate text-sm text-muted-foreground">
-                  {tool.description}
-                </TableCell>
-              </TableRow>
+              <ToolRow key={tool.id} tool={tool} contextName={contextName(tool.context_id)} />
             ))}
           </TableBody>
         </Table>
       )}
     </div>
+  );
+}
+
+function ToolRow({ tool, contextName }: { tool: Tool; contextName: string }) {
+  const activation = useSetToolEnabled(tool.name);
+  return (
+    <TableRow>
+      <TableCell>
+        <Link
+          className="font-mono text-sm underline-offset-2 hover:underline"
+          to={`/tools/${tool.name}`}
+        >
+          {tool.name}
+        </Link>
+        {tool.metric_binding && (
+          <Badge
+            variant="outline"
+            className="ml-2"
+            title={`Built from metric ${tool.metric_binding.metric_id}`}
+          >
+            metric
+          </Badge>
+        )}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-2">
+          <Badge variant={tool.enabled ? "secondary" : "outline"}>
+            {tool.enabled ? "Enabled" : "Disabled"}
+          </Badge>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={activation.isPending}
+            aria-label={`${tool.enabled ? "Disable" : "Enable"} ${tool.name}`}
+            onClick={() =>
+              activation.mutate({ expected_version: tool.version, enabled: !tool.enabled })
+            }
+          >
+            {activation.isPending ? "Updating…" : tool.enabled ? "Disable" : "Enable"}
+          </Button>
+        </div>
+        <ErrorAlert error={activation.error} title="Could not change Tool availability" />
+      </TableCell>
+      <TableCell>
+        <ToolStatusBadge status={tool.status} />
+        {tool.status === "invalid" && (
+          <span className="ml-2 text-xs text-destructive">{tool.validation_errors[0]?.code}</span>
+        )}
+      </TableCell>
+      <TableCell className="text-sm">
+        {contextName}{" "}
+        <span className="font-mono text-xs text-muted-foreground">
+          {tool.status === "valid"
+            ? `v${tool.context_version}`
+            : `last valid v${tool.context_version}`}
+        </span>
+      </TableCell>
+      <TableCell className="font-mono text-xs">v{tool.version}</TableCell>
+      <TableCell className="font-mono text-xs">
+        {tool.input_schema.required.join(", ") || "—"}
+      </TableCell>
+      <TableCell className="max-w-md truncate text-sm text-muted-foreground">
+        {tool.description}
+      </TableCell>
+    </TableRow>
   );
 }
