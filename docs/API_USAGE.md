@@ -4,6 +4,12 @@ Send natural-language requests to `POST /api/v1/generate`. Sidewit returns opera
 review, clarification questions, or a reason it cannot answer. It never executes SQL.
 Use `/docs` on your API server for the interactive schema.
 
+API clients use `SIDEWIT_API_KEY` when configured, independently of web login. The web UI uses
+an administrator cookie session on internal `/api/web` routes; do not use those routes as an
+integration API. Signing in to the UI does not authenticate `/api/v1` requests. See
+[web login and recovery](DEPLOYMENT.md#web-login-and-recovery) for the default local credentials
+and deployment settings.
+
 ## Minimal Python client
 
 This standard-library example needs a saved Context ID. Set `SIDEWIT_CONTEXT_ID` and, when

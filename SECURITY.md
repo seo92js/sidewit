@@ -7,7 +7,13 @@ it is not an execution sandbox or a user/tenant authorization boundary.
 
 - Keep the API behind a private administrative ingress or your application. Set
   `SIDEWIT_API_KEY` and use HTTPS for remote access. The key also grants management access;
-  do not distribute it to end users. The UI stores it in the administrator's localStorage.
+  do not distribute it to end users. The web UI uses a separate administrator cookie session;
+  it does not store the API key in localStorage.
+- Web credentials default to `admin/admin`, including when `.env` is absent. Keep the supplied
+  loopback bindings for local use. Before remote exposure, set non-default
+  `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD`, a nonempty `SIDEWIT_API_KEY`, and
+  `SIDEWIT_ADMIN_COOKIE_SECURE=true` behind HTTPS. Web login alone does not protect the public
+  `/api/v1` API when the API key is unset. See [credential recovery](docs/DEPLOYMENT.md#web-login-and-recovery).
 - Enforce user and tenant authorization in the application and database. Bind parameters
   through the database driver and set appropriate role/function privileges and resource limits.
   SELECT statements can have side effects; a read-only role alone is not a complete sandbox.

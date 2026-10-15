@@ -247,7 +247,7 @@ created_at
 
 Common behavior:
 - The base path is `/api/v1`.
-- When `SIDEWIT_API_KEY` is configured, every request except `/health` requires `Authorization: Bearer <key>`. Missing or incorrect keys return 401 `unauthorized`. Without this setting, authentication is disabled. One key grants management, generation and invocation access; do not give it directly to end users.
+- When `SIDEWIT_API_KEY` is configured, every public `/api/v1` request except `/health` requires `Authorization: Bearer <key>`. Missing or incorrect keys return 401 `unauthorized`. Without this setting, public API authentication is disabled, independently of web login. One key grants management, generation and invocation access; do not give it directly to end users.
 - `GET /health` requires no authentication. It returns 200 when the data directory is readable and writable, or 503 otherwise.
 - Invalid request shapes (Pydantic validation failures) return 422 `invalid_request`; unknown routes return 404 `not_found`.
 - SQL/DDL complexity limits: 32 levels of parentheses/brackets outside strings and comments, 20,000 tokens, AST depth 64 and 10,000 AST nodes. Exceeding them produces `sql_parse_error` for SQL validation or 422 `ddl_parse_error` for DDL. Recursion limits during further analysis produce `sql_analysis_error`.
@@ -257,6 +257,35 @@ Common behavior:
 ```json
 { "error": "tool_invalid", "message": "Tool is incompatible with the current context.", "details": { } }
 ```
+
+**Web administrator sessions**
+
+The browser uses internal `/api/web` routes, excluded from the public OpenAPI schema.
+One administrator is configured by `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD`
+(defaults `admin/admin`, including absent or empty environment values). Usernames have
+1–128 characters with no surrounding whitespace; passwords have 1–1,024 characters.
+There is no account database, signup, web password editor or mandatory first-login change.
+Environment values are authoritative at each API startup; changing them requires recreating
+the container with the new environment. See [deployment and recovery](DEPLOYMENT.md#web-login-and-recovery).
+
+- All `/api/web` requests require `X-Sidewit-Web: 1`; missing headers return 403
+  `web_header_required`. Cross-origin CORS access is not enabled.
+- `POST /api/web/session` accepts `{username, password}` and returns `{username,
+  api_key_required}`. Incorrect credentials return 401 `invalid_admin_credentials` without
+  identifying which field failed. Ten failed attempts per client address per minute cause
+  429 `login_rate_limited`, with seconds remaining in `details.retry_after`.
+- `GET /api/web/session` returns the same session information. Missing/expired sessions
+  return 401 `admin_session_required`.
+- `DELETE /api/web/session` revokes the current token and clears its cookie; it is idempotent
+  and returns 204 even if already signed out.
+- `/api/web/v1` mirrors the public API for the UI and requires an administrator session,
+  including its health endpoint. API keys do not authenticate these routes, and web cookies
+  do not authenticate the public API.
+- Sessions expire after 12 hours, are held only as token digests in process memory, and are
+  invalidated by restart. At most 32 sessions and 256 login-failure address records are kept.
+  The cookie is HttpOnly, SameSite=Lax and scoped to `/api/web`. Set
+  `SIDEWIT_ADMIN_COOKIE_SECURE=true` for HTTPS deployments. Session responses and successful
+  management JSON responses use `Cache-Control: no-store`.
 
 ### 5.1 Context
 
@@ -921,7 +950,17 @@ The UI is a React SPA with three screens. Every function is available through th
 - Avoid labels suggesting SQL execution, such as `Run Query` or `Execute SQL`. Use "SQL operation" or "Resolved SQL operation" together with "not executed by Sidewit".
 - Tool input lists and invocation forms follow `input_schema.required` order.
 - Bundle Monaco locally and load it lazily only on screens that display SQL.
-- Enter the Sidewit API key through the header dialog; store it in localStorage and send it as `Authorization: Bearer`. This is a convenience for local/self-hosted development, not a long-term authentication model.
+- Require administrator sign-in before mounting the management UI. Use the HttpOnly session
+  cookie on `/api/web` routes; never store API keys or session tokens in localStorage.
+- Provide Sign out in the header. Preserve the existing unsaved-navigation confirmation before
+  logout, clear cached management data on success, and return to the login screen. A later sign-in
+  opens the Playground instead of immediately repeating logout.
+- Block navigation while logout is pending. Background session-expiry responses must not offer
+  a competing login during logout. Signing in from an unauthenticated `/logout` URL opens the
+  Playground without revoking the new session.
+- On session expiry, hide the management UI while preserving mounted editors and their unsaved
+  contents; show sign-in and restore the editor after successful authentication. Other tabs learn
+  about revocation/expiry when their next management request returns 401.
 
 ---
 

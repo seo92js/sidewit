@@ -62,7 +62,7 @@ docker compose up -d --build --wait
 curl -fsS http://127.0.0.1:8000/api/v1/health
 ```
 
-1. Open the UI at **http://127.0.0.1:3000**. If you set `SIDEWIT_API_KEY`, enter it under **Sidewit API key** in the header. Interactive API documentation is at http://127.0.0.1:8000/docs.
+1. Open the UI at **http://127.0.0.1:3000** and sign in. The default web administrator is **`admin` / `admin`**; set `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD` in `.env` to change it. Interactive API documentation is at http://127.0.0.1:8000/docs.
 2. Register the example Context. This previews the DDL, adds descriptions and business rules, and saves the result without calling an LLM:
 
    ```bash
@@ -74,6 +74,11 @@ curl -fsS http://127.0.0.1:8000/api/v1/health
 5. Enter arguments under **Invoke Tool**. The result is **SQL and binding values**, not database query results.
 
 Without a provider key, you can still manage Contexts, import DDL, and manually save and invoke Tools. Generate returns `503 llm_not_configured` when no provider is configured. The [ecommerce walkthrough](examples/ecommerce/README.md) also covers manual Context setup in the UI.
+
+The `.env` file is optional for a local trial: without it, the web UI starts with `admin/admin`
+and no LLM provider. There is no forced password-change screen. The administrator is configured
+entirely through environment variables; there is no signup flow, account database or web password
+editor. See [web login and recovery](docs/DEPLOYMENT.md#web-login-and-recovery).
 
 To run without the UI, use `docker compose up -d --build --wait api`. Stop with `docker compose down`; the data directory remains on disk.
 
@@ -102,11 +107,22 @@ See the [evaluation summary](evals/README.md#file-storage-acceptance-2026-10-12-
 | `SIDEWIT_DATA_PATH` | Host data directory mounted at `/data` | `./data` |
 | `SIDEWIT_API_PORT` / `SIDEWIT_WEB_PORT` | Local API / UI ports | `8000` / `3000` |
 | `SIDEWIT_API_KEY` | Sidewit Bearer authentication | Disabled when unset |
+| `SIDEWIT_ADMIN_USERNAME` | Web administrator username | `admin` |
+| `SIDEWIT_ADMIN_PASSWORD` | Web administrator password | `admin` |
+| `SIDEWIT_ADMIN_COOKIE_SECURE` | Require HTTPS for the web session cookie | `false` for local HTTP |
 | `SIDEWIT_GENERATION_HISTORY` | Maximum number of recent Generations in memory | `200` |
 
 ### API authentication
 
-When `SIDEWIT_API_KEY` is set, API requests other than health checks require `Authorization: Bearer <sidewit-api-key>`. This is separate from the provider key and grants management, generation and invoke access; do not distribute it to end users. The UI stores the administrator's key in localStorage. Default ports bind to loopback only. Use HTTPS and access controls for remote access; see the [security policy](SECURITY.md).
+When `SIDEWIT_API_KEY` is set, public `/api/v1` requests other than health checks require
+`Authorization: Bearer <sidewit-api-key>`. This is separate from the provider key and grants
+management, generation and invoke access; do not distribute it to end users. Web login uses an
+HttpOnly session cookie and does not require entering or storing the API key in the browser.
+The web UI calls session-protected `/api/web/v1` routes; application clients keep using `/api/v1`.
+Without `SIDEWIT_API_KEY`, the public API remains unauthenticated even though the web UI requires
+login. Default ports bind to loopback only. Before allowing remote access, change the default
+admin credentials, configure a nonempty API key and HTTPS, and set `SIDEWIT_ADMIN_COOKIE_SECURE=true`.
+See the [security policy](SECURITY.md).
 
 ## API example
 
@@ -218,7 +234,7 @@ The [specification](docs/SPEC.md) defines supported expressions and input limits
 | [API and validation contract](docs/SPEC.md) | Request/response models, versions, validation boundaries and storage contracts |
 | [SQL metric contracts](docs/METRIC_CONTRACTS.md) | Metric definitions, period calculation and Tool binding |
 
-The detailed specification is currently in Korean. Example values retain their original spelling.
+Documentation and specifications are in English. Example values retain their original spelling.
 
 [Apache-2.0](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 

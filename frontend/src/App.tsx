@@ -1,7 +1,8 @@
-import { Navigate, NavLink, Route, Routes } from "react-router";
+import { Link, Navigate, NavLink, Route, Routes } from "react-router";
 
 import { useHealth } from "@/api/queries";
-import { ApiKeyDialog } from "@/components/app/ApiKeyDialog";
+import { LogoutPage } from "@/components/app/AdminAccess";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import ContextsPage from "@/pages/ContextsPage";
 import PlaygroundPage from "@/pages/PlaygroundPage";
@@ -61,12 +62,15 @@ export default function App() {
           </nav>
           <div className="ml-auto flex items-center gap-3">
             <HealthDot />
-            <ApiKeyDialog />
+            <Button asChild variant="outline" size="sm">
+              <Link to="/logout">Sign out</Link>
+            </Button>
           </div>
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-5">
         <Routes>
+          <Route path="/logout" element={<LogoutPage />} />
           <Route path="/" element={<Navigate to="/playground" replace />} />
           <Route path="/playground" element={<PlaygroundPage />} />
           <Route path="/contexts" element={<ContextsPage />} />
