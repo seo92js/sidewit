@@ -7,6 +7,7 @@ import { createBrowserRouter, RouterProvider } from "react-router";
 
 import { ApiError } from "@/api/client";
 import App from "@/App";
+import { AdminAccess } from "@/components/app/AdminAccess";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,7 +20,16 @@ const queryClient = new QueryClient({
   },
 });
 
-const router = createBrowserRouter([{ path: "*", element: <App /> }]);
+const router = createBrowserRouter([
+  {
+    path: "*",
+    element: (
+      <AdminAccess>
+        <App />
+      </AdminAccess>
+    ),
+  },
+]);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

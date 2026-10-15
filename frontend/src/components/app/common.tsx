@@ -68,7 +68,8 @@ export function IssueList({
 const ERROR_HINTS: Record<string, string> = {
   version_conflict:
     "Someone else saved this context first. Reload to get the latest version, then re-apply your edits.",
-  unauthorized: "Set a valid Sidewit API key with the key button in the header.",
+  unauthorized: "Check the API credentials configured for this request.",
+  admin_session_required: "Sign in again to continue; your editor contents are preserved.",
   network_error: "Check that the API is running.",
   llm_not_configured:
     "Configure SIDEWIT_LLM_PROVIDER, SIDEWIT_LLM_MODEL and the provider API key on the server.",

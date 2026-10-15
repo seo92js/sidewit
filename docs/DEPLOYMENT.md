@@ -25,7 +25,8 @@ whose retention Sidewit does not control.
    container user. Run **one API process** per directory on a local filesystem; multiple Uvicorn
    workers and network filesystems are not supported. A lifetime `.lock` prevents a second
    process from opening the same directory. Do not delete this lock file while the API runs.
-3. Set a nonempty `SIDEWIT_API_KEY` and the chosen LLM provider, model and key in private
+3. Set non-default `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD`, a nonempty
+   `SIDEWIT_API_KEY`, and the chosen LLM provider, model and key in private
    deployment configuration. Provider keys are not API authentication keys. Never bake
    credentials into an image. Do not give the Sidewit API key to end users.
 4. Start the service and wait for `/api/v1/health` (it checks that the data directory is
@@ -35,6 +36,54 @@ whose retention Sidewit does not control.
    draft, save and invoke as well as Generate.
 
 The web UI is optional; the API alone provides every function.
+
+## Web login and recovery
+
+The web UI has one administrator, configured entirely through environment variables:
+
+```dotenv
+SIDEWIT_ADMIN_USERNAME=admin
+SIDEWIT_ADMIN_PASSWORD=admin
+SIDEWIT_ADMIN_COOKIE_SECURE=false
+```
+
+These defaults also apply when no `.env` file exists. Empty administrator values use the same
+defaults. The UI provides login and logout, with no signup, account database, web password
+change, forced password change or generated password in logs. Change the defaults before
+exposing the UI beyond localhost. Keep the supplied loopback port bindings for local use.
+
+To change or recover credentials, edit the existing root `.env` file. If none exists, create
+one from `.env.example` first; do not overwrite an existing file containing provider keys.
+Set the administrator username/password, then apply the environment changes:
+
+```bash
+docker compose up -d --wait api
+```
+
+Compose recreates the API container when the configured environment changes. `docker compose
+restart` alone does not reload `.env` into an existing container. With a non-Compose deployment,
+update the process environment and restart the API process. The configured values are used on
+every startup, including when a data directory already exists. Saved Contexts and Tools are
+unaffected. API restarts invalidate all web sessions and clear temporary Generation history.
+
+Sessions last up to 12 hours, use an HttpOnly SameSite=Lax cookie scoped to `/api/web`, and are
+kept only in API process memory. Logout revokes the current browser session and clears cached
+management data. Session expiry asks the user to sign in again while preserving the mounted
+editor's unsaved changes. Logout from an unsaved editor uses the existing discard confirmation.
+Navigation is blocked while logout is pending; a failed logout offers an explicit retry.
+Failed sign-ins are limited to 10 per client address per minute; clients behind the same proxy
+can share this limit.
+
+Web requests use `/api/web/session` and session-protected `/api/web/v1`; they include the
+`X-Sidewit-Web: 1` header to prevent cross-origin form requests. Cross-origin CORS access is not
+enabled. Browsers do not store the API key or a session token in localStorage. External clients
+keep using `/api/v1` with `SIDEWIT_API_KEY` when configured. A web cookie does not authenticate
+the public API, and an API key does not replace web login. **Leaving the API key empty leaves
+the public API unauthenticated**; web login alone does not protect that API from remote access.
+
+For HTTPS deployments, set `SIDEWIT_ADMIN_COOKIE_SECURE=true`, use non-default administrator
+credentials and a nonempty `SIDEWIT_API_KEY`, and configure TLS at your ingress. Enable the
+Secure cookie setting only when the browser accesses the UI over HTTPS.
 
 ## Desktop platforms
 

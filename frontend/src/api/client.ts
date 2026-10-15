@@ -1,16 +1,13 @@
 import type { ApiErrorBody, Issue } from "./types";
 import { JsonPrecisionError, parseExactJson } from "../lib/json";
 
-const BASE = "/api/v1";
-const API_KEY_STORAGE = "sidewit.apiKey";
+const BASE = "/api/web/v1";
+let sessionRevision = 0;
+export const SESSION_EXPIRED_EVENT = "sidewit:session-expired";
 
-export function getApiKey(): string {
-  return localStorage.getItem(API_KEY_STORAGE) ?? "";
-}
-
-export function setApiKey(key: string): void {
-  if (key) localStorage.setItem(API_KEY_STORAGE, key);
-  else localStorage.removeItem(API_KEY_STORAGE);
+export interface AdminSession {
+  username: string;
+  api_key_required: boolean;
 }
 
 export class ApiError extends Error {
@@ -33,15 +30,41 @@ export class ApiError extends Error {
 }
 
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+  const revision = sessionRevision;
+  try {
+    return await send<T>(method, BASE + path, body);
+  } catch (error) {
+    // An old request's delayed 401 must not hide an editor after a new successful login.
+    if (error instanceof ApiError && error.status === 401 && revision === sessionRevision) {
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+    throw error;
+  }
+}
+
+export function adminSession(
+  method: "GET" | "POST",
+  body?: { username: string; password: string },
+): Promise<AdminSession>;
+export function adminSession(method: "DELETE"): Promise<void>;
+export async function adminSession(
+  method: "GET" | "POST" | "DELETE",
+  body?: { username: string; password: string },
+): Promise<AdminSession | void> {
+  const result = await send<AdminSession | void>(method, "/api/web/session", body);
+  if (method !== "GET") sessionRevision++;
+  return result;
+}
+
+async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { "X-Sidewit-Web": "1" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const key = getApiKey();
-  if (key) headers.Authorization = `Bearer ${key}`;
 
   let res: Response;
   let text: string;
   try {
-    res = await fetch(BASE + path, {
+    res = await fetch(url, {
+      credentials: "same-origin",
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

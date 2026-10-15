@@ -839,6 +839,44 @@ test("Tool conflict preserves edits, reloads explicitly, and saves with the new 
   qc.clear();
 });
 
+test("Context authentication failures preserve edits and unapplied DDL across refetch", async () => {
+  vi.mocked(request).mockRejectedValue(
+    new ApiError(401, {
+      error: "admin_session_required",
+      message: "Sign in to continue.",
+      details: {},
+    }),
+  );
+  const qc = client();
+  qc.setQueryData(["contexts", "c"], context);
+  const router = createMemoryRouter([{ path: "/contexts/c", element: <ContextEditor id="c" /> }], {
+    initialEntries: ["/contexts/c"],
+  });
+  render(
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "unsaved context" } });
+  fireEvent.click(screen.getByRole("button", { name: "Import DDL" }));
+  const ddl = "CREATE TABLE pending_import (id bigint);";
+  fireEvent.change(screen.getByLabelText("SQL editor"), { target: { value: ddl } });
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["contexts", "c"], exact: true });
+  });
+  expect(await screen.findByText("Could not refresh context")).toBeTruthy();
+  expect(screen.getByLabelText("Name")).toHaveProperty("value", "unsaved context");
+  expect(screen.getByLabelText("SQL editor")).toHaveProperty("value", ddl);
+  vi.mocked(request).mockResolvedValue(context);
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["contexts", "c"], exact: true });
+  });
+  await waitFor(() => expect(screen.queryByText("Could not refresh context")).toBeNull());
+  expect(screen.getByLabelText("Name")).toHaveProperty("value", "unsaved context");
+  expect(screen.getByLabelText("SQL editor")).toHaveProperty("value", ddl);
+  qc.clear();
+});
+
 test("Deleting a dirty Context navigates without a discard dialog", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.mocked(request).mockImplementation(async (method, path) => {

@@ -6,11 +6,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SIDEWIT_", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="SIDEWIT_", populate_by_name=True, hide_input_in_errors=True
+    )
 
     # Contexts and Tools are JSON files here (SPEC §11). One instance per directory.
     data_dir: str = "/data"
     api_key: SecretStr | None = None
+    admin_username: str = Field(default="admin", min_length=1, max_length=128)
+    admin_password: SecretStr = Field(default=SecretStr("admin"), min_length=1, max_length=1024)
+    admin_cookie_secure: bool = False
     # Recent Generations kept in memory (never written to disk).
     generation_history: int = Field(default=200, ge=1, le=10000)
 
@@ -26,6 +31,18 @@ class Settings(BaseSettings):
     def _empty_is_unset(cls, value: object) -> object:
         # docker compose passes unset variables as empty strings.
         return None if value == "" else value
+
+    @field_validator("admin_username", "admin_password", mode="before")
+    @classmethod
+    def _admin_defaults(cls, value: object) -> object:
+        return "admin" if value == "" else value
+
+    @field_validator("admin_username")
+    @classmethod
+    def _admin_username(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("Admin username must not contain surrounding whitespace")
+        return value
 
 
 @lru_cache

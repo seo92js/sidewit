@@ -2,7 +2,8 @@ import { ChevronDown, ChevronRight, Sparkles, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { ApiError, getApiKey } from "@/api/client";
+import { ApiError } from "@/api/client";
+import { useApiKeyRequired } from "@/components/app/AdminAccess";
 import { useContexts, useGenerate, useGeneration } from "@/api/queries";
 import type { ClarificationAnswer, GenerateRequest, GenerateResponse } from "@/api/types";
 import { CopyButton, Empty, ErrorAlert, IssueList, Loading } from "@/components/app/common";
@@ -23,6 +24,7 @@ import { ClarificationForm } from "./ClarificationForm";
 const CONTEXT_STORAGE = "sidewit.playground.context";
 
 export default function PlaygroundPage() {
+  const apiKeyRequired = useApiKeyRequired();
   const contexts = useContexts();
   const generate = useGenerate();
   const [storedContextId, setStoredContextId] = useState(
@@ -281,7 +283,7 @@ export default function PlaygroundPage() {
                 text={generateRequestCurl(
                   generate.variables,
                   window.location.origin,
-                  !!getApiKey(),
+                  apiKeyRequired,
                 )}
               />
             </div>
@@ -291,8 +293,8 @@ export default function PlaygroundPage() {
               {generate.variables.expected_context_version
                 ? " This request requires the same Context version."
                 : " Re-running uses the latest Context."}
-              {getApiKey() &&
-                " Set SIDEWIT_API_KEY in your shell before running; your saved key is not copied."}
+              {apiKeyRequired &&
+                " Set SIDEWIT_API_KEY in your shell before running; browser login cookies are not copied."}
             </p>
             <p className="whitespace-pre-wrap break-words">{generate.variables.question}</p>
             {!!generate.variables.clarification_answers?.length && (

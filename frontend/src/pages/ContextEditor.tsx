@@ -97,7 +97,8 @@ export function ContextEditor({ id }: { id: string }) {
   );
 
   if (context.isLoading) return <Loading />;
-  if (context.error) return <ErrorAlert error={context.error} title="Could not load context" />;
+  if (context.error && !context.data)
+    return <ErrorAlert error={context.error} title="Could not load context" />;
   if (!context.data || !saved || !draft) return null;
   const current = context.data;
   const remoteChanged = draft.version !== current.version;
@@ -139,6 +140,7 @@ export function ContextEditor({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
+      <ErrorAlert error={context.error} title="Could not refresh context" />
       <UnsavedChangesGuard
         dirty={!remove.isSuccess && (dirty || importHasInput)}
         busy={update.isPending || remove.isPending}

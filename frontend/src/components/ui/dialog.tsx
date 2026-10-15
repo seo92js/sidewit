@@ -5,6 +5,9 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
+// Suspend portalled dialogs without discarding their owner's state.
+const DialogVisibilityContext = React.createContext(true)
+
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -47,6 +50,8 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  const visible = React.useContext(DialogVisibilityContext)
+  if (!visible) return null
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -147,6 +152,7 @@ function DialogDescription({
 }
 
 export {
+  DialogVisibilityContext,
   Dialog,
   DialogContent,
   DialogDescription,

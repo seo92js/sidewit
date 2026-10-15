@@ -16,6 +16,9 @@ Initial release candidate.
 
 ### Fixes
 
+- Protect navigation during pending logout and avoid immediately signing out a new login from
+  `/logout`. Reject malformed Unicode passwords with 422 instead of an unhandled 500.
+
 - Re-read Tool availability and versions after failed activation requests, including storage
   errors and lost responses. Preserve local edits and avoid automatically retrying writes.
 
@@ -23,6 +26,11 @@ Initial release candidate.
   be checked as a saved Tool. Preserve inferred step IDs in Tool drafts and saved provenance.
 
 ### Features
+
+- Add a single environment-configured web administrator with `admin/admin` defaults, cookie
+  sessions and logout. Remove browser API-key storage and the API-key dialog; public API
+  authentication remains separate and unchanged. Preserve unsaved edits across session expiry
+  and document credential recovery, container recreation and HTTPS deployment settings.
 
 - Allow renaming saved Tools in the editor and update API. Preserve identity and activation,
   reject duplicate names, and keep atomic file writes independent of mutable names.
