@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 
-from sidewit.api.generate import get_llm_provider
+from sidewit.application.runtime import get_llm_provider
 from sidewit.generation.dto import LLMParameter
 from sidewit.generation.metric_plan import LLMPeriod
 from sidewit.generation.providers.fake import FakeProvider

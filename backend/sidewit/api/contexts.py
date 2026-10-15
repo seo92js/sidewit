@@ -5,7 +5,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from sidewit.api.errors import ApiError
 from sidewit.api.state import HistoryDep, StoreDep
 from sidewit.ddl.importer import DdlParseError, ImportMode, PendingForeignKey, import_ddl
 from sidewit.domain.context import (
@@ -16,6 +15,7 @@ from sidewit.domain.context import (
 )
 from sidewit.domain.dialect import Dialect
 from sidewit.domain.issue import Issue
+from sidewit.errors import SidewitError
 from sidewit.store import ContextRecord, Store
 from sidewit.tools.service import Revalidation, revalidate_context_tools
 
@@ -123,7 +123,7 @@ def _out(record: ContextRecord) -> ContextOut:
 def _check_definition(definition: ContextDefinition, allow_generated_sql: bool) -> None:
     issues = definition_issues(definition) + generation_issues(definition, allow_generated_sql)
     if issues:
-        raise ApiError(
+        raise SidewitError(
             422,
             "invalid_context_definition",
             "Context definition failed integrity checks.",
@@ -131,14 +131,14 @@ def _check_definition(definition: ContextDefinition, allow_generated_sql: bool) 
         )
 
 
-def _name_conflict(name: str) -> ApiError:
-    return ApiError(409, "context_name_conflict", f"A context named '{name}' already exists.")
+def _name_conflict(name: str) -> SidewitError:
+    return SidewitError(409, "context_name_conflict", f"A context named '{name}' already exists.")
 
 
 def _get_or_404(store: Store, context_id: uuid.UUID) -> ContextRecord:
     record = store.context(context_id)
     if record is None:
-        raise ApiError(404, "context_not_found", f"Context '{context_id}' does not exist.")
+        raise SidewitError(404, "context_not_found", f"Context '{context_id}' does not exist.")
     return record
 
 
@@ -180,7 +180,7 @@ async def update_context(
 ) -> ContextUpdateResult:
     record = _get_or_404(store, context_id)
     if record.version != body.expected_version:
-        raise ApiError(
+        raise SidewitError(
             409,
             "version_conflict",
             "Context was modified by someone else.",
@@ -218,7 +218,7 @@ async def delete_context(context_id: uuid.UUID, store: StoreDep, history: Histor
     record = _get_or_404(store, context_id)
     names = [t.name for t in store.tools_of(context_id)]
     if names:
-        raise ApiError(
+        raise SidewitError(
             409,
             "context_has_tools",
             "Delete the tools of this context first.",
@@ -235,7 +235,7 @@ async def import_context_ddl(
 ) -> ImportDdlResult:
     record = _get_or_404(store, context_id)
     if body.expected_version is not None and record.version != body.expected_version:
-        raise ApiError(
+        raise SidewitError(
             409,
             "version_conflict",
             "Context changed before the DDL preview was created.",
@@ -248,7 +248,9 @@ async def import_context_ddl(
         )
         check_context_size(result.definition)
     except (DdlParseError, ValueError) as e:
-        raise ApiError(422, "ddl_parse_error", "Could not parse DDL.", {"reason": str(e)}) from e
+        raise SidewitError(
+            422, "ddl_parse_error", "Could not parse DDL.", {"reason": str(e)}
+        ) from e
     return ImportDdlResult(
         context_version=record.version,
         definition=result.definition,

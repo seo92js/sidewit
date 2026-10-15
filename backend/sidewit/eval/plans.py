@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from sidewit.api.generate import GenerateOk
+from sidewit.application.generate import GenerateOk
 from sidewit.eval.cases import Expectations, SuiteContext
 from sidewit.eval.scoring import Failure, score_operation
 

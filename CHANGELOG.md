@@ -16,6 +16,9 @@ Initial release candidate.
 
 ### Fixes
 
+- Keep failed MCP discovery checks out of the validation cache so later REST or MCP invocation
+  persists the Tool's invalid status instead of leaving it displayed as valid.
+
 - Protect navigation during pending logout and avoid immediately signing out a new login from
   `/logout`. Reject malformed Unicode passwords with 422 instead of an unhandled 500.
 
@@ -26,6 +29,11 @@ Initial release candidate.
   be checked as a saved Tool. Preserve inferred step IDs in Tool drafts and saved provenance.
 
 ### Features
+
+- Add an opt-in MCP Streamable HTTP endpoint in the API container with a separate Bearer key,
+  Host/Origin checks, paginated Context/Tool discovery, generation and deterministic invocation.
+  Share application processing with REST, including validation, version checks, clarification
+  continuation, generation deadlines and temporary history. Document no-auth and client limits.
 
 - Add a single environment-configured web administrator with `admin/admin` defaults, cookie
   sessions and logout. Remove browser API-key storage and the API-key dialog; public API

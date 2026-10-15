@@ -10,6 +10,9 @@ integration API. Signing in to the UI does not authenticate `/api/v1` requests. 
 [web login and recovery](DEPLOYMENT.md#web-login-and-recovery) for the default local credentials
 and deployment settings.
 
+The same generation and invocation use cases are available through the optional [MCP endpoint](MCP.md).
+MCP has its own activation and authentication settings; it does not use the public REST key.
+
 ## Minimal Python client
 
 This standard-library example needs a saved Context ID. Set `SIDEWIT_CONTEXT_ID` and, when

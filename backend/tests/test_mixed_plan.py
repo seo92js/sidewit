@@ -189,7 +189,7 @@ async def test_provider_failure_never_returns_partial_plan(client, context, fake
 
 async def test_total_deadline_cancels_parallel_drafts(client, context, fake, monkeypatch, history):
     await saved_tool(client, context)
-    monkeypatch.setattr("sidewit.api.generate.GENERATION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("sidewit.application.generate.GENERATION_TIMEOUT_SECONDS", 0.05)
     provider = fake()
     started, cancelled = [], []
 

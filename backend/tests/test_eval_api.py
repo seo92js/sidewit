@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from sidewit.api.generate import get_llm_provider
+from sidewit.application.runtime import get_llm_provider
 from sidewit.eval.runner import EvalSetupError, run_suite
 from sidewit.generation.dto import LLMGenerationOutput, LLMParameter, LLMToolSuggestion
 from sidewit.generation.prompt import PROMPT_VERSION

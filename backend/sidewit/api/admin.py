@@ -10,8 +10,8 @@ from time import monotonic
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from sidewit.api.errors import ApiError
 from sidewit.config import get_settings
+from sidewit.errors import SidewitError
 
 COOKIE_NAME = "sidewit_admin"
 COOKIE_PATH = "/api/web"
@@ -61,7 +61,7 @@ class AdminSessions:
         if remaining <= 0:
             self._failures.pop(client, None)
         elif count >= MAX_LOGIN_FAILURES:
-            raise ApiError(
+            raise SidewitError(
                 429,
                 "login_rate_limited",
                 "Too many failed sign-in attempts. Try again shortly.",
@@ -92,14 +92,14 @@ async def require_web_header(request: Request) -> None:
     # Cross-origin forms cannot send this header, and no CORS policy allows cross-origin
     # scripts to preflight it. Require it on login/logout as well as management requests.
     if request.headers.get(WEB_HEADER) != "1":
-        raise ApiError(403, "web_header_required", "Missing web request header.")
+        raise SidewitError(403, "web_header_required", "Missing web request header.")
 
 
 async def require_admin_session(
     request: Request, response: Response, _: None = Depends(require_web_header)
 ) -> None:
     if not get_admin_sessions().valid(request.cookies.get(COOKIE_NAME)):
-        raise ApiError(401, "admin_session_required", "Sign in to continue.")
+        raise SidewitError(401, "admin_session_required", "Sign in to continue.")
     response.headers["Cache-Control"] = "no-store"
 
 
@@ -144,7 +144,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> Adm
     )
     if not (username_ok & password_ok):
         sessions.failed_login(client)
-        raise ApiError(401, "invalid_admin_credentials", "Invalid username or password.")
+        raise SidewitError(401, "invalid_admin_credentials", "Invalid username or password.")
     sessions.successful_login(client)
     sessions.revoke(request.cookies.get(COOKIE_NAME))
     token = sessions.create()

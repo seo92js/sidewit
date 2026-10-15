@@ -108,7 +108,7 @@ def test_ambiguous_derived_output_is_rejected():
 
 
 async def test_duplicate_alias_enters_generate_repair(client):
-    from sidewit.api.generate import get_llm_provider
+    from sidewit.application.runtime import get_llm_provider
     from sidewit.generation.providers.fake import FakeProvider
     from sidewit.main import app
     from tests.test_generate_api import ok

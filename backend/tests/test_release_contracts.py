@@ -4,7 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sidewit.api.generate import get_llm_provider
+from sidewit.application.runtime import get_llm_provider
 from sidewit.generation.history import GenerationRecord
 from sidewit.main import app
 from sidewit.validation.input_schema import input_schema_for
@@ -129,7 +129,7 @@ def test_unanalyzed_value_policy_is_rejected():
 
 
 async def test_generation_deadline_cancels_provider(client, monkeypatch):
-    import sidewit.api.generate as endpoint
+    import sidewit.application.generate as endpoint
 
     cancelled = asyncio.Event()
 
