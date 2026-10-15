@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from sidewit.api.generate import get_llm_provider
+from sidewit.application.runtime import get_llm_provider
 from sidewit.domain.context import ContextDefinition
 from sidewit.generation.dto import LLMGenerationOutput
 from sidewit.generation.providers.fake import FakeProvider

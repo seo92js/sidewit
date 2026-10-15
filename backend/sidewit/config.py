@@ -13,6 +13,20 @@ class Settings(BaseSettings):
     # Contexts and Tools are JSON files here (SPEC §11). One instance per directory.
     data_dir: str = "/data"
     api_key: SecretStr | None = None
+    mcp_enabled: bool = False
+    mcp_key: SecretStr | None = None
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "localhost",
+            "localhost:*",
+            "127.0.0.1",
+            "127.0.0.1:*",
+            "[::1]",
+            "[::1]:*",
+        ]
+    )
+    # No cross-origin browser access by default. Non-browser clients omit Origin.
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
     admin_username: str = Field(default="admin", min_length=1, max_length=128)
     admin_password: SecretStr = Field(default=SecretStr("admin"), min_length=1, max_length=1024)
     admin_cookie_secure: bool = False
@@ -25,7 +39,13 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
 
     @field_validator(
-        "api_key", "llm_provider", "llm_model", "openai_api_key", "gemini_api_key", mode="before"
+        "api_key",
+        "mcp_key",
+        "llm_provider",
+        "llm_model",
+        "openai_api_key",
+        "gemini_api_key",
+        mode="before",
     )
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:

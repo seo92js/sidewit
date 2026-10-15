@@ -3,8 +3,8 @@ from typing import Annotated
 
 from fastapi import Header
 
-from sidewit.api.errors import ApiError
 from sidewit.config import get_settings
+from sidewit.errors import SidewitError
 
 
 async def require_api_key(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -15,4 +15,4 @@ async def require_api_key(authorization: Annotated[str | None, Header()] = None)
         return
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not secrets.compare_digest(token.encode(), api_key.encode()):
-        raise ApiError(401, "unauthorized", "Missing or invalid API key.")
+        raise SidewitError(401, "unauthorized", "Missing or invalid API key.")

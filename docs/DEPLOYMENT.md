@@ -37,6 +37,15 @@ whose retention Sidewit does not control.
 
 The web UI is optional; the API alone provides every function.
 
+## Optional MCP endpoint
+
+Set `SIDEWIT_MCP_ENABLED=true` to add `/mcp` in the existing API process. Configure a separate
+`SIDEWIT_MCP_KEY` for Bearer authentication; an empty key means no authentication when enabled.
+REST keys and web login do not protect MCP. The web container also proxies `/mcp`; no additional
+service or shared-volume writer is needed. Remote access requires an allowed Host and an HTTPS
+ingress reachable from the client. Keep Host/Origin checks enabled and preserve the incoming
+Host header. See [MCP deployment and client configuration](MCP.md) for exact settings.
+
 ## Web login and recovery
 
 The web UI has one administrator, configured entirely through environment variables:

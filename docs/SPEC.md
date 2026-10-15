@@ -36,10 +36,11 @@ The license is Apache-2.0.
 - Evaluation: Golden Case, CLI
 - UI: Context, Playground, Tools
 - Docker deployment: containers and data volumes
+- Optional MCP Streamable HTTP endpoint for Context/Tool discovery, generation and Tool invocation
 
 ### Not included in v0.1
 
-Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, dependent Tool chaining, Vector, RAG, MCP, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
+Database connections (both application databases and a Sidewit database), SQL execution, EXPLAIN, concurrent writes from multiple instances, persistent Generation history, dependent Tool chaining, Vector, RAG, API Operations, Composite Operations, multiple parameter styles, optional/default/array parameters, automatic generalization of Operation parameters into Tool inputs, Tool version history, multitenancy and official support for dialects other than PostgreSQL.
 
 ---
 
@@ -600,6 +601,30 @@ Metric-bound Tools:
 - The statement AST and parameter types must match the current contract template. Only whitespace, comments and quoting differences that resolve to the same name (`"orders"` and `orders`) are allowed. Other differences produce `metric_contract_mismatch`.
 - Contracts belong to the Context and are revalidated when it changes. Incompatible Tools return 409 and can be updated with `refresh-contract`.
 - SQL and input names/types of bound Tools are owned by the contract and read-only in the UI. Unbound Tools undergo ordinary static validation only.
+
+### 5.5 MCP transport
+
+- `SIDEWIT_MCP_ENABLED` defaults to false; disabled endpoints return 404. When enabled, `/mcp`
+  serves stateless Streamable HTTP in the existing API process, sharing Store, history,
+  generation, validation, invocation and the 90-second generation deadline with REST.
+- A nonempty `SIDEWIT_MCP_KEY` requires a timing-safe Bearer check on all MCP HTTP methods.
+  Enabling MCP with no key explicitly permits unauthenticated access. REST keys and browser
+  sessions do not authenticate MCP. OAuth, per-user scopes and management writes are excluded.
+- The fixed tools are `list_contexts`, `list_tools`, `generate_operations`, `invoke_tool`.
+  Discovery is paginated (`limit` 1–100, default 50; nonnegative `offset`; `next_offset` or null).
+  Context summaries omit definitions; saved Tool summaries expose enabled, valid, current
+  contracts and UUIDs, without SQL templates. Tool names do not become protocol tool names.
+  Discovery does not persist validation changes and only caches successful checks. A failed
+  discovery check must not bypass invocation's revalidation and persistence of invalid status.
+- Generate accepts the REST request contract and returns the REST payload, including stateless
+  clarification continuation. Invoke accepts Tool UUID, arguments and optional expected version;
+  it returns an operation and never calls an LLM or executes SQL.
+- MCP tool failures set `isError` and return `{error,message,details,status_code}`. Authentication
+  and transport failures use HTTP status codes. Do not expose rejected SQL or raw exceptions.
+- Host and Origin checks remain enabled. Defaults allow loopback Hosts and no supplied Origins;
+  deployment-specific allowlists use JSON environment arrays. Requests are limited to 1 MiB.
+  The parent ASGI lifespan owns the MCP session manager and closes it before shared storage.
+- See [MCP integration](MCP.md) for configuration, continuation and client compatibility.
 
 ---
 

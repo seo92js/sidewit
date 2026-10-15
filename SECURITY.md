@@ -14,6 +14,11 @@ it is not an execution sandbox or a user/tenant authorization boundary.
   `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD`, a nonempty `SIDEWIT_API_KEY`, and
   `SIDEWIT_ADMIN_COOKIE_SECURE=true` behind HTTPS. Web login alone does not protect the public
   `/api/v1` API when the API key is unset. See [credential recovery](docs/DEPLOYMENT.md#web-login-and-recovery).
+- MCP is disabled by default. If enabled, configure its separate `SIDEWIT_MCP_KEY` or keep it
+  private: enabling it with an empty key permits unauthenticated discovery, generation and
+  invocation across the instance. REST API keys and web sessions do not authenticate MCP.
+  Keep MCP Host/Origin allowlists restricted. MCP exposes no administrative writes or SQL
+  execution; see [MCP security and deployment](docs/MCP.md).
 - Enforce user and tenant authorization in the application and database. Bind parameters
   through the database driver and set appropriate role/function privileges and resource limits.
   SELECT statements can have side effects; a read-only role alone is not a complete sandbox.

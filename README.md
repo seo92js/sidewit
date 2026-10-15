@@ -18,6 +18,7 @@ Sidewit is not a database proxy: it never connects to a database or executes SQL
 | Static validation | Check statement type, Context tables and columns, parameter contracts, and supported value policies |
 | Tools | Save, rename and edit reviewed SQL and input contracts; enable/disable reuse; revalidate after Context changes; invoke deterministically |
 | SQL metric contracts | Compile registered aggregates, joins, fixed filters and periods into SQL |
+| MCP | Optional `/mcp` endpoint for discovery, generation and saved Tool invocation |
 | Management UI | Edit Contexts, review generated Operations, save and invoke Tools |
 
 Use **Enable/Disable** in the Tools list or editor to keep a Tool without using it. Disabled
@@ -107,6 +108,8 @@ See the [evaluation summary](evals/README.md#file-storage-acceptance-2026-10-12-
 | `SIDEWIT_DATA_PATH` | Host data directory mounted at `/data` | `./data` |
 | `SIDEWIT_API_PORT` / `SIDEWIT_WEB_PORT` | Local API / UI ports | `8000` / `3000` |
 | `SIDEWIT_API_KEY` | Sidewit Bearer authentication | Disabled when unset |
+| `SIDEWIT_MCP_ENABLED` / `SIDEWIT_MCP_KEY` | Enable MCP / its separate Bearer key | `false` / unset |
+| `SIDEWIT_MCP_ALLOWED_HOSTS` / `SIDEWIT_MCP_ALLOWED_ORIGINS` | MCP Host / Origin allowlists (JSON arrays) | Loopback hosts / no Origins |
 | `SIDEWIT_ADMIN_USERNAME` | Web administrator username | `admin` |
 | `SIDEWIT_ADMIN_PASSWORD` | Web administrator password | `admin` |
 | `SIDEWIT_ADMIN_COOKIE_SECURE` | Require HTTPS for the web session cookie | `false` for local HTTP |
@@ -123,6 +126,14 @@ Without `SIDEWIT_API_KEY`, the public API remains unauthenticated even though th
 login. Default ports bind to loopback only. Before allowing remote access, change the default
 admin credentials, configure a nonempty API key and HTTPS, and set `SIDEWIT_ADMIN_COOKIE_SECURE=true`.
 See the [security policy](SECURITY.md).
+
+## MCP integration
+
+Enable `SIDEWIT_MCP_ENABLED=true` and configure `SIDEWIT_MCP_KEY` to serve Streamable HTTP at
+`http://127.0.0.1:8000/mcp` in the same API container. MCP provides Context/Tool discovery,
+natural-language generation and deterministic Tool invocation; it returns operations, not
+query results. Explicitly enabling MCP without a key permits unauthenticated access.
+See [MCP setup and client authentication](docs/MCP.md) before connecting a remote client.
 
 ## API example
 
@@ -218,7 +229,7 @@ The suites are **regression cases exposed during development and review**, not a
 
 ## Limitations and roadmap
 
-- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, dependent Tool chaining and Vector/RAG/MCP are not implemented.
+- Only PostgreSQL SELECT-family SQL and named `:name` parameters are supported. Other Operation types, database connections, SQL execution, dependent Tool chaining and Vector/RAG are not implemented.
 - Static validation does not guarantee executability, absence of side effects, execution cost or business correctness. The application must enforce database roles and function privileges, user and tenant authorization, and time/resource limits. Prose business rules and omitted conditions are not automatically enforced.
 - One API process owns a data directory on a local filesystem. Multiple instances are not supported. Once a Generation leaves memory, it cannot be used to create a Tool draft.
 - All Tool inputs are required. Optional/default/array inputs and Tool version history are not supported. Generate has a 90-second total request budget, including repair.

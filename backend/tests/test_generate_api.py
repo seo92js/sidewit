@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from sidewit.api.generate import get_llm_provider
+from sidewit.application.runtime import get_llm_provider
 from sidewit.generation.dto import LLMGenerationOutput, LLMParameter, LLMToolSuggestion
 from sidewit.generation.providers.fake import FakeProvider
 from sidewit.generation.providers.gemini import GeminiProvider
