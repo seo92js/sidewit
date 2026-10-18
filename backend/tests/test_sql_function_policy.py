@@ -102,6 +102,93 @@ def test_plain_text_is_not_a_clock_expression(sql):
     assert check(sql, generated=True).valid
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT ('today'::text)::date",
+        "SELECT COALESCE(NULL, 'today')::date",
+        "SELECT CASE WHEN true THEN 'today' ELSE '2001-01-01' END::date",
+        "WITH d AS (SELECT 'today'::text AS v) SELECT v::date FROM d",
+        "WITH d AS (SELECT COALESCE(NULL, 'today') AS v) SELECT v::date FROM d",
+        "SELECT id FROM orders WHERE created_at >= (SELECT 'today')",
+        "SELECT id FROM orders WHERE created_at IN (SELECT 'today')",
+        "SELECT date_trunc('day', 'today')",
+        "SELECT date('today')",
+        "SELECT age('today', created_at) FROM orders",
+        "SELECT ARRAY['today']::date[]",
+        "SELECT id FROM orders WHERE date_trunc('day', created_at) >= 'today'",
+        "WITH d AS (SELECT date_trunc('day', created_at) AS v FROM orders) "
+        "SELECT v FROM d WHERE v >= 'today'",
+    ],
+)
+def test_temporal_values_are_traced_through_branches_and_subqueries(sql):
+    result = check(sql, generated=True)
+    assert "relative_time_function" in {e.code for e in result.errors}
+
+
+@pytest.mark.parametrize("value", ["today", "now", "yesterday 10:00", " Tomorrow "])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT :boundary::timestamptz",
+        "SELECT id FROM orders WHERE created_at >= :boundary",
+        "WITH d AS (SELECT :boundary AS v) SELECT COALESCE(v, NULL)::date FROM d",
+    ],
+)
+def test_temporal_parameter_values_cannot_use_database_clock(sql, value):
+    result = validate_sql_operation(
+        sql,
+        "postgresql",
+        ContextDefinition.model_validate(DEFINITION),
+        {"boundary": "string"},
+        {"boundary": value},
+        generate_policy("Find records"),
+    )
+    assert "relative_time_function" in {e.code for e in result.errors}
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT ('to' || 'day')::date",
+        "WITH d AS (SELECT upper('today') AS v) SELECT v::date FROM d",
+        "SELECT '{today}'::date[]",
+    ],
+)
+def test_unverifiable_computed_date_inputs_fail_closed(sql):
+    result = check(sql, generated=True)
+    assert "relative_time_unverifiable" in {e.code for e in result.errors}
+    # Saved Tools deliberately retain the ordinary, database-clock-compatible policy.
+    assert check(sql).valid
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT COALESCE(created_at, '2001-01-01')::date FROM orders",
+        "SELECT date_trunc('day', created_at)::date FROM orders",
+        "SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date FROM orders",
+        "SELECT (created_at + INTERVAL '1 day')::date FROM orders",
+        "SELECT CASE WHEN name = 'today' THEN created_at ELSE '2001-01-01' END::date FROM orders",
+        "WITH d AS (SELECT :boundary AS v) SELECT v::timestamptz FROM d",
+        "SELECT name FROM orders WHERE name = :boundary",
+        "SELECT ARRAY['2001-01-01']::date[]",
+    ],
+)
+def test_absolute_dates_database_values_and_plain_text_remain_supported(sql):
+    params = {"boundary": "string"} if ":boundary" in sql else {}
+    values = {"boundary": "2001-01-01T00:00:00+09:00"} if params else {}
+    result = validate_sql_operation(
+        sql,
+        "postgresql",
+        ContextDefinition.model_validate(DEFINITION),
+        params,
+        values,
+        generate_policy("Find records"),
+    )
+    assert result.valid, result.errors
+
+
 @pytest.mark.parametrize("literal", ["$$:x$$", "$tag$:x$tag$", "E':x'", "U&':x'"])
 def test_alternative_strings_cannot_hide_placeholders(literal):
     assert not check(f"SELECT {literal}").valid

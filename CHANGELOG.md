@@ -16,6 +16,11 @@ Initial release candidate.
 
 ### Fixes
 
+- Cache acyclic SQL lineage and deduplicate repeated value origins; bound analysis work
+  so small repeated CTE graphs cannot expand exponentially or bypass cached Tool checks.
+  Trace date inputs through parameters, casts and query outputs to reject hidden database
+  clock values. Keep the Playground usable when browser storage is blocked or full.
+
 - Apply safe JSON logging to preconfigured handlers and sanitize exported records, including
   messages, arbitrary extras and exception objects. Preserve sent HTTP statuses and original
   failure types after response start; distinguish incomplete responses and later failures.

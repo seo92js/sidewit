@@ -38,8 +38,12 @@ value as a parameter instead.
 
 Generate continues to reject database-clock expressions. This includes special date words
 in casts, dollar strings and comparisons against known temporal fields, with aliases and
-CTE lineage. Ordinary text such as name = 'today' remains valid. Saved Tools retain the
-existing default policy that permits clock functions.
+CTE lineage. Supplied string parameters containing special date words are checked when
+used as dates, including through nested casts, COALESCE, CASE and scalar subqueries.
+Computed text whose date interpretation cannot be verified, such as
+`('to' || 'day')::date`, is rejected with relative_time_unverifiable. Supply an absolute
+date/date-time parameter instead. Ordinary text such as name = 'today' remains valid.
+Saved Tools retain the existing default policy that permits clock functions.
 
 ## Upgrade and execution boundary
 

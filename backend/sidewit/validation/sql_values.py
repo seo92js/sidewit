@@ -19,6 +19,7 @@ class ValueOrigin:
     kind: Literal["expression", "database", "unknown"]
     expression: exp.Expression | None = None
     casts: tuple[exp.DataType, ...] = ()  # inner to outer
+    temporal: bool = False  # Used by temporal analysis; text casts clear the result type.
 
 
 UNKNOWN = ValueOrigin("unknown")
@@ -29,14 +30,39 @@ class ValueAnalysis:
     def __init__(self, analysis: SqlAnalysis):
         self.analysis = analysis
         self.scopes = {id(scope.expression): scope for scope in analysis.scopes}
+        self._values: dict[tuple[int, int], list[ValueOrigin]] = {}
+        self._outputs: dict[tuple[int, int], list[ValueOrigin]] = {}
+        self._cycles = 0
 
     def values(
         self, scope: Scope, node: exp.Expression, seen: frozenset[tuple[int, int]] = frozenset()
     ) -> list[ValueOrigin]:
+        self.analysis.budget.consume()
         marker = (id(scope), id(node))
         if marker in seen:
+            self._cycles += 1
             return [UNKNOWN]  # recursive output: no finite value proof
-        seen = seen | {marker}
+        if marker in self._values:
+            return self._values[marker]
+        cycles = self._cycles
+        result = self._unique(self._resolve_values(scope, node, seen | {marker}))
+        if cycles == self._cycles:
+            self._values[marker] = result
+        return result
+
+    def _unique(self, values: list[ValueOrigin]) -> list[ValueOrigin]:
+        # Keep distinct AST literals: constant/request checks use their identities.
+        unique = {}
+        for value in values:
+            self.analysis.budget.consume()
+            unique.setdefault(
+                (value.kind, id(value.expression), value.casts, value.temporal), value
+            )
+        return list(unique.values())
+
+    def _resolve_values(
+        self, scope: Scope, node: exp.Expression, seen: frozenset[tuple[int, int]]
+    ) -> list[ValueOrigin]:
         if isinstance(node, exp.Alias | exp.Paren | exp.Collate):
             return self.values(scope, node.this, seen)
         if isinstance(node, exp.Cast):
@@ -114,10 +140,22 @@ class ValueAnalysis:
     def output(
         self, scope: Scope, index: int, seen: frozenset[tuple[int, int]]
     ) -> list[ValueOrigin]:
+        self.analysis.budget.consume()
         marker = (id(scope), index)
         if marker in seen:
+            self._cycles += 1
             return [UNKNOWN]
-        seen = seen | {marker}
+        if marker in self._outputs:
+            return self._outputs[marker]
+        cycles = self._cycles
+        result = self._unique(self._resolve_output(scope, index, seen | {marker}))
+        if cycles == self._cycles:
+            self._outputs[marker] = result
+        return result
+
+    def _resolve_output(
+        self, scope: Scope, index: int, seen: frozenset[tuple[int, int]]
+    ) -> list[ValueOrigin]:
         node = scope.expression
         if isinstance(node, exp.SetOperation):
             return [v for arm in scope.set_operation_scopes for v in self.output(arm, index, seen)]

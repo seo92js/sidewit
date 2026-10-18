@@ -343,6 +343,22 @@ async def test_relative_time_function_triggers_repair(client, context, fake):
     assert "[relative_time_function]" in provider.calls[1][1][2].content
 
 
+async def test_hidden_clock_parameter_triggers_repair(client, context, fake):
+    statement = "SELECT id FROM orders WHERE ordered_at >= CAST(:boundary AS timestamptz)"
+    bad = ok(statement, [LLMParameter(name="boundary", type="string", value="today")])
+    repaired = ok(
+        "SELECT id FROM orders WHERE ordered_at >= :boundary",
+        [LLMParameter(name="boundary", type="date-time", value="2026-10-02T00:00:00+09:00")],
+    )
+    provider = fake(bad, repaired)
+    response = await ask(client, context, question="오늘 생성된 주문 ID")
+    assert response.status_code == 200, response.text
+    assert len(provider.calls) == 2
+    assert "[relative_time_function]" in provider.calls[1][1][2].content
+    operation = response.json()["operations"][0]["operation"]
+    assert operation["parameters"]["boundary"] == "2026-10-02T00:00:00+09:00"
+
+
 async def test_unconvertible_value_triggers_repair(client, context, fake):
     bad = ok(
         "SELECT id FROM orders LIMIT :n", [LLMParameter(name="n", type="integer", value="ten")]

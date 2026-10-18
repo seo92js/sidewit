@@ -35,13 +35,19 @@ from sidewit.domain.params import (
     matches_allowed_value,
     value_matches_type,
 )
-from sidewit.sql import COMPLEXITY_MESSAGE, parse_sql
+from sidewit.sql import COMPLEXITY_MESSAGE, SqlComplexityError, parse_sql
 from sidewit.validation.functions import function_issues
 from sidewit.validation.request_literals import request_literal_issues
 from sidewit.validation.sql_analysis import (
     FieldRef,
     SqlAnalysis,
     SqlAnalysisError,
+)
+from sidewit.validation.sql_time import (
+    TemporalValues,
+    special_time_literal,
+    temporal_inputs,
+    temporal_type,
 )
 from sidewit.validation.sql_values import ValueAnalysis, ValueOrigin
 
@@ -160,7 +166,7 @@ def analyze_sql_operation(
         validator = _Validator(statement, dialect, context, declared_params, values, policy)
         result = validator.run()
         return OperationAnalysis(result, validator.parameter_allowed)
-    except RecursionError:
+    except (RecursionError, SqlComplexityError):
         # Includes type parsing and lineage analysis, not just the initial SQL parse.
         return OperationAnalysis(
             ValidationResult(
@@ -197,7 +203,13 @@ def parameter_value_issues(
     return [
         issue
         for issue in result.errors
-        if issue.code in {"value_not_allowed", "value_unverifiable", "parameter_type_mismatch"}
+        if issue.code
+        in {
+            "value_not_allowed",
+            "value_unverifiable",
+            "parameter_type_mismatch",
+            "sql_analysis_error",
+        }
     ]
 
 
@@ -785,45 +797,100 @@ class _Validator:
 
     def _check_relative_time(self, ast: exp.Expression, analyzed: bool) -> None:
         self.checks.append("relative_time")
+        clocks = [node for node in ast.walk() if is_current_time(node)]
+        for node in clocks:
+            expression = node.sql(dialect=self.dialect)
+            self._error(
+                "relative_time_function",
+                f"'{expression}' depends on the database clock; resolve the period from "
+                "reference_time into a parameter instead.",
+                expression,
+            )
+        if clocks:
+            return  # Already rejected; do not add unverifiable-source errors for known clocks.
         temporal_fields = {
             (r.name, f.name)
             for r in self.context.resources
             for f in r.fields
             if field_type(f) in {"date", "date-time"}
         }
-        implicit_nodes: set[int] = set()
         analysis = self.analysis if analyzed else None
         if analysis:
+            values = TemporalValues(analysis, temporal_fields)
             for scope in analysis.scopes:
-                for node in scope.expression.find_all(*_COMPARISONS, exp.Between, exp.In):
+                for node in scope.expression.walk():
                     if node.find_ancestor(exp.Select) is not scope.expression:
                         continue
+                    for source in temporal_inputs(node):
+                        self._check_temporal_values(node, values.values(scope, source))
                     # Check the comparison operands, not descendant columns: a temporal
                     # column inside TO_CHAR or a text cast does not make its result temporal.
                     if isinstance(node, exp.Between):
                         pairs = [(node.this, node.args[key]) for key in ("low", "high")]
                     elif isinstance(node, exp.In):
-                        pairs = [(node.this, value) for value in node.expressions]
-                    else:
+                        query = node.args.get("query")
+                        pairs = [
+                            (node.this, value)
+                            for value in ([query] if query is not None else node.expressions)
+                        ]
+                    elif type(node) in _COMPARISONS:
                         pairs = [(node.this, node.expression), (node.expression, node.this)]
+                    else:
+                        continue
                     for field_expr, value_expr in pairs:
                         field_expr = field_expr.unnest()
                         value_expr = value_expr.unnest()
-                        temporal = (
-                            isinstance(field_expr, exp.Cast)
-                            and field_expr.to.is_type(*exp.DataType.TEMPORAL_TYPES)
-                        ) or analysis.field(scope, field_expr) in temporal_fields
-                        if (
-                            temporal
-                            and isinstance(value_expr, exp.Literal)
-                            and value_expr.is_string
-                            and _special_time_literal(value_expr.this)
-                        ):
-                            implicit_nodes.add(id(node))
-                            break
-        for node in ast.walk():
-            implicit_clock = id(node) in implicit_nodes
-            if is_current_time(node) or implicit_clock:
+                        temporal = analysis.field(scope, field_expr) in temporal_fields or any(
+                            v.temporal for v in values.values(scope, field_expr)
+                        )
+                        if temporal:
+                            self._check_temporal_values(node, values.values(scope, value_expr))
+
+    def _check_temporal_values(self, node: exp.Expression, origins: list[ValueOrigin]) -> None:
+        for origin in origins:
+            if origin.kind == "database":
+                continue
+            value = _MISSING
+            if isinstance(origin.expression, exp.Literal) and origin.expression.is_string:
+                value = origin.expression.this
+            elif isinstance(origin.expression, exp.Placeholder):
+                if self.values is None:
+                    continue  # Static checks cannot decide an input value not supplied yet.
+                value = self.values.get(origin.expression.name, _MISSING)
+            if origin.kind == "unknown":
+                self._error(
+                    "relative_time_unverifiable",
+                    "Date input cannot be verified as independent of the database clock; "
+                    "use an absolute date/date-time parameter instead.",
+                    node.sql(dialect=self.dialect),
+                )
+                continue
+            if (
+                isinstance(node, exp.Cast)
+                and node.to.is_type(exp.DataType.Type.ARRAY)
+                and isinstance(value, str)
+                and origin.expression.find_ancestor(exp.Array) is None
+            ):
+                self._error(
+                    "relative_time_unverifiable",
+                    "Date arrays must use an explicit ARRAY constructor, not encoded text.",
+                    node.sql(dialect=self.dialect),
+                )
+                continue
+            for target in origin.casts:
+                if temporal_type(target):
+                    break  # Check the value before PostgreSQL interprets it as a date.
+                if isinstance(value, str):
+                    value = cast_value(value, target)
+                    if value is None:
+                        self._error(
+                            "relative_time_unverifiable",
+                            "Date input contains an unsupported cast; use an absolute "
+                            "date/date-time parameter instead.",
+                            node.sql(dialect=self.dialect),
+                        )
+                        break
+            if isinstance(value, str) and special_time_literal(value):
                 expression = node.sql(dialect=self.dialect)
                 self._error(
                     "relative_time_function",
@@ -831,10 +898,6 @@ class _Validator:
                     "reference_time into a parameter instead.",
                     expression,
                 )
-
-
-def _special_time_literal(value: str) -> bool:
-    return bool(re.match(r"^\s*(now|today|tomorrow|yesterday)(?:\s|$)", value, re.I))
 
 
 def is_current_time(node: exp.Expression) -> bool:
@@ -846,7 +909,7 @@ def is_current_time(node: exp.Expression) -> bool:
         return name in _CURRENT_TIME_FUNCTIONS or (name == "age" and len(node.expressions) == 1)
     if isinstance(node, exp.Cast) and isinstance(node.this, exp.Literal) and node.this.is_string:
         return node.to.is_type(*exp.DataType.TEMPORAL_TYPES) and (
-            _special_time_literal(node.this.this)
+            special_time_literal(node.this.this)
         )
     return False
 
