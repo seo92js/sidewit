@@ -3,6 +3,8 @@
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from sidewit.observability import annotate
+
 MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -21,6 +23,7 @@ class RequestSizeLimit:
                 return
             body.extend(message.get("body", b""))
             if len(body) > MAX_BODY_BYTES:
+                annotate(error_code="request_too_large")
                 response = JSONResponse(
                     {
                         "error": "request_too_large",

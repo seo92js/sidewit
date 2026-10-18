@@ -4,9 +4,8 @@ import logging
 from collections.abc import Callable
 
 from sidewit.errors import SidewitError
+from sidewit.observability import emit
 from sidewit.store import Store, StoreError
-
-log = logging.getLogger(__name__)
 
 
 def storage_failure(get_store: Callable[[], Store], error: StoreError) -> SidewitError:
@@ -24,10 +23,11 @@ def storage_failure(get_store: Callable[[], Store], error: StoreError) -> Sidewi
 
 def _log(error: StoreError, recovery: str) -> None:
     cause = error.__cause__ or error
-    log.error(
-        "storage_failure operation=%s error_type=%s errno=%s recovery=%s",
-        error.operation,
-        type(cause).__name__,
-        cause.errno if isinstance(cause, OSError) else None,
-        recovery,
+    emit(
+        "storage_failure",
+        level=logging.ERROR,
+        operation=error.operation,
+        error_type=type(cause).__name__,
+        errno=cause.errno if isinstance(cause, OSError) else None,
+        recovery=recovery,
     )

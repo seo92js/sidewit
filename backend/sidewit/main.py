@@ -1,5 +1,3 @@
-import logging
-import sys
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -9,18 +7,18 @@ from sidewit.api import admin, contexts, generate, health, tools
 from sidewit.api.auth import require_api_key
 from sidewit.api.errors import install_error_handlers
 from sidewit.api.limits import RequestSizeLimit
+from sidewit.api.observability import RequestObservation
 from sidewit.api.state import get_history, get_store
 from sidewit.application.runtime import get_llm_provider
 from sidewit.config import get_settings
 from sidewit.mcp.auth import MCPAuthentication
 from sidewit.mcp.server import create_mcp_app
+from sidewit.observability import configure_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s", stream=sys.stdout
-    )
+    configure_logging()
     # Load and validate the data directory now: an invalid file stops startup.
     store = app.dependency_overrides.get(get_store, get_store)()
     admin.get_admin_sessions.cache_clear()
@@ -49,6 +47,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.add_middleware(RequestSizeLimit)
+    app.add_middleware(RequestObservation)
     install_error_handlers(app)
 
     authenticated = [Depends(require_api_key)]

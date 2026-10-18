@@ -30,7 +30,8 @@ def test_bounded_history_and_context_deletion(caplog):
     assert history.recent(shared, 2) == [third]
     history.forget_context(shared)
     assert history.recent(None, 2) == [second]
-    assert str(third.id) in caplog.text
+    # Keeping/evicting in-memory content does not emit a second operational event.
+    assert not caplog.records
     for private in ("PRIVATE_QUESTION", "PRIVATE_SQL", "PRIVATE_VALUE"):
         assert private not in caplog.text
 

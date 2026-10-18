@@ -144,7 +144,7 @@ async def test_generation_deadline_cancels_provider(client, monkeypatch):
                 cancelled.set()
 
     async def slow_generation(body, store, history, provider):
-        await provider.generate_structured()
+        await provider.generate_structured("", [], endpoint.GenerateOk)
 
     monkeypatch.setattr(endpoint, "_generate_operation", slow_generation)
     context = await create_context(client, DEFINITION)

@@ -6,6 +6,8 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from sidewit.observability import annotate
+
 
 class MCPAuthentication:
     def __init__(self, app: ASGIApp, key: str | None) -> None:
@@ -19,6 +21,7 @@ class MCPAuthentication:
             if scheme.lower() != "bearer" or not secrets.compare_digest(
                 token.encode(), self.key.encode()
             ):
+                annotate(error_code="unauthorized")
                 response = JSONResponse(
                     {
                         "error": "unauthorized",

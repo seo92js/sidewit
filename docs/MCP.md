@@ -112,6 +112,10 @@ Context version and options. There is no MCP conversation session to resume: the
 contains the continuation state. See [clarification limits](CLARIFICATIONS.md).
 
 Tool responses contain the same JSON in `structuredContent` and a text content block.
+Their `_meta` includes `sidewit/request_id` for the tool call and
+`sidewit/parent_request_id` for its HTTP envelope (`X-Request-ID`). Save these IDs to correlate
+application records with [operational logs](OBSERVABILITY.md); they do not appear in the
+content payload. MCP tool status and HTTP transport status are recorded separately.
 Application failures set MCP `isError: true` and return:
 
 ```json

@@ -32,7 +32,10 @@ persist in the data directory and may contain private schema details, SQL litera
 Protect that directory and its backups.
 
 Generation questions, SQL, parameters and rejected SQL stay in bounded process memory and are
-lost on restart. Sidewit logs Generation metadata, not this content. Questions and Context
+lost on restart. Sidewit logs request/Generation metadata, not this content or raw exception
+text. Request IDs correlate logs with calling-application records; Sidewit does not maintain
+a durable business audit trail. Restrict log access and configure retention; see
+[operational logging](docs/OBSERVABILITY.md). Questions and Context
 content are sent to the configured provider; review its data-handling terms before use.
 
 ## Reporting a vulnerability

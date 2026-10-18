@@ -46,6 +46,10 @@ flowchart LR
 
 Contexts and Tools persist in `./data` by default and survive container replacement. Run **one API process per data directory**. Generation history keeps the most recent 200 records by default, in memory only, and is lost on restart. Stop the API before backups or manual file edits; see [deployment and recovery](docs/DEPLOYMENT.md).
 
+Operational events are JSON on standard output. Correlate REST/web responses with their
+`X-Request-ID` header, or MCP tool results with their `_meta` request ID. Compose rotates local
+logs; application audit records belong to the calling application. See [logging and correlation](docs/OBSERVABILITY.md).
+
 Built with Python 3.12, FastAPI, Pydantic and SQLGlot; React, TypeScript and Vite; Docker Compose.
 
 ## Quick Start
