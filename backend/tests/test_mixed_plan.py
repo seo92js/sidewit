@@ -437,8 +437,8 @@ async def test_unexpected_worker_error_cancels_and_joins_siblings(client, contex
             cleanup_finished.set()
 
     provider.generate_structured = generate
-    with pytest.raises(ExceptionGroup) as exc:
-        await ask(client, context)
-    assert isinstance(exc.value.exceptions[0], RuntimeError)
+    response = await ask(client, context)
+    assert response.status_code == 500 and response.json()["error"] == "internal_error"
+    assert "unexpected worker error" not in response.text
     assert cleanup_finished.is_set()
     assert not history.recent(None, 10)

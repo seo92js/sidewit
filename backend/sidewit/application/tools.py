@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sidewit.domain.operation import SqlOperation
 from sidewit.errors import SidewitError
+from sidewit.observability import annotate
 from sidewit.store import ContextRecord, Store, ToolRecord
 from sidewit.tools.service import InvalidArguments, ToolDisabled, ToolInvalid, invoke
 from sidewit.validation.sql_validator import ValidationResult
@@ -53,8 +54,10 @@ def check_tool_version(tool: ToolRecord, expected: int) -> None:
 
 
 def invoke_tool(tool_id: uuid.UUID, body: InvokeRequest, store: Store) -> InvokeResult:
+    annotate(action="invoke_tool", tool_id=str(tool_id), llm_calls=0)
     tool = get_tool(store, tool_id)
     context = get_context(store, tool.context_id)
+    annotate(tool_version=tool.version, context_id=str(context.id), context_version=context.version)
     if body.expected_version is not None:
         check_tool_version(tool, body.expected_version)
     try:
@@ -77,6 +80,7 @@ def invoke_tool(tool_id: uuid.UUID, body: InvokeRequest, store: Store) -> Invoke
             "Arguments do not match the tool's input_schema.",
             {"errors": [i.model_dump() for i in e.errors]},
         ) from e
+    annotate(operation_count=1)
     return InvokeResult(
         tool_id=tool.id,
         validation=validation,

@@ -1,6 +1,11 @@
 services:
   api:
     build: ./backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       SIDEWIT_API_KEY: ${SIDEWIT_API_KEY:-}
       SIDEWIT_MCP_ENABLED: ${SIDEWIT_MCP_ENABLED:-false}
@@ -30,6 +35,11 @@ services:
   # Optional management UI; `docker compose up api` runs without it.
   web:
     build: ./frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       api:
         condition: service_healthy

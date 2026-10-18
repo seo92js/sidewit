@@ -31,6 +31,7 @@ from sidewit.generation.tool_plan import (
     PROMPT_VERSION as PLAN_PROMPT_VERSION,
 )
 from sidewit.generation.tool_selection import ToolSelectionError
+from sidewit.observability import annotate
 from sidewit.security import redact
 from sidewit.store import ContextRecord, Store
 
@@ -74,6 +75,7 @@ async def generate(
         model=provider.model,
         prompt_version=planner.prompt_version,
     )
+    annotate(generation_id=str(record.id))
     started = time.monotonic()
     input_tokens: list[int] = []
     output_tokens: list[int] = []

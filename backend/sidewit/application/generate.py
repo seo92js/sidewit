@@ -22,9 +22,11 @@ from sidewit.generation.history import GenerationHistory, GenerationRecord
 from sidewit.generation.operations import operation_steps
 from sidewit.generation.planners import GenerationInput, InvalidGenerateRequest, MetricOptions
 from sidewit.generation.providers.base import LLMProvider
+from sidewit.generation.providers.observed import ObservedProvider
 from sidewit.generation.service import ContextDeleted, generate
 from sidewit.generation.tool_plan import MAX_PLAN_OPERATIONS, PlannedOperation
 from sidewit.generation.tool_selection import ToolSelectionError
+from sidewit.observability import annotate
 from sidewit.store import Store
 
 GENERATION_TIMEOUT_SECONDS = 90
@@ -128,6 +130,10 @@ class GenerateUnanswerable(BaseModel):
 async def generate_operation(
     body: GenerateRequest, store: Store, history: GenerationHistory, provider: LLMProvider | None
 ) -> GenerateOk | GenerateAmbiguous | GenerateUnanswerable:
+    annotate(action="generate", context_id=str(body.context_id), llm_calls=0)
+    if provider is not None:
+        annotate(provider=provider.name, model=provider.model, token_usage_complete=True)
+        provider = ObservedProvider(provider)
     try:
         async with asyncio.timeout(GENERATION_TIMEOUT_SECONDS):
             return await _generate_operation(body, store, history, provider)
@@ -143,6 +149,7 @@ async def _generate_operation(
     context = store.context(body.context_id)
     if context is None:
         raise SidewitError(404, "context_not_found", f"Context '{body.context_id}' does not exist.")
+    annotate(context_version=context.version)
     if (
         body.expected_context_version is not None
         and body.expected_context_version != context.version
@@ -197,13 +204,24 @@ async def _generate_operation(
             f"Context '{body.context_id}' was deleted while the answer was generated.",
         ) from e
     record = result.record
+    annotate(status=result.outcome)
     common = {"generation_id": record.id, "context_version": record.context_version}
 
     match result.outcome:
         case "ok":
-            return GenerateOk(
-                **common, source=source_of(record), operations=operation_steps(record)
+            steps = operation_steps(record)
+            annotate(
+                operation_count=len(steps),
+                selected_tools=[
+                    {
+                        "tool_id": step["selected_tool"]["id"],
+                        "tool_version": step["selected_tool"]["version"],
+                    }
+                    for step in steps
+                    if step["source"] == "tool"
+                ],
             )
+            return GenerateOk(**common, source=source_of(record), operations=steps)
         case "ambiguous":
             return GenerateAmbiguous(
                 **common,

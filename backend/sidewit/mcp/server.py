@@ -1,7 +1,6 @@
 """Four stable MCP tools; saved Tool names remain editable data, not protocol names."""
 
 import json
-import logging
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -19,10 +18,9 @@ from sidewit.config import Settings
 from sidewit.errors import SidewitError
 from sidewit.generation.history import GenerationHistory
 from sidewit.generation.providers.base import LLMProvider
+from sidewit.observability import annotate, current, observe
 from sidewit.store import Store, StoreError
 from sidewit.tools.service import is_current, tool_binding, validate_tool
-
-log = logging.getLogger(__name__)
 
 
 class PageRequest(BaseModel):
@@ -68,6 +66,10 @@ _DESCRIPTIONS = {
 
 
 def _result(value: dict[str, Any], *, error: bool = False) -> types.CallToolResult:
+    observation = current()
+    metadata = {"sidewit/request_id": observation.request_id} if observation else {}
+    if observation and "parent_request_id" in observation.fields:
+        metadata["sidewit/parent_request_id"] = observation.fields["parent_request_id"]
     return types.CallToolResult(
         content=[
             types.TextContent(
@@ -76,10 +78,12 @@ def _result(value: dict[str, Any], *, error: bool = False) -> types.CallToolResu
         ],
         structured_content=value,
         is_error=error,
+        meta=metadata,
     )
 
 
 def _error(exc: SidewitError) -> types.CallToolResult:
+    annotate(status="error", status_code=exc.status_code, error_code=exc.error)
     return _result(
         {
             "error": exc.error,
@@ -169,7 +173,7 @@ def create_mcp_app(
             ]
         )
 
-    async def call_tool(_context, params: types.CallToolRequestParams):
+    async def dispatch_tool(params: types.CallToolRequestParams):
         name = params.name
         model = _INPUTS.get(name)
         if model is None:
@@ -212,8 +216,13 @@ def create_mcp_app(
             return _error(storage_failure(get_store, exc))
         except Exception as exc:
             # Do not let the SDK log exception text/arguments that may contain private SQL.
-            log.error("mcp_tool_failure tool=%s error_type=%s", name, type(exc).__name__)
+            annotate(error_type=type(exc).__name__)
             return _error(SidewitError(500, "internal_error", "MCP tool failed."))
+
+    async def call_tool(_context, params: types.CallToolRequestParams):
+        action = params.name if params.name in _INPUTS else "unknown_tool"
+        with observe("mcp_tool_completed", transport="mcp", action=action):
+            return await dispatch_tool(params)
 
     server = Server(
         "Sidewit",

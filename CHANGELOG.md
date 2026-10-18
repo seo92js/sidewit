@@ -16,6 +16,10 @@ Initial release candidate.
 
 ### Fixes
 
+- Apply safe JSON logging to preconfigured handlers and sanitize exported records, including
+  messages, arbitrary extras and exception objects. Preserve sent HTTP statuses and original
+  failure types after response start; distinguish incomplete responses and later failures.
+
 - Keep failed MCP discovery checks out of the validation cache so later REST or MCP invocation
   persists the Tool's invalid status instead of leaving it displayed as valid.
 
@@ -29,6 +33,11 @@ Initial release candidate.
   be checked as a saved Tool. Preserve inferred step IDs in Tool drafts and saved provenance.
 
 ### Features
+
+- Add content-free JSON request logs across REST, web and MCP, response request IDs and MCP
+  tool-call/HTTP-parent correlation. Record failure codes, versions, duration and actual LLM
+  calls/reported usage, including timeouts. Rotate Docker logs and document the boundary
+  between operational logs and application-owned audit records.
 
 - Add an opt-in MCP Streamable HTTP endpoint in the API container with a separate Bearer key,
   Host/Origin checks, paginated Context/Tool discovery, generation and deterministic invocation.

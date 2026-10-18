@@ -120,6 +120,11 @@ executing. See [SECURITY.md](../SECURITY.md).
 
 ## Request budgets and limits
 
+REST, web and MCP processing emit content-free JSON operational logs with request IDs.
+Compose rotates each container's local logs (`10m`, three files). Forward stdout to your
+existing collector for longer retention, and save business audit records in your application
+when needed. See [request correlation, privacy and retention](OBSERVABILITY.md).
+
 Generate has a 90-second deadline including the one repair attempt; each Provider call times
 out at 60 seconds and SDK automatic retries are disabled. The supplied proxy waits 100
 seconds and the UI 110 seconds; match any external ingress to this budget. A timeout returns

@@ -201,7 +201,12 @@ created_at
 ```
 
 - `failed` is an internal state for structural validation failure (API 422), LLM failure (API 502), or Tool selection/argument/version validation failure (§5.3). The cause is recorded in `reason`.
-- Each completed Generation emits one standard-output log line containing metadata only: id, context_id, context_version, status, provider, model, prompt_version, attempts, latency_ms and token counts. **Questions, SQL and parameter values are never logged.**
+- REST/web/MCP HTTP requests emit JSON completion events with server-generated request IDs.
+  MCP tool calls emit separate completion events linked to their HTTP parent. Events contain
+  metadata only: known Generation/Context/Tool IDs and versions, status/error codes, duration,
+  provider/model, actual provider-call counts and reported token totals/completeness. History
+  insertion does not emit a second Generation log. **Questions, SQL, parameters and raw
+  exception text are never logged.** See [operational logging](OBSERVABILITY.md).
 - Questions, Context content and the same Context's saved Tool catalog are sent to the LLM Provider during generation. Sidewit does not control the provider's retention policy.
 
 ---
@@ -248,9 +253,16 @@ created_at
 
 Common behavior:
 - The base path is `/api/v1`.
+- API/web responses include a server-generated `X-Request-ID` header for operational log
+  correlation, without adding fields to response bodies. Incoming IDs are not trusted/reused.
 - When `SIDEWIT_API_KEY` is configured, every public `/api/v1` request except `/health` requires `Authorization: Bearer <key>`. Missing or incorrect keys return 401 `unauthorized`. Without this setting, public API authentication is disabled, independently of web login. One key grants management, generation and invocation access; do not give it directly to end users.
 - `GET /health` requires no authentication. It returns 200 when the data directory is readable and writable, or 503 otherwise.
 - Invalid request shapes (Pydantic validation failures) return 422 `invalid_request`; unknown routes return 404 `not_found`.
+- Unexpected failures before response headers are sent return generic JSON 500 `internal_error`;
+  messages and tracebacks are omitted. If a response started but is incomplete, it is interrupted
+  rather than followed by a second response. Failures after a completed response are logged
+  without rewriting the sent status. HTTP logs preserve the sent status, original exception
+  type and response completion flag, including on cancellation.
 - SQL/DDL complexity limits: 32 levels of parentheses/brackets outside strings and comments, 20,000 tokens, AST depth 64 and 10,000 AST nodes. Exceeding them produces `sql_parse_error` for SQL validation or 422 `ddl_parse_error` for DDL. Recursion limits during further analysis produce `sql_analysis_error`.
 - Limits: HTTP body 1 MiB (413 `request_too_large` if exceeded), questions 8,000 characters, DDL 256,000 characters, SQL 64,000 characters; Context limits are in §3.1. Exceeding model input limits returns 422.
 - Error format:
@@ -388,7 +400,7 @@ source_generation_id and preserves the selected step's metric contract.
 A Tool catalog exceeding 100,000 JSON characters returns 422 `tool_catalog_too_large`; it is not arbitrarily truncated.
 Tool selection, argument and version validation failures after a model response are recorded as failed Generations, with `generation_id` included in the error details.
 The debugging detail `tool_selection` contains the unvalidated model selection, not an executable Operation. `reason` records the error code, and token counts and latency are retained.
-Selection content stays in memory; logs contain only existing metadata. Catalog size rejection before the call and Context deletion do not create records.
+Selection content stays in memory; logs contain operational metadata only. Catalog size rejection before the call and Context deletion do not create Generation history records, but still have request completion events.
 Selection, subsequent generation and repair share the existing 90-second deadline. Attempts and token counts include selection calls.
 Dependent Tool chaining and automatic saving are not supported.
 
@@ -621,6 +633,9 @@ Metric-bound Tools:
   it returns an operation and never calls an LLM or executes SQL.
 - MCP tool failures set `isError` and return `{error,message,details,status_code}`. Authentication
   and transport failures use HTTP status codes. Do not expose rejected SQL or raw exceptions.
+- Tool results add `_meta["sidewit/request_id"]` and their HTTP parent request ID for log
+  correlation; text and structured content payloads remain unchanged. HTTP responses expose
+  the parent ID in `X-Request-ID`. IDs are server-generated, not adopted from client headers.
 - Host and Origin checks remain enabled. Defaults allow loopback Hosts and no supplied Origins;
   deployment-specific allowlists use JSON environment arrays. Requests are limited to 1 MiB.
   The parent ASGI lifespan owns the MCP session manager and closes it before shared storage.

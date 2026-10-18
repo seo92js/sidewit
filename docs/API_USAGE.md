@@ -13,6 +13,11 @@ and deployment settings.
 The same generation and invocation use cases are available through the optional [MCP endpoint](MCP.md).
 MCP has its own activation and authentication settings; it does not use the public REST key.
 
+Save the `X-Request-ID` response header to correlate a call with Sidewit's operational logs,
+including failed requests. JSON payloads are unchanged. If your application needs an audit
+trail, store its user/approval/execution information alongside the request ID and relevant
+response data in your own store. See [operational logs and application audit records](OBSERVABILITY.md).
+
 ## Minimal Python client
 
 This standard-library example needs a saved Context ID. Set `SIDEWIT_CONTEXT_ID` and, when

@@ -163,8 +163,15 @@ async def test_failed_replace_keeps_persisted_context_and_memory(
     assert path.read_bytes() == before
     assert (await client.get(f"/api/v1/contexts/{context['id']}")).json() == context
     assert list(path.parent.glob(".*.json.*")) == []
-    assert "storage_failure operation=write" in caplog.text
-    assert f"errno={error_number} recovery=succeeded" in caplog.text
+    failures = [
+        r.event_fields
+        for r in caplog.records
+        if getattr(r, "event_name", None) == "storage_failure"
+    ]
+    assert any(
+        f["operation"] == "write" and f["errno"] == error_number and f["recovery"] == "succeeded"
+        for f in failures
+    )
     for private in ("private-context-value", "sk-fixture-secret", "/private/data"):
         assert private not in caplog.text
         assert private not in result.text
@@ -229,8 +236,19 @@ async def test_failed_recovery_closes_api_until_storage_is_repaired(
     assert result.status_code == 503
     assert (await client.get("/api/v1/health")).status_code == 503
     assert (await client.get("/api/v1/contexts")).status_code == 503
-    assert "recovery=failed" in caplog.text
-    assert "operation=validate error_type=StoreError errno=None recovery=unavailable" in caplog.text
+    failures = [
+        r.event_fields
+        for r in caplog.records
+        if getattr(r, "event_name", None) == "storage_failure"
+    ]
+    assert any(f["recovery"] == "failed" for f in failures)
+    assert any(
+        f["operation"] == "validate"
+        and f["error_type"] == "StoreError"
+        and f["errno"] is None
+        and f["recovery"] == "unavailable"
+        for f in failures
+    )
     assert "broken json" not in caplog.text
 
 

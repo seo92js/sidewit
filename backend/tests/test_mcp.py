@@ -625,3 +625,79 @@ async def test_current_sdk_discovery_and_call(mcp_app):
         assert len((await client.list_tools()).tools) == 4
         result = await client.call_tool("list_contexts")
         assert not result.is_error and payload(result)["items"] == []
+        assert result.meta["sidewit/request_id"]
+        assert result.meta["sidewit/parent_request_id"]
+
+
+async def test_tool_request_metadata_links_to_http_envelope(mcp_app, seed, caplog):
+    import logging
+    from uuid import UUID
+
+    from tests.test_tools_api import ARGS
+
+    caplog.set_level(logging.INFO, logger="sidewit.observability")
+    context, tool, _ = seed
+    async with connect(mcp_app) as session:
+        first = await session.call_tool("invoke_tool", {"tool_id": tool["id"], "arguments": ARGS})
+        second = await session.call_tool("list_tools", {"context_id": context["id"]})
+        failed = await session.call_tool("generate_operations", {})
+    assert not first.is_error and not second.is_error and failed.is_error
+    ids = {result.meta["sidewit/request_id"] for result in (first, second, failed)}
+    assert len(ids) == 3
+    for result in (first, second, failed):
+        request_id = result.meta["sidewit/request_id"]
+        UUID(request_id)
+        assert "request_id" not in payload(result)
+        records = [
+            r.event_fields
+            for r in caplog.records
+            if getattr(r, "event_name", None) == "mcp_tool_completed"
+            and r.event_fields["request_id"] == request_id
+        ]
+        assert len(records) == 1
+        entry = records[0]
+        parent = result.meta["sidewit/parent_request_id"]
+        assert entry["parent_request_id"] == parent
+        assert any(
+            getattr(r, "event_name", None) == "request_completed"
+            and r.event_fields["request_id"] == parent
+            for r in caplog.records
+        )
+        assert entry["status"] == ("error" if result.is_error else "ok")
+
+
+@pytest.mark.parametrize("version", ["2025-03-26", "2025-06-18", "2025-11-25"])
+async def test_legacy_tool_metadata_and_http_request_id(mcp_app, version, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="sidewit.observability")
+    async with (
+        mcp_app.router.lifespan_context(mcp_app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=mcp_app), base_url="http://localhost"
+        ) as http,
+    ):
+        response = await http.post(
+            "/mcp",
+            headers={
+                "Authorization": "Bearer mcp-secret",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": version,
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "list_contexts", "arguments": {}},
+            },
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        parent = response.headers["x-request-id"]
+        assert result["_meta"]["sidewit/parent_request_id"] == parent
+        assert result["_meta"]["sidewit/request_id"] != parent
+        assert any(
+            getattr(r, "event_name", None) == "mcp_tool_completed"
+            and r.event_fields["parent_request_id"] == parent
+            for r in caplog.records
+        )

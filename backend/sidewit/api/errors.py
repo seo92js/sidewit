@@ -7,6 +7,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from sidewit.application.storage import storage_failure
 from sidewit.errors import SidewitError
+from sidewit.observability import annotate
 from sidewit.store import StoreError
 
 
@@ -15,10 +16,12 @@ def _body(error: str, message: str, details: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _api_error(_: Request, exc: SidewitError) -> JSONResponse:
+    annotate(error_code=exc.error)
     return JSONResponse(_body(exc.error, exc.message, exc.details), status_code=exc.status_code)
 
 
 async def _request_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    annotate(error_code="invalid_request")
     errors = [{"loc": list(e["loc"]), "message": e["msg"], "type": e["type"]} for e in exc.errors()]
     return JSONResponse(
         _body("invalid_request", "Request validation failed.", {"errors": errors}),
@@ -28,6 +31,7 @@ async def _request_validation_error(_: Request, exc: RequestValidationError) -> 
 
 async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
     error = "not_found" if exc.status_code == 404 else "http_error"
+    annotate(error_code=error)
     return JSONResponse(_body(error, str(exc.detail), {}), status_code=exc.status_code)
 
 

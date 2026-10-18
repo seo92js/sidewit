@@ -1,17 +1,14 @@
 """Recent Generations, kept in process memory only (SPEC §3.4).
 
 Generations hold questions, generated SQL and parameter values, so they are never written to
-disk or to the log. The log gets one metadata line per Generation. A restart forgets them.
+disk or to the log. Request observations own operational logging. A restart forgets them.
 """
 
-import logging
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-
-log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,21 +47,6 @@ class GenerationHistory:
         self._records[record.id] = record
         while len(self._records) > self.limit:
             self._records.popitem(last=False)
-        log.info(
-            "generation id=%s context=%s context_version=%d status=%s provider=%s model=%s "
-            "prompt=%s attempts=%d latency_ms=%d input_tokens=%s output_tokens=%s",
-            record.id,
-            record.context_id,
-            record.context_version,
-            record.status,
-            record.provider,
-            record.model,
-            record.prompt_version,
-            record.attempts,
-            record.latency_ms,
-            record.input_tokens,
-            record.output_tokens,
-        )
 
     def get(self, generation_id: uuid.UUID) -> GenerationRecord | None:
         return self._records.get(generation_id)

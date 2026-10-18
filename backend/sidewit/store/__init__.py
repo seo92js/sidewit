@@ -13,7 +13,6 @@ locks. Each file is replaced atomically (write a temporary file, fsync, rename).
 
 import fcntl
 import json
-import logging
 import os
 import re
 import tempfile
@@ -33,10 +32,9 @@ from sidewit.domain.dialect import Dialect
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import MetricBinding
 from sidewit.domain.tool import TOOL_NAME_PATTERN, ToolOperation, ToolStatus
+from sidewit.observability import emit
 from sidewit.validation.input_schema import input_schema_issues
 from sidewit.validation.sql_validator import ValidationResult
-
-log = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -378,7 +376,7 @@ class Store:
         self._tool_names = {t.id: t.name for t in tools.values()}
         self._tool_paths = tool_paths
         self._available = True
-        log.info("Loaded %d Contexts and %d Tools", len(self.contexts), len(self.tools))
+        emit("store_loaded", contexts=len(self.contexts), tools=len(self.tools))
 
 
 def _json_files(directory: Path) -> list[Path]:

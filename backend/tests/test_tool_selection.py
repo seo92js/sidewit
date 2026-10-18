@@ -292,7 +292,7 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
         return StructuredResult(parsed=selection, input_tokens=123, output_tokens=45)
 
     provider.generate_structured = select
-    with caplog.at_level(logging.INFO, logger="sidewit.generation.history"):
+    with caplog.at_level(logging.INFO, logger="sidewit.observability"):
         response = await ask(client, context, question="REVIEW_PRIVATE_QUESTION")
     assert response.status_code == 422
     generation_id = response.json()["details"]["generation_id"]
@@ -305,7 +305,11 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
     assert record.prompt_version == "tool_plan_v3"
     assert "REVIEW_PRIVATE_QUESTION" not in caplog.text
     assert "932847" not in caplog.text
-    assert f"generation id={generation_id}" in caplog.text
+    assert any(
+        r.event_fields.get("generation_id") == generation_id
+        for r in caplog.records
+        if hasattr(r, "event_fields")
+    )
 
 
 async def test_selection_reference_time_is_in_context_timezone(client, context, fake):

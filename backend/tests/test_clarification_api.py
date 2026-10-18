@@ -70,7 +70,11 @@ async def test_stateless_answer_survives_history_eviction_and_preserves_time(
     assert record["question"] == "고객 목록"
     assert record["clarification_answers"] == payload["clarification_answers"]
     assert "서울" not in caplog.text
-    assert "generation id=" in caplog.text
+    assert any(
+        r.event_fields.get("generation_id") == second.json()["generation_id"]
+        for r in caplog.records
+        if hasattr(r, "event_fields")
+    )
 
 
 async def test_answers_reach_tool_selection_and_fallback(client, context, fake):
