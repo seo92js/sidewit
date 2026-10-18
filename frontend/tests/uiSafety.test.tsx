@@ -94,6 +94,46 @@ function editor(qc: QueryClient, path = "/tools/t") {
   return router;
 }
 
+test("blocked browser storage does not prevent Playground rendering", () => {
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new DOMException("Storage access is denied", "SecurityError");
+  });
+  try {
+    render(
+      <QueryClientProvider client={client()}>
+        <MemoryRouter>
+          <PlaygroundPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect((screen.getByLabelText("Context") as HTMLSelectElement).value).toBe("c");
+    expect(screen.getByLabelText("Question")).toBeTruthy();
+  } finally {
+    read.mockRestore();
+  }
+});
+
+test("full browser storage does not prevent switching Playground Contexts", () => {
+  const qc = client();
+  qc.setQueryData(["contexts"], [context, { ...context, id: "other", name: "other" }]);
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+  });
+  try {
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <PlaygroundPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Context"), { target: { value: "other" } });
+    expect((screen.getByLabelText("Context") as HTMLSelectElement).value).toBe("other");
+  } finally {
+    write.mockRestore();
+  }
+});
+
 test("Tool navigation protects unsaved edits until explicitly discarded", async () => {
   vi.mocked(request).mockResolvedValue(valid);
   const qc = client();

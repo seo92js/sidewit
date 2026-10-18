@@ -775,7 +775,7 @@ Metric parameters are contract-declared inputs, so `constant_as_parameter` does 
 | Resource absent from Context (excluding visible CTEs), schema-qualified table, system table such as `pg_roles`, or invisible alias | `unknown_resource` | error |
 | Field absent from Context | `unknown_field` | error |
 | Unqualified field present in multiple sources, or reference to a duplicated output column name within one source | `ambiguous_field` | error |
-| Duplicate aliases within a FROM, set-operation arms with different column counts, unequal VALUES row lengths, or `SELECT *` without FROM | `sql_analysis_error` | error |
+| Duplicate aliases within a FROM, set-operation arms with different column counts, unequal VALUES row lengths, `SELECT *` without FROM, or exhausted lineage-analysis budget | `sql_analysis_error` | error |
 | JOIN condition uses a key pair not declared in Context relations | `undeclared_relation` | warning |
 | `?`, `$1`, `%(x)s` placeholders | `unsupported_placeholder_style` | error |
 | `:name` pattern inside a string literal | `placeholder_in_literal` | error |
@@ -783,11 +783,28 @@ Metric parameters are contract-declared inputs, so `constant_as_parameter` does 
 | Declared parameter absent from the statement | `unused_parameter` | error |
 | Value does not match its declared type (when values are supplied) | `parameter_type_mismatch` | error |
 | Expression depends on the database's current time (only when `allow_relative_time=false`) | `relative_time_function` | error |
+| A date input uses a computation or cast whose independence from the database clock cannot be established (only when `allow_relative_time=false`) | `relative_time_unverifiable` | error |
 | Parameter binds the **same field, operator and value** as a registered constant (`allow_constant_parameters=false`, with supplied values). `:x <= fee` is treated as `fee >= :x` | `constant_as_parameter` | error |
 | Literal or supplied parameter compared with an `allowed_values` field using `=`, `!=`, `IS [NOT] DISTINCT FROM`, `[NOT] IN` or `= ANY/SOME/ALL(ARRAY[...])` is absent from the list. Text matches exactly; numbers compare by value. Range comparisons and LIKE are excluded | `value_not_allowed` | error |
 | A value compared with a constrained field cannot be evaluated within the supported scope, e.g. `upper(:s)` | `value_unverifiable` | error |
 
 PostgreSQL expressions covered by `relative_time_function`: `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `timeofday()`, `'now'`/`'today'`/`'tomorrow'`/`'yesterday'` cast to date/time types, and single-argument `age(x)`. Special date words followed by a time (for example 'yesterday 10:00') and literals compared directly to known temporal fields are also checked, including aliases and CTE lineage. Its sole purpose is `reference_time` reproducibility; general nondeterministic functions such as `random()` are excluded.
+
+Date-input checks follow supplied parameter values, nested casts, CTE/subquery/VALUES outputs,
+and the possible result branches of COALESCE and CASE. Date conversion, date_trunc and age
+inputs are checked as well as comparisons against known temporal fields. A string parameter
+containing `today` is not an absolute date, even when its declared parameter type is `string`.
+Computed text such as `('to' || 'day')::date` fails with `relative_time_unverifiable`; supply an
+absolute date/date-time parameter instead. Ordinary text comparisons remain supported.
+Temporal arrays use explicit ARRAY elements; encoded PostgreSQL array text is not decoded
+by the date-input check and is rejected with `relative_time_unverifiable`.
+
+Lineage resolution reuses acyclic proofs and deduplicates repeated value origins without
+merging distinct literal nodes. In addition to SQL/token/AST size and depth limits, each
+analysis permits 50,000 lineage-work units (resolution calls and collected origins). An
+exhausted budget rejects the operation, including when checking inputs for a cached Tool;
+it never returns a partial success. This bounds repeated CTE graphs without relying on an
+asynchronous request deadline to interrupt synchronous analysis.
 
 ### 7.3 Supported value policies
 

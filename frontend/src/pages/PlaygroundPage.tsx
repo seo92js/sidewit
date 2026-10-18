@@ -27,9 +27,13 @@ export default function PlaygroundPage() {
   const apiKeyRequired = useApiKeyRequired();
   const contexts = useContexts();
   const generate = useGenerate();
-  const [storedContextId, setStoredContextId] = useState(
-    () => localStorage.getItem(CONTEXT_STORAGE) ?? "",
-  );
+  const [storedContextId, setStoredContextId] = useState(() => {
+    try {
+      return localStorage.getItem(CONTEXT_STORAGE) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [question, setQuestion] = useState("");
   const [referenceTime, setReferenceTime] = useState("");
   const [metricId, setMetricId] = useState("");
@@ -51,8 +55,12 @@ export default function PlaygroundPage() {
     contexts.data?.find((c) => c.id === storedContextId) ?? contexts.data?.[0] ?? undefined;
   const contextId = selected?.id ?? "";
   const setContextId = (id: string) => {
-    localStorage.setItem(CONTEXT_STORAGE, id);
     setStoredContextId(id);
+    try {
+      localStorage.setItem(CONTEXT_STORAGE, id);
+    } catch {
+      // Remembering a selection is optional; blocked/full storage must not block use.
+    }
   };
   const metrics = selected?.definition.metrics ?? [];
   // Pinning to metrics only matters when the Context also allows model-written SQL.

@@ -26,6 +26,7 @@ from sqlglot.errors import OptimizeError
 from sqlglot.optimizer.scope import Scope, ScopeType, traverse_scope
 
 from sidewit.domain.dialect import unbounded_text, user_type_identity
+from sidewit.sql import AnalysisBudget
 
 FieldRef = tuple[str, str]
 Source = exp.Expression | Scope
@@ -156,6 +157,9 @@ class SqlAnalysis:
         self.tables = tables
         self.string_fields = string_fields
         self.user_types = user_types or {}
+        self.budget = AnalysisBudget()
+        self._fields: dict[tuple[int, int, bool], FieldRef | None] = {}
+        self._field_cycles = 0
         try:
             self.scopes = traverse_scope(ast)
             for scope in self.scopes:
@@ -458,6 +462,7 @@ class SqlAnalysis:
         """The Context field whose value `node` carries unchanged, or None (computed value,
         opaque or ambiguous source, recursive reference). Only value-preserving wrappers are
         followed (unwrap_preserving)."""
+        self.budget.consume()
         node, crossed = unwrap_preserving(node)
         text_cast = text_cast or crossed
         if isinstance(node, exp.Cast) and (identity := user_type_identity(node.to)) is not None:
@@ -469,8 +474,26 @@ class SqlAnalysis:
             return None
         marker = (id(scope), node.table, node.name)
         if marker in seen:
+            self._field_cycles += 1
             return None  # recursive CTE: no single origin
-        seen = seen | {marker}
+        # Visibility can differ between ON/LATERAL/projection positions in one scope.
+        key = (id(scope), id(node), text_cast)
+        if key in self._fields:
+            return self._fields[key]
+        cycles = self._field_cycles
+        result = self._resolve_field(scope, node, seen | {marker}, text_cast)
+        # Cycle-cut results depend on the traversal path. Reuse only acyclic proofs.
+        if cycles == self._field_cycles:
+            self._fields[key] = result
+        return result
+
+    def _resolve_field(
+        self,
+        scope: Scope,
+        node: exp.Column,
+        seen: frozenset[tuple[int, str, str]],
+        text_cast: bool,
+    ) -> FieldRef | None:
         if node.table:
             source = self.find_source(scope, node.table, node)
             return (
