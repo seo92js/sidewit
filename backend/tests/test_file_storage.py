@@ -22,6 +22,21 @@ from tests.tool_urls import tool_path
 DEFINITION = {"resources": [{"name": "orders", "fields": [{"name": "id", "type": "bigint"}]}]}
 
 
+async def test_invalid_unicode_record_is_rejected_before_creating_a_temporary_file(client, store):
+    from uuid import UUID
+
+    context = await create_context(client, DEFINITION)
+    path = store.root / "contexts" / f"{context['id']}.json"
+    before = path.read_bytes()
+    record = store.context(UUID(context["id"]))
+    record.name = "\ud800"
+    with pytest.raises(StoreError, match="unsupported JSON values"):
+        store.save_context(record)
+    assert path.read_bytes() == before
+    assert list(path.parent.glob(".*.json.*")) == []
+    assert (await client.get(f"/api/v1/contexts/{context['id']}")).json() == context
+
+
 @pytest.mark.parametrize("directory", ["contexts", "tools"])
 async def test_unreadable_directory_prevents_startup(client, store, monkeypatch, directory):
     context = await create_context(client, DEFINITION)

@@ -8,7 +8,7 @@ UV_IMAGE="ghcr.io/astral-sh/uv:0.8-python3.12-bookworm-slim"
 NAME="sidewit-check-$$"
 
 cleanup() {
-  docker rm -f "$NAME-db" >/dev/null 2>&1 || true
+  docker rm -fv "$NAME-db" >/dev/null 2>&1 || true
   docker network rm "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT

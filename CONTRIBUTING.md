@@ -15,6 +15,8 @@ bash scripts/check-backend.sh
 
 The backend script runs Ruff and pytest in Docker. It starts and removes a temporary
 PostgreSQL instance for validator parity tests; the product itself needs no database.
+The temporary database volume and network are removed on exit; `sidewit-backend-venv` is
+retained as a dependency cache between checks.
 It also builds the Python wheel and renders all three generation prompts directly from that
 artifact to catch missing package resources.
 Tests use temporary data directories and provider fixtures, not real LLM keys.

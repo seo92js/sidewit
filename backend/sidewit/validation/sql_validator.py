@@ -33,6 +33,7 @@ from sidewit.domain.params import (
     ParamType,
     exact_number,
     matches_allowed_value,
+    valid_json_unicode,
     value_matches_type,
 )
 from sidewit.sql import COMPLEXITY_MESSAGE, SqlComplexityError, parse_sql
@@ -162,6 +163,22 @@ def analyze_sql_operation(
     policy: ValidationPolicy = DEFAULT_POLICY,
 ) -> OperationAnalysis:
     """validate_sql_operation plus what the same pass learned about the parameters."""
+    if not valid_json_unicode(declared_params) or not valid_json_unicode(values):
+        # Reject before diagnostics can copy an unencodable key into an Issue's message/ref.
+        return OperationAnalysis(
+            ValidationResult(
+                valid=False,
+                errors=[
+                    Issue(
+                        code="parameter_type_mismatch",
+                        message="Parameter names and values must contain valid Unicode.",
+                    )
+                ],
+                warnings=[],
+                checks=["parameters"],
+            ),
+            {},
+        )
     try:
         validator = _Validator(statement, dialect, context, declared_params, values, policy)
         result = validator.run()

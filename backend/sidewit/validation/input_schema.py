@@ -6,7 +6,12 @@ v0.1: a flat object, every property required, no default/optional/array.
 from typing import Any
 
 from sidewit.domain.issue import Issue
-from sidewit.domain.params import PARAM_NAME_PATTERN, ParamType, value_matches_type
+from sidewit.domain.params import (
+    PARAM_NAME_PATTERN,
+    ParamType,
+    valid_json_unicode,
+    value_matches_type,
+)
 
 _TOP_LEVEL_KEYS = {"type", "properties", "required", "additionalProperties"}
 _PROPERTY_KEYS = {"type", "format", "description", "enum"}
@@ -22,6 +27,9 @@ def input_schema_issues(schema: Any) -> list[Issue]:
 
     if not isinstance(schema, dict):
         bad("input_schema must be a JSON object.")
+        return issues
+    if not valid_json_unicode(schema):
+        bad("input_schema strings must contain valid Unicode.")
         return issues
     for key in sorted(schema.keys() - _TOP_LEVEL_KEYS):
         bad(f"Keyword '{key}' is not supported at the top level.", key)
@@ -138,6 +146,10 @@ def input_schema_for(types: dict[str, ParamType]) -> dict[str, Any]:
 
 def argument_issues(schema: dict[str, Any], arguments: dict[str, Any]) -> list[Issue]:
     """Checks invoke arguments against a valid input_schema."""
+    if not valid_json_unicode(arguments):
+        return [
+            Issue(code="argument_type_mismatch", message="Arguments must contain valid Unicode.")
+        ]
     issues: list[Issue] = []
     properties: dict[str, Any] = schema["properties"]
     types = parameter_types(schema)

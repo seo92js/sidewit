@@ -2,13 +2,14 @@
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from sidewit.domain.context import ContextDefinition, check_context_size
+from sidewit.domain.issue import Issue
 from sidewit.domain.metric import Period
 from sidewit.errors import SidewitError
 from sidewit.generation.clarification import (
@@ -127,6 +128,22 @@ class GenerateUnanswerable(BaseModel):
     reason: str
 
 
+def _public_validation_errors(errors: list[Issue]) -> list[dict[str, str | None]]:
+    """Generation diagnostics may contain entire SQL expressions, literals or parser excerpts.
+    Keep codes and plain identifier references; detailed diagnostics belong to history/repair.
+    """
+    return [
+        {
+            "code": issue.code,
+            "message": issue.code.replace("_", " ").capitalize() + ".",
+            "ref": issue.ref
+            if issue.ref and all(part.isidentifier() for part in issue.ref.split("."))
+            else None,
+        }
+        for issue in errors
+    ]
+
+
 async def generate_operation(
     body: GenerateRequest, store: Store, history: GenerationHistory, provider: LLMProvider | None
 ) -> GenerateOk | GenerateAmbiguous | GenerateUnanswerable:
@@ -165,6 +182,16 @@ async def _generate_operation(
         check_context_size(definition)
     except ValueError as e:
         raise SidewitError(422, "context_too_large", str(e)) from e
+    try:
+        # Both the stored UTC instant and the Context-local prompt time must be representable.
+        reference_time = (body.reference_time or datetime.now(UTC)).astimezone(UTC)
+        reference_time = reference_time.astimezone(ZoneInfo(context.timezone))
+    except (OverflowError, ValueError):
+        raise SidewitError(
+            422,
+            "invalid_reference_time",
+            "Reference time is outside the supported range in UTC or the Context timezone.",
+        ) from None
     if provider is None:
         raise SidewitError(
             503,
@@ -175,8 +202,7 @@ async def _generate_operation(
     request = GenerationInput(
         question=body.question,
         clarification_answers=tuple(body.clarification_answers),
-        expected_context_version=body.expected_context_version,
-        reference_time=body.reference_time or datetime.now(ZoneInfo(context.timezone)),
+        reference_time=reference_time,
         options=MetricOptions(
             metric_id=body.metric_id,
             date_field=body.date_field,
@@ -194,7 +220,13 @@ async def _generate_operation(
             request,
         )
     except ToolSelectionError as e:
-        raise SidewitError(e.status, e.code, str(e), e.details) from e
+        details = dict(e.details)
+        for key in ("validation_errors", "errors"):
+            if key in details:
+                details[key] = _public_validation_errors(
+                    [Issue.model_validate(issue) for issue in details[key]]
+                )
+        raise SidewitError(e.status, e.code, str(e), details) from e
     except InvalidGenerateRequest as e:
         raise SidewitError(422, "invalid_metric_request", str(e)) from e
     except ContextDeleted as e:
@@ -246,7 +278,7 @@ async def _generate_operation(
                 "Generation failed validation.",
                 {
                     "generation_id": str(record.id),
-                    "validation_errors": [e.model_dump() for e in result.errors],
+                    "validation_errors": _public_validation_errors(result.errors),
                 },
             )
         case "llm_error":

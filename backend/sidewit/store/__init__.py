@@ -296,13 +296,14 @@ class Store:
             data = json.dumps(
                 _to_json(record), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
             )
+            encoded = (data + "\n").encode("utf-8")
         except (ValueError, TypeError) as e:
             raise StoreError("Record contains unsupported JSON values.", operation="write") from e
         try:
             fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(data + "\n")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(encoded)
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(temporary, path)

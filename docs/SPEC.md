@@ -246,6 +246,8 @@ created_at
 - Violations produce `invalid_input_schema`, with the location (such as `properties.days.default`) in `ref`.
 - Mapping to `parameter_types`: `date` is `string` + `format: date`; `date-time` is `string` + `format: date-time`; other types retain their names.
 - `enum` only restricts the input domain. The checks in §7 address how SQL uses those values.
+- Input schemas and argument objects must contain valid Unicode strings, including nested
+  descriptions, enum values and keys. Lone surrogates are rejected before persistence or output.
 
 ---
 
@@ -415,6 +417,9 @@ Dependent Tool chaining and automatic saving are not supported.
 `metric_id`, `date_field`, `period` and `require_metric` are optional metric options. Specifying a metric option restricts the request to metrics; `require_metric: true` applies that restriction without choosing a metric. `date_field` requires a `metric_id` and an allowed field of that contract. Supported periods are rolling_days (days 1–3660) and previous_day/week/month (days=null), computed by the server. Invalid options return 422 `invalid_metric_request` before any LLM call.
 
 When `reference_time` is omitted, use the server's current time converted to the Context `timezone`.
+All planners receive the same Context-local reference time. A supplied instant must be
+representable in both UTC and the Context timezone; conversion overflow returns 422
+`invalid_reference_time` before any provider call.
 
 Every ambiguous response must fit the remaining answer slots and text budget, allowing
 at least one character per new answer. Otherwise return unanswerable and instruct the caller
@@ -497,14 +502,23 @@ Generation flow when no saved Tool is selected:
 1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v10`) without metrics; `HybridPlanner` (`hybrid_v5`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v3`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. A structured `date_field` request option takes precedence. Otherwise, the model returns a `date_field` intent after interpreting the question, answers, field descriptions and metric default. The compiler accepts only a member of that metric's `time_fields` using the existing case-insensitive reference resolution; it never infers a choice from field-name mentions. A null choice returns ambiguous without silently applying a default; an invalid field triggers repair. Negated fields and fields requested only in the output must not select the period basis. Interpreting natural language remains probabilistic.
 2. For `status=ok`, run the static Validator with the appropriate Generate policy (§7): `generate_policy(original question + answer values)` for SQL (including request-literal checks), or `CONTRACT_POLICY` for metrics. Return ambiguous/unanswerable without validation; discard any SQL the LLM supplied with those statuses.
 3. On validation failure, attach the errors and request repair **once only**.
-4. If repair also fails, return 422 `generation_invalid`. **The response contains no SQL.** Generated SQL remains only in the in-memory Generation record.
+4. If repair also fails, return 422 `generation_invalid`. **The response contains no SQL.**
+   Public generation validation diagnostics retain error codes, short code-based messages and
+   plain identifier references only. SQL expressions, literals and parser excerpts are not
+   copied into public messages or references. Detailed diagnostics remain available to repair
+   and the in-memory Generation record. This applies to standalone and mixed plans through
+   REST, web and MCP.
    ```json
    { "error": "generation_invalid", "message": "Generation failed validation.", "details": { "generation_id": "uuid", "validation_errors": [{ "code": "unknown_field", "message": "...", "ref": "orders.amt" }] } }
    ```
 5. LLM failures return 502 `llm_error`, with only `generation_id` in details. Raw provider errors may contain credentials, so they are excluded from public responses and logs; only a masked version is retained in the in-memory `reason`. Mask configured key values and patterns such as `sk-…`, `AIza…`, `Bearer …` and `key=…`. Do not retain raw exceptions through `__cause__` chains. Configuration stores API keys as `SecretStr`.
 6. Without a configured LLM provider, return 503 `llm_not_configured` without creating a Generation.
 7. Apply a 90-second overall deadline. Each Provider call times out after 60 seconds; selection, initial generation and repair share the overall deadline. Exceeding it returns 504 `generation_timeout` and may leave no Generation record. nginx waits 100 seconds, and UI requests wait 110 seconds.
-8. The Context is not locked while awaiting the LLM. If deleted during that time, return 404 `context_not_found`.
+8. The Context is not locked while awaiting the LLM. If deleted during that time, return 404
+   `context_not_found`. If its version changes, return 409 `context_changed`, even when the
+   caller omitted `expected_context_version`. Compare with the generation's starting version
+   on every route, including generation fallback, metrics and repair. Keep a failed history
+   record without an Operation; no stale result can be saved as a Tool draft.
 
 `GET /generations?context_id=&limit=` (recent in-memory records)
 `GET /generations/{id}` (debug details, including SQL and validation results for failed Generations)
@@ -767,6 +781,10 @@ saved Tools. Use parameters or ordinary quoted strings instead.
 
 Metric parameters are contract-declared inputs, so `constant_as_parameter` does not apply even when their fields match another metric's fixed filters.
 
+Malformed Unicode in parameter declarations or values is rejected before SQL parsing, without
+echoing the malformed input. `/validate` returns its normal HTTP 200 validation result with
+`valid: false` and `parameter_type_mismatch`.
+
 | Check | Code | Severity |
 |---|---|---|
 | sqlglot parsing failure, SQL exceeding 64,000 characters or complexity limits | `sql_parse_error` | error |
@@ -782,6 +800,7 @@ Metric parameters are contract-declared inputs, so `constant_as_parameter` does 
 | Placeholder present in the statement but undeclared | `undeclared_parameter` | error |
 | Declared parameter absent from the statement | `unused_parameter` | error |
 | Value does not match its declared type (when values are supplied) | `parameter_type_mismatch` | error |
+| Parameter declarations or values contain malformed Unicode, including JSON keys and nested values | `parameter_type_mismatch` | error |
 | Expression depends on the database's current time (only when `allow_relative_time=false`) | `relative_time_function` | error |
 | A date input uses a computation or cast whose independence from the database clock cannot be established (only when `allow_relative_time=false`) | `relative_time_unverifiable` | error |
 | Parameter binds the **same field, operator and value** as a registered constant (`allow_constant_parameters=false`, with supplied values). `:x <= fee` is treated as `fee >= :x` | `constant_as_parameter` | error |

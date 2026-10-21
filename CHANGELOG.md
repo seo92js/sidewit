@@ -16,6 +16,22 @@ Initial release candidate.
 
 ### Fixes
 
+- Require `certifi>=2026.10.19` and update the lockfile to exclude the compromised emSign
+  certificate chain. Rebuild API images to use the corrected HTTPS trust bundle.
+
+- Reject Context changes during standalone SQL, metric, fallback and repair generation,
+  including initial requests without a pinned version. Failed snapshots cannot become Tools.
+
+- Keep SQL-bearing parser/expression diagnostics out of public generation errors across REST,
+  web and MCP while retaining detailed validation for repair and temporary history.
+
+- Reject malformed Unicode in Tool schemas and arguments before writing files or returning
+  operations, and in `/validate` parameter declarations and values before constructing
+  diagnostics. Encode persisted records before creating temporary files. Return 422 for
+  reference times outside the UTC/Context-local range and use consistent local prompt times.
+
+- Remove anonymous PostgreSQL data volumes when the backend check cleans up its test container.
+
 - Cache acyclic SQL lineage and deduplicate repeated value origins; bound analysis work
   so small repeated CTE graphs cannot expand exponentially or bypass cached Tool checks.
   Trace date inputs through parameters, casts and query outputs to reject hidden database
