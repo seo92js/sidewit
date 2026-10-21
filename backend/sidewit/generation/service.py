@@ -250,10 +250,7 @@ async def generate(
     current_context = store.context(context.id)
     if current_context is None:
         raise ContextDeleted(context.id)
-    if (
-        request.expected_context_version is not None
-        and current_context.version != request.expected_context_version
-    ):
+    if current_context.version != record.context_version:
         _conclude(record, "failed", "Context changed. Start a new request.")
         selection_error = ToolSelectionError(409, "context_changed", record.reason)
     history.add(record)

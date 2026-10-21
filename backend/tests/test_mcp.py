@@ -398,6 +398,114 @@ async def test_generation_deadline_applies_to_mcp(mcp_app, seed, monkeypatch):
         assert cancelled.is_set()
 
 
+async def test_rejected_parser_diagnostics_are_private_over_mcp(mcp_app, seed):
+    from sidewit.generation.providers.fake import FakeProvider
+    from tests.test_generate_api import ok
+
+    context, tool, rest = seed
+    await rest.delete(f"/api/v1/tools/{tool['id']}")
+    sql = "SELECT id FROM customers WHERE region = 'REVIEW_PRIVATE_VALUE' AND"
+    mcp_app.dependency_overrides[get_llm_provider] = lambda: FakeProvider([ok(sql, [])] * 2)
+    async with connect(mcp_app) as session:
+        result = await session.call_tool(
+            "generate_operations", {"context_id": context["id"], "question": "List customers"}
+        )
+        body = payload(result)
+        assert result.is_error and body["status_code"] == 422
+        assert body["error"] == "generation_invalid"
+        assert "REVIEW_PRIVATE_VALUE" not in result.content[0].text
+        assert "SELECT" not in result.content[0].text
+        detail = (await rest.get(f"/api/v1/generations/{body['details']['generation_id']}")).json()
+        assert detail["operation"]["statement"] == sql
+
+
+async def test_unpinned_mcp_generation_rejects_context_change(mcp_app, seed):
+    from sidewit.generation.providers.fake import FakeProvider
+    from tests.test_generate_api import ok
+
+    context, tool, rest = seed
+    await rest.delete(f"/api/v1/tools/{tool['id']}")
+    provider = FakeProvider([ok("SELECT id FROM customers", [])])
+    original = provider.generate_structured
+
+    async def changed(*args):
+        result = await original(*args)
+        updated = await rest.put(
+            f"/api/v1/contexts/{context['id']}",
+            json={
+                k: context[k]
+                for k in ("name", "dialect", "timezone", "definition", "allow_generated_sql")
+            }
+            | {"name": "changed-context", "expected_version": context["version"]},
+        )
+        assert updated.status_code == 200
+        return result
+
+    provider.generate_structured = changed
+    mcp_app.dependency_overrides[get_llm_provider] = lambda: provider
+    async with connect(mcp_app) as session:
+        result = await session.call_tool(
+            "generate_operations", {"context_id": context["id"], "question": "List customers"}
+        )
+        body = payload(result)
+        assert result.is_error and body["status_code"] == 409
+        assert body["error"] == "context_changed"
+        assert "operations" not in body
+
+
+async def test_mcp_reference_time_conversion_overflow_is_a_client_error(mcp_app, seed):
+    context, _, _ = seed
+    async with connect(mcp_app) as session:
+        result = await session.call_tool(
+            "generate_operations",
+            {
+                "context_id": context["id"],
+                "question": "List customers",
+                "reference_time": "9999-12-31T23:59:59-01:00",
+            },
+        )
+        body = payload(result)
+        assert result.is_error and body["status_code"] == 422
+        assert body["error"] == "invalid_reference_time"
+
+
+async def test_mcp_rejects_malformed_unicode_arguments(mcp_app, seed):
+    _, tool, _ = seed
+    async with (
+        mcp_app.router.lifespan_context(mcp_app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=mcp_app), base_url="http://localhost"
+        ) as http,
+    ):
+        response = await http.post(
+            "/mcp",
+            headers={
+                "Authorization": "Bearer mcp-secret",
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "MCP-Protocol-Version": "2025-11-25",
+            },
+            content=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "invoke_tool",
+                        "arguments": {
+                            "tool_id": tool["id"],
+                            "arguments": {"region": "\ud800", "start_at": "2026-09-02T00:00:00Z"},
+                        },
+                    },
+                }
+            ),
+        )
+        # The SDK rejects lone surrogates at its JSON-RPC parser, before Tool dispatch.
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == -32700
+        assert "\\ud800" not in response.text
+
+
 @pytest.mark.parametrize("version", ["2025-03-26", "2025-06-18", "2025-11-25"])
 async def test_legacy_streamable_http_handshake(mcp_app, version):
     async with (

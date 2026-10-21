@@ -119,8 +119,13 @@ change which identity an existing request targets.
 | `401 unauthorized` | Correct the Sidewit API key, not the provider key. |
 | `409 context_changed` | Preserve user text, reload the Context and start a new request. Do not silently replace the pinned version. |
 | Other `409` conflicts | Read `error` and `details`; refresh the affected Tool/Context before starting a new request. |
+| `422 invalid_reference_time` | Supply an instant representable in both UTC and the Context timezone. No provider call was made. |
 | `422` | Show `message` and relevant `details`; correct inputs or review validation errors. Rejected SQL is not an operation. |
 | `502`, `503`, `504` or network failure | Keep inputs; offer a deliberate retry after checking configuration or availability. A repeated request can incur another LLM call. |
+
+Context changes during generation also return `409 context_changed` on the first request,
+without requiring a pinned version. Generation validation errors contain codes and sanitized
+diagnostics; use the generation ID in the management console to inspect rejected SQL.
 
 Keep the management API key on your application server. This key also grants Context and Tool
 management access; do not embed it in an end-user browser. Questions and continuation bodies

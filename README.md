@@ -213,6 +213,10 @@ Tool/Context changes fail explicitly; they do not silently fall back to new SQL.
 explicit metric options (`metric_id`, `date_field`, `period`, or `require_metric: true`) skip Tool
 selection and use the metric path. With no saved Tools, there is no extra model call.
 
+Context changes during generation return `409 context_changed` on every route, including
+initial requests without `expected_context_version`. Rejected SQL and detailed diagnostics
+stay in temporary generation history; public generation errors contain sanitized diagnostics.
+
 Natural-language selection requires an LLM call; direct `/tools/{tool_id}/invoke` still does not.
 Selection and generation share the 90-second request deadline. Catalogs over 100,000 serialized
 characters are rejected with `tool_catalog_too_large` rather than silently truncated. New drafts are saved only when you explicitly create a Tool.

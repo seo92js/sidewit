@@ -75,7 +75,6 @@ class GenerationInput:
     reference_time: datetime
     options: MetricOptions = field(default_factory=MetricOptions)
     clarification_answers: tuple[ClarificationAnswer, ...] = ()
-    expected_context_version: int | None = None
 
     @property
     def intent(self) -> str:

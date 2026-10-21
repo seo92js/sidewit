@@ -15,6 +15,26 @@ _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 _MAX_EXPONENT = 400  # float covers about 1e-324 .. 1.8e308
 
 
+def valid_json_unicode(value: Any) -> bool:
+    """Check decoded JSON strings, including keys in untyped schemas/arguments, without
+    recursive traversal. Lone surrogates cannot be written to UTF-8 files or responses.
+    """
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return False
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return True
+
+
 def exact_number(text: str) -> int | float | None:
     """The number a decimal literal denotes, or None when it is not finite or a float would
     round it. The one lossless text-to-number rule for model output and DDL: an integral
@@ -41,7 +61,7 @@ def exact_number(text: str) -> int | float | None:
 def value_matches_type(value: Any, param_type: ParamType) -> bool:
     match param_type:
         case "string":
-            return isinstance(value, str)
+            return isinstance(value, str) and valid_json_unicode(value)
         case "integer":
             return isinstance(value, int) and not isinstance(value, bool)
         case "number":
