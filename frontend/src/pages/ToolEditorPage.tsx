@@ -232,6 +232,8 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     }));
     setBaseVersion(tool.version);
     update.reset();
+    refresh.reset();
+    activation.reset();
   };
   const set = (patch: Partial<FormState>) => {
     if (!busy) setForm((f) => ({ ...f, ...patch }));
@@ -293,6 +295,9 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
     !!validation.data?.valid &&
     dirty;
   const saveError = saved ? update.error : create.error;
+  const writeConflict = [update.error, refresh.error, activation.error].some(
+    (error) => error instanceof ApiError && error.status === 409,
+  );
 
   const save = () => {
     if (!canSave || busy) return;
@@ -651,28 +656,26 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
           </div>
 
           <ErrorAlert error={saveError} title="Could not save tool" />
-          {saved &&
-            (saved.version !== baseVersion ||
-              (saveError instanceof ApiError && saveError.status === 409)) && (
-              <>
-                <p className="text-sm">Your edits are preserved. Copy them before reloading.</p>
-                <Button
-                  variant="outline"
-                  disabled={latest.isFetching}
-                  onClick={async () => {
-                    setReloading(true);
-                    try {
-                      const result = await latest.refetch();
-                      if (result.data && !result.isError) reload(result.data);
-                    } finally {
-                      setReloading(false);
-                    }
-                  }}
-                >
-                  Reload latest (discards your edits)
-                </Button>
-              </>
-            )}
+          {saved && (saved.version !== baseVersion || writeConflict) && (
+            <>
+              <p className="text-sm">Your edits are preserved. Copy them before reloading.</p>
+              <Button
+                variant="outline"
+                disabled={latest.isFetching}
+                onClick={async () => {
+                  setReloading(true);
+                  try {
+                    const result = await latest.refetch();
+                    if (result.data && !result.isError) reload(result.data);
+                  } finally {
+                    setReloading(false);
+                  }
+                }}
+              >
+                Reload latest (discards your edits)
+              </Button>
+            </>
+          )}
           <ErrorAlert error={latest.error} title="Could not reload tool" />
           <ErrorAlert error={remove.error} title="Could not delete tool" />
           <div className="flex flex-wrap gap-2">

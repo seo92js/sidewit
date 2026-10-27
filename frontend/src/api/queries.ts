@@ -213,6 +213,14 @@ export function useRefreshContract(id: string) {
   return useMutation({
     mutationFn: (expected_version: number) =>
       request<Tool>("POST", `/tools/${id}/refresh-contract`, { expected_version }),
+    onError: async () => {
+      // Rebuild may conflict or commit before its response is lost. Read back the
+      // saved version without overwriting local edits or repeating the write.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
+        qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
+      ]);
+    },
     onSuccess: (tool) => {
       qc.setQueryData(keys.tool(id), tool);
       qc.invalidateQueries({ queryKey: keys.tools, exact: true });
