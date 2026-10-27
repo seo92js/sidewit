@@ -320,9 +320,11 @@ test.each(["create", "rebuild"])(
     const pending = new Promise<Tool>((_, fail) => {
       reject = fail;
     });
-    vi.mocked(request).mockImplementation(async (_method, path) =>
-      path === "/tools" || path.endsWith("refresh-contract") ? pending : valid,
-    );
+    vi.mocked(request).mockImplementation(async (method, path) => {
+      if (method === "GET" && path === "/tools/t")
+        return { ...tool, metric_binding: { metric_id: "count", time_field: null } };
+      return path === "/tools" || path.endsWith("refresh-contract") ? pending : valid;
+    });
     const qc = client();
     if (action === "rebuild")
       qc.setQueryData(["tools", "t"], {
@@ -1103,3 +1105,143 @@ test("additional options default closed, show active values, and preserve the AP
   );
   qc.clear();
 });
+
+test.each([undefined, "example value"])(
+  "constructor input renders, validates and submits with example %s",
+  async (example) => {
+    const qc = client();
+    const inputTool: Tool = {
+      ...tool,
+      input_schema: {
+        type: "object",
+        properties: { constructor: { type: "string" as const } },
+        required: ["constructor"],
+        additionalProperties: false,
+      },
+    };
+    vi.mocked(request).mockImplementation(async (method) => {
+      if (method === "GET") return inputTool;
+      throw new ApiError(422, {
+        error: "invalid_arguments",
+        message: "Invalid input",
+        details: {
+          errors: [
+            { code: "invalid_value", message: "Constructor value rejected", ref: "constructor" },
+          ],
+        },
+      });
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: "/",
+              state: {
+                exampleArguments: example === undefined ? {} : { constructor: example },
+              },
+            },
+          ]}
+        >
+          <InvokePanel tool={inputTool} dirty={false} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const input = screen.getByLabelText(/constructor/);
+    expect(input).toHaveProperty("value", example ?? "");
+    const user = userEvent.setup();
+    if (example === undefined) {
+      await user.click(screen.getByRole("button", { name: "Invoke Tool" }));
+      expect(screen.getByText("This input is required.")).toBeTruthy();
+      expect(request).not.toHaveBeenCalled();
+    }
+    fireEvent.change(input, { target: { value: "user value" } });
+    await user.click(screen.getByRole("button", { name: "Invoke Tool" }));
+    expect(await screen.findByText("Constructor value rejected")).toBeTruthy();
+    expect(request).toHaveBeenCalledWith("POST", "/tools/t/invoke", {
+      arguments: { constructor: "user value" },
+      expected_version: 1,
+    });
+    fireEvent.change(input, { target: { value: "corrected value" } });
+    expect(screen.queryByText("Constructor value rejected")).toBeNull();
+    qc.clear();
+  },
+);
+
+test.each([409, 0])(
+  "Rebuild recovers the latest Tool after error %s without repeating the write",
+  async (status) => {
+    const qc = client();
+    const bound = { ...tool, metric_binding: { metric_id: "count", time_field: null } };
+    const remote = { ...bound, version: 2, description: "remote description" };
+    qc.setQueryData(["tools", "t"], bound);
+    let writes = 0;
+    vi.mocked(request).mockImplementation(async (method, path) => {
+      if (path.endsWith("refresh-contract")) {
+        writes++;
+        if (writes === 1)
+          throw new ApiError(status, {
+            error: status === 409 ? "version_conflict" : "network_error",
+            message: "Rebuild failed",
+            details: {},
+          });
+        return { ...remote, version: 3 };
+      }
+      if (method === "GET") return remote;
+      return valid;
+    });
+    editor(qc);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Rebuild from contract" }));
+    await screen.findByText("Rebuild failed");
+    expect(writes).toBe(1);
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", tool.description);
+    await user.click(screen.getByRole("button", { name: "Reload latest (discards your edits)" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Description")).toHaveProperty("value", remote.description),
+    );
+    expect(screen.queryByText("Rebuild failed")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Rebuild from contract" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("POST", "/tools/t/refresh-contract", {
+        expected_version: 2,
+      }),
+    );
+    qc.clear();
+  },
+);
+
+test.each(["Rebuild from contract", "Disable Tool"])(
+  "%s conflict offers manual recovery even when automatic read-back fails",
+  async (action) => {
+    const qc = client();
+    const bound = { ...tool, metric_binding: { metric_id: "count", time_field: null } };
+    const remote = { ...bound, version: 2, description: "remote description" };
+    qc.setQueryData(["tools", "t"], bound);
+    let reads = 0;
+    vi.mocked(request).mockImplementation(async (method, path) => {
+      if (path === "/validate") return valid;
+      if (method === "GET") {
+        reads++;
+        if (reads === 1) throw new Error("Read-back failed");
+        return remote;
+      }
+      throw new ApiError(409, {
+        error: "version_conflict",
+        message: "Write conflict",
+        details: {},
+      });
+    });
+    editor(qc);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: action }));
+    await screen.findByText("Write conflict");
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", tool.description);
+    await user.click(screen.getByRole("button", { name: "Reload latest (discards your edits)" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Description")).toHaveProperty("value", remote.description),
+    );
+    expect(screen.queryByText("Write conflict")).toBeNull();
+    qc.clear();
+  },
+);

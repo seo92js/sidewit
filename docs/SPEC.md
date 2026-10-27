@@ -1019,6 +1019,10 @@ The UI is a React SPA with three screens. Every function is available through th
 - Test invocation panel: form initialized with `example_arguments`, with the response displayed as JSON.
 
 - Lock inputs and SQL editing during save, delete or contract rebuild requests. On failure, unlock without discarding inputs.
+- After a failed contract rebuild, re-read the saved Tool without retrying the write or replacing
+  editor contents. Save, activation and rebuild conflicts offer an explicit reload even if the
+  automatic read-back fails. A successful reload clears the resolved write errors; a failed
+  reload preserves the editor contents.
 - Confirm navigation away from unsaved Tools; while requests are pending, ask users to remain until completion. Navigation after successful save/delete needs no additional confirmation. Browser close/refresh uses the native leave-page warning.
 - Invocation parameter tables use the response Operation, not the current form. Warn when the result belongs to an earlier saved Tool or Context version.
 

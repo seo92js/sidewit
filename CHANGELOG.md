@@ -16,6 +16,13 @@ Initial release candidate.
 
 ### Fixes
 
+- Handle Tool inputs named `constructor` without inheriting JavaScript object properties
+  as example values or validation errors.
+
+- Refresh saved Tool state after failed contract rebuilds without retrying writes or replacing
+  editor contents. Offer manual recovery after rebuild/activation conflicts even when read-back
+  fails, and clear resolved mutation errors after reloading.
+
 - Require `certifi>=2026.10.19` and update the lockfile to exclude the compromised emSign
   certificate chain. Rebuild API images to use the corrected HTTPS trust bundle.
 

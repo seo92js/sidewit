@@ -33,11 +33,11 @@ export function InvokePanel({
   const example =
     (location.state as { exampleArguments?: Record<string, unknown> } | null)?.exampleArguments ??
     {};
-  const [inputErrors, setInputErrors] = useState<Record<string, string>>({});
+  const [inputErrors, setInputErrors] = useState(() => new Map<string, string>());
   const [values, setValues] = useState<Record<string, FieldValue>>(() =>
     Object.fromEntries(
       inputs.map((name) => {
-        const v = example[name];
+        const v = Object.hasOwn(example, name) ? example[name] : undefined;
         return [
           name,
           typeof v === "boolean"
@@ -61,7 +61,9 @@ export function InvokePanel({
       Object.fromEntries(
         inputs.map((name) => {
           const prop = tool.input_schema.properties[name];
-          const previous = inputSchema.properties[name];
+          const previous = Object.hasOwn(inputSchema.properties, name)
+            ? inputSchema.properties[name]
+            : undefined;
           const value = values[name];
           const compatible =
             previous &&
@@ -71,40 +73,43 @@ export function InvokePanel({
         }),
       ),
     );
-    setInputErrors({});
+    setInputErrors(new Map());
   }
 
   // invalid_arguments issues are shown under their input; only the rest go to the alert.
   // Other errors (e.g. 409 tool_invalid) are shown by the alert as they are.
-  const fieldErrors: Record<string, Issue[]> = {};
+  const fieldErrors = new Map<string, Issue[]>();
   let otherIssues: Issue[] | undefined;
   if (invoke.error instanceof ApiError && invoke.error.error === "invalid_arguments") {
     otherIssues = [];
     for (const issue of invoke.error.issues("errors")) {
-      if (issue.ref && inputs.includes(issue.ref)) (fieldErrors[issue.ref] ??= []).push(issue);
-      else otherIssues.push(issue);
+      if (issue.ref && inputs.includes(issue.ref)) {
+        const issues = fieldErrors.get(issue.ref) ?? [];
+        issues.push(issue);
+        fieldErrors.set(issue.ref, issues);
+      } else otherIssues.push(issue);
     }
   }
-  const allShownPerField = otherIssues?.length === 0 && Object.keys(fieldErrors).length > 0;
+  const allShownPerField = otherIssues?.length === 0 && fieldErrors.size > 0;
 
   const submit = () => {
     if (!tool.enabled || busy || invoke.isPending) return;
     const args: Record<string, unknown> = {};
-    const errors: Record<string, string> = {};
+    const errors = new Map<string, string>();
     for (const name of inputs) {
       const type = paramType(tool.input_schema.properties[name]);
       const raw = values[name] ?? (type === "boolean" ? false : undefined);
       // Every input is required; only a string input can take the empty string.
       if (raw === undefined || (raw === "" && type !== "string")) {
-        errors[name] = "This input is required.";
+        errors.set(name, "This input is required.");
         continue;
       }
       const parsed = parseScalarInput(String(raw), type);
-      if (parsed.error) errors[name] = parsed.error;
+      if (parsed.error) errors.set(name, parsed.error);
       else args[name] = parsed.value;
     }
     setInputErrors(errors);
-    if (Object.keys(errors).length) return;
+    if (errors.size) return;
     invoke.mutate(args);
   };
 
@@ -132,7 +137,11 @@ export function InvokePanel({
           const value = values[name];
           const setValue = (v: FieldValue) => {
             setValues((current) => ({ ...current, [name]: v }));
-            setInputErrors((current) => ({ ...current, [name]: "" }));
+            setInputErrors((current) => {
+              const next = new Map(current);
+              next.delete(name);
+              return next;
+            });
             invoke.reset();
           };
           const id = `arg-${name}`;
@@ -187,12 +196,12 @@ export function InvokePanel({
                   onChange={(e) => setValue(e.target.value)}
                 />
               )}
-              {inputErrors[name] && (
+              {inputErrors.has(name) && (
                 <p role="alert" className="text-xs text-destructive">
-                  {inputErrors[name]}
+                  {inputErrors.get(name)}
                 </p>
               )}
-              {fieldErrors[name] && <IssueList issues={fieldErrors[name]} />}
+              <IssueList issues={fieldErrors.get(name) ?? []} />
             </div>
           );
         })}
