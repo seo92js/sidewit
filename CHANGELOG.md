@@ -16,6 +16,12 @@ Initial release candidate.
 
 ### Fixes
 
+- Update DOMPurify to 3.4.17, Vitest to 4.1.12 and vulnerable npm transitive dependencies.
+  Update the locked Python OpenTelemetry API to 1.45.1. CI now checks high/critical npm advisories.
+
+- Treat empty OpenAI completion choices as a recorded provider failure with HTTP 502,
+  instead of an unhandled indexing error.
+
 - Handle Tool inputs named `constructor` without inheriting JavaScript object properties
   as example values or validation errors.
 
