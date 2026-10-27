@@ -9,6 +9,7 @@ from sidewit.application.runtime import get_llm_provider
 from sidewit.generation.dto import LLMGenerationOutput, LLMParameter, LLMToolSuggestion
 from sidewit.generation.providers.fake import FakeProvider
 from sidewit.generation.providers.gemini import GeminiProvider
+from sidewit.generation.providers.openai import OpenAIProvider
 from sidewit.main import app
 
 DEFINITION = {
@@ -442,6 +443,23 @@ async def test_llm_error_during_repair_is_502(client, context, fake):
     fake(ok("SELECT amt FROM orders", []), RuntimeError("boom"))
     res = await ask(client, context)
     assert res.status_code == 502
+
+
+async def test_empty_openai_completion_is_502_and_recorded(client, context):
+    provider = OpenAIProvider("gpt-test", "fixture-key")
+    completion = AsyncMock(return_value=SimpleNamespace(choices=[], usage=None))
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(parse=completion))
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: provider
+    res = await ask(client, context)
+    assert res.status_code == 502
+    assert res.json()["error"] == "llm_error"
+    assert "operations" not in res.json()
+    record = await detail(client, res.json()["details"]["generation_id"])
+    assert record["status"] == "failed"
+    assert "no completion choices" in record["reason"]
+    completion.assert_awaited_once()
 
 
 @pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ReadTimeout])

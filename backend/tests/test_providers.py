@@ -75,6 +75,7 @@ async def test_openai_sends_system_first_and_returns_parsed_dto():
     [
         Recorder(openai_completion(refusal="no")),
         Recorder(openai_completion(parsed=None)),
+        Recorder(SimpleNamespace(choices=[], usage=None)),
         Recorder(error=openai.APIConnectionError(request=None)),
     ],
 )

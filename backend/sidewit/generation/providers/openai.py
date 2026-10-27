@@ -30,6 +30,8 @@ class OpenAIProvider:
         except (openai.OpenAIError, ValidationError) as e:
             raise LLMError(redact(f"OpenAI request failed: {e}", [self._api_key])) from None
 
+        if not completion.choices:
+            raise LLMError("OpenAI returned no completion choices.")
         message = completion.choices[0].message
         if message.refusal:
             raise LLMError(f"OpenAI refused the request: {message.refusal}")

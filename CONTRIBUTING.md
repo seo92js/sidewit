@@ -11,6 +11,7 @@ From the repository root:
 ```bash
 bash scripts/check-backend.sh
 (cd frontend && npm ci && npm run check)
+(cd frontend && npm audit --audit-level=high)
 ```
 
 The backend script runs Ruff and pytest in Docker. It starts and removes a temporary
@@ -21,7 +22,9 @@ It also builds the Python wheel and renders all three generation prompts directl
 artifact to catch missing package resources.
 Tests use temporary data directories and provider fixtures, not real LLM keys.
 Frontend checks run Prettier, ESLint, Vitest, TypeScript and the Vite build.
-The [CI workflow](.github/workflows/checks.yml) also builds both Docker images.
+The [CI workflow](.github/workflows/checks.yml) also builds both Docker images and rejects
+high/critical npm advisories, including development dependencies. Dependency audits use the
+registry's current advisories, so rerun them when updating a release candidate's lockfiles.
 
 ## Language
 
