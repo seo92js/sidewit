@@ -16,6 +16,9 @@ Initial release candidate.
 
 ### Fixes
 
+- Require `pyasn1>=0.6.5` and update the lockfile to exclude vulnerable ASN.1 parsing
+  releases used by Google Auth.
+
 - Update DOMPurify to 3.4.17, Vitest to 4.1.12 and vulnerable npm transitive dependencies.
   Update the locked Python OpenTelemetry API to 1.45.1. CI now checks high/critical npm advisories.
 

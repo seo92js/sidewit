@@ -8,6 +8,8 @@ requires-python = ">=3.12"
 dependencies = [
     # Exclude the compromised emSign certificate chain from provider HTTPS trust bundles.
     "certifi>=2026.10.19",
+    # Keep Google Auth's ASN.1 parser above the vulnerable 0.6.4 release.
+    "pyasn1>=0.6.5",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.8",
