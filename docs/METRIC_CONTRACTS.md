@@ -17,11 +17,14 @@ when no saved Tool matches. Explicit metric options bypass Tool selection.
 | `allow_generated_sql: false`, `require_metric: true`, or structured metric options | Registered metric, inputs and supported period | Compile and validate against the contract |
 | Bound Tool invoke | No model call | Check the saved contract and inputs; return an Operation |
 
-Responses identify the path as `source: tool`, `source: metric` or `source: generated_sql`. A question that
-adds a condition absent from a metric may require generated SQL. The prompt asks that path to
-follow registered business definitions, but the compiler does not enforce them there. Use a
-suitable contract and require the metric path when those guarantees are needed. Prose business
-rules are not converted into mandatory filters; put required conditions in `fixed_filters`.
+Saved-Tool `/generate` responses use top-level `source: "plan"`, with each step in `operations`
+identifying its own `source` as `tool`, `metric`, or `generated_sql`. Without Tool selection,
+the single generated operation has top-level `source: "metric"` or `source: "generated_sql"`.
+A question that adds a condition absent from a metric may require generated SQL. The prompt
+asks that path to follow registered business definitions, but the compiler does not enforce
+them there. Use a suitable contract and require the metric path when those guarantees are needed.
+Prose business rules are not converted into mandatory filters; put required conditions in
+`fixed_filters`.
 
 ## Try the example
 
