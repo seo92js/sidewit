@@ -132,7 +132,13 @@ When no saved Tool is selected (§5.3), generation tries **registered metrics fi
 - With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v5`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
 - With `allow_generated_sql: false`, this generation stage uses metrics only (`metric_plan_v3`) and returns unanswerable when none matches. At least one registered metric is required for this setting; otherwise it returns 422 `no_generation_path`.
 
-Successful responses identify `source` as `tool` (saved Tool reuse), `metric` (contract compilation) or `generated_sql` (model-written SQL). Contract compilation is deterministic, but **does not guarantee that the model selected the right metric, inputs, date field or period** (for example, extracting `교토` when the allowed value is `京都`). See [metric contracts](METRIC_CONTRACTS.md) for fields and time boundaries.
+When saved Tools are selected, successful `/generate` responses have top-level `source: "plan"`;
+each step in `operations` identifies its own `source` as `tool`, `metric`, or `generated_sql`.
+Without Tool selection, a single generated operation has top-level `source: "metric"`
+(contract compilation) or `source: "generated_sql"` (model-written SQL). Contract compilation
+is deterministic, but **does not guarantee that the model selected the right metric, inputs,
+date field or period** (for example, extracting `교토` when the allowed value is `京都`). See
+[metric contracts](METRIC_CONTRACTS.md) for fields and time boundaries.
 
 ### 3.2 Operation (SQL)
 
