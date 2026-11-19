@@ -146,11 +146,11 @@ def test_audit_timestamps_do_not_make_a_period_ambiguous():
         {"name": "updated_at", "type": "timestamptz"},
         {"name": "deleted_at", "type": "timestamptz"},
     ]
-    assert "Period choice is unresolved" not in rendered(audit)
+    assert "no documented period basis" not in rendered(audit)
     business = [
         {"name": "created_at", "type": "timestamptz"},
         {"name": "closed_at", "type": "timestamptz"},
     ]
-    assert "Period choice is unresolved by field descriptions: created_at, closed_at" in rendered(
+    assert "tickets dates with no documented period basis: created_at, closed_at." in rendered(
         business
     )

@@ -73,25 +73,23 @@ class ContextDefinition(BaseModel):
         key = name.lower()
         return next((r for r in self.resources if r.name.lower() == key), None)
 
-    def has_field(self, ref: str) -> bool:
-        resource_name, _, field_name = ref.partition(".")
-        resource = self.find_resource(resource_name)
-        if resource is None:
-            return False
-        key = field_name.lower()
-        return any(f.name.lower() == key for f in resource.fields)
-
-    def canonical_ref(self, ref: str) -> str | None:
-        """`resource.field` spelled as stored, or None when it does not exist. Context
-        references compare case-insensitively (definition_issues forbids names that differ
-        only by case); SQL identifiers are matched against the stored spelling."""
+    def find_field(self, ref: str) -> tuple[Resource, ContextField] | None:
+        """Case-insensitive lookup of `resource.field`."""
         resource_name, _, field_name = ref.partition(".")
         resource = self.find_resource(resource_name)
         if resource is None:
             return None
         key = field_name.lower()
         field = next((f for f in resource.fields if f.name.lower() == key), None)
-        return f"{resource.name}.{field.name}" if field else None
+        return None if field is None else (resource, field)
+
+    def has_field(self, ref: str) -> bool:
+        return self.find_field(ref) is not None
+
+    def canonical_ref(self, ref: str) -> str | None:
+        """`resource.field` spelled as stored."""
+        found = self.find_field(ref)
+        return None if found is None else f"{found[0].name}.{found[1].name}"
 
     def to_json(self) -> dict:
         return self.model_dump(mode="json", by_alias=True)

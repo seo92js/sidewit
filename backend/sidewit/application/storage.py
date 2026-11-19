@@ -5,10 +5,17 @@ from collections.abc import Callable
 
 from sidewit.errors import SidewitError
 from sidewit.observability import emit
-from sidewit.store import Store, StoreError
+from sidewit.store import Store, StoreError, StoreUnavailable
 
 
 def storage_failure(get_store: Callable[[], Store], error: StoreError) -> SidewitError:
+    """503 for any storage error; only a failed change reloads the files."""
+    if isinstance(error, StoreUnavailable):
+        return SidewitError(
+            503,
+            "storage_unavailable",
+            "Storage is unavailable. Repair the data directory and restart the server.",
+        )
     try:
         get_store().restore()
     except StoreError as recovery_error:

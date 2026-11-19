@@ -30,14 +30,14 @@ class InvokeResult(BaseModel):
 
 
 def get_context(store: Store, context_id: uuid.UUID) -> ContextRecord:
-    context = store.context(context_id)
+    context = store.context_snapshot(context_id)
     if context is None:
         raise SidewitError(404, "context_not_found", f"Context '{context_id}' does not exist.")
     return context
 
 
 def get_tool(store: Store, tool_id: uuid.UUID) -> ToolRecord:
-    tool = store.tool_by_id(tool_id)
+    tool = store.tool_snapshot(tool_id)
     if tool is None:
         raise SidewitError(404, "tool_not_found", f"Tool '{tool_id}' does not exist.")
     return tool
@@ -86,6 +86,6 @@ def invoke_tool(tool_id: uuid.UUID, body: InvokeRequest, store: Store) -> Invoke
         validation=validation,
         tool=tool.name,
         tool_version=tool.version,
-        context_version=tool.context_version,
+        context_version=context.version,
         operation=operation,
     )

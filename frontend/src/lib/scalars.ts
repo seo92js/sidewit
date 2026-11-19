@@ -89,7 +89,7 @@ export function parseScalarExact(text: string, type: ParamType): ScalarValue {
 }
 
 /** Converts a value to `type` when that is lossless ("1" → 1, 1 → "1"); otherwise keeps it. */
-export function coerceScalar(value: ScalarValue, type: ParamType): ScalarValue {
+function coerceScalar(value: ScalarValue, type: ParamType): ScalarValue {
   const coerced = parseScalarExact(String(value), type);
   return scalarValueError(coerced, type) ? value : coerced;
 }

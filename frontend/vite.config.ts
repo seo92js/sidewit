@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from "node:path";
 
 import tailwindcss from "@tailwindcss/vite";
@@ -17,5 +18,15 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8000",
     },
+  },
+  test: {
+    deps: {
+      optimizer: {
+        // These barrels load thousands of modules per test file unless pre-bundled.
+        client: { enabled: true, include: ["lucide-react", "radix-ui"] },
+      },
+    },
+    // Page-level renders are CPU-bound and slow down under machine load.
+    testTimeout: 15_000,
   },
 });

@@ -11,7 +11,7 @@ $context
 
 # Decide before writing SQL
 
-1. `unanswerable`: required data is absent. Put what is missing in `reason`; do not invent an event, amount or history from a nearby field. A cancellation status does not establish another financial event or its amount. Allowed values list the values a field holds; they are not business definitions.
+1. `unanswerable`: required data is absent. Data means resources and fields: joining, filtering, grouping and aggregating them needs no rule or metric that names the combination. Put what is missing in `reason`; do not invent an event, amount or history from a nearby field. A cancellation status does not establish another financial event or its amount. Allowed values list the values a field holds; they are not business definitions.
 2. `ambiguous`: available data has several reasonable interpretations and descriptions, relevant rules and the user's explicit choice do not settle one. Put the alternatives in `reason` and ask a specific question in `clarifications`.
 3. `ok`: the data exists and the metric, fields and period have one supported interpretation.
 
@@ -22,6 +22,7 @@ A date choice matters ONLY when the request needs date-dependent filtering or gr
 # Short illustrations — these tables are NOT part of the data context
 
 - Tickets have `created_at` and `closed_at`, neither described; no rule chooses a date. "How many tickets in the last 7 days?" → `ambiguous`, ask creation or closure. Do not write a query using either date.
+- Invoices have `issued_at` and `paid_at`; `paid_at` is described as the period basis for paid amounts. "Average paid amount in the last 7 days?" → `ok`, filter on `paid_at`. A description or rule that names the basis settles the choice; do not ask.
 - Bookings have `price` and `status`, including a cancelled status, but no cancellation-fee data or definition. "Total cancellation fees?" → `unanswerable`. Summing cancelled booking prices would answer a different question.
 - Machines have `id`, `supplier`, `state`, `cost`. A rule defines available machines as `state <> 'RETIRED'`. The user asks "Available Delta machines costing at least 75?". The rule contributes a FIXED exclusion; the user contributes supplier and minimum cost. The complete example response is:
 
@@ -35,6 +36,7 @@ A date choice matters ONLY when the request needs date-dependent filtering or gr
     {"name": "supplier", "type": "string", "value": "Delta"},
     {"name": "minimum_cost", "type": "number", "value": "75"}
   ],
+  "periods": [],
   "tool_suggestion": {"name": "available_machines", "description": "Available machines for a supplier and minimum cost"}
 }
 ```
@@ -47,19 +49,19 @@ There is NO state parameter: exposing RETIRED as an input would let a caller cha
 2. Choose fields by their descriptions and the business rules. Apply every relevant rule; do not transfer a rule for one metric to an unrelated metric.
 3. Parameters represent values derived from the user's request only. Use named placeholders `:name` (lowercase letters, digits, underscores, starting with a letter). Never use `?`, `$$1` or `%s`, or quote a placeholder.
 4. Constants required by the context or the business rules are not parameters. Keep them as SQL literals. User filter values, including allowed values mentioned by the user, must be parameters. This includes equality, inequality (`<>`, `!=`) and `NOT IN` exclusions. A rule constant must never become a caller-controlled Tool input, even when its parameter has the right default value.
-5. Resolve relative time against the reference time and timezone into absolute parameters, using half-open ranges (`>= :start`, `< :end`). Never use `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP` or another database clock function.
+5. Never compute relative dates yourself. For the last N days (`rolling_days`), yesterday (`previous_day`), the last calendar week (`previous_week`) or the last calendar month (`previous_month`), filter with `field >= :start_at AND field < :end_at` (any parameter names, no casts), list both parameters with the field's type and `value` `""`, and add `{"kind": ..., "days": N or null, "start": "start_at", "end": "end_at"}` to `periods`. The server computes both values from the reference time and timezone. For any other period, write absolute values into the parameters yourself, as a half-open range. Never use `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP` or another database clock function.
 6. When a field lists allowed values, every value compared with it must be one of them, written exactly as listed (same script, spelling and case). Map the user's wording to the matching allowed value; never translate, transliterate or invent a value. If no allowed value matches, return `ambiguous` or `unanswerable`.
 7. Each placeholder has exactly one parameter entry; every parameter is used. Types: `string`, `integer`, `number`, `boolean`, `date`, `date-time`. `value` is always written as a string; use ISO 8601 with the reference timezone's UTC offset for timestamps. Use `date-time` for timestamp fields and `date` for date fields.
 
 # Final check before returning `ok`
 
-Compare the SQL AND the parameter list with the context and request. Every rule-defined value must appear directly as a SQL literal, with no parameter entry. Every user filter value must appear as a named parameter, with one entry. Absolute time bounds computed from the request are parameters. Fix either mismatch before returning; do not include extra inputs just because the SQL references that field.
+Compare the SQL AND the parameter list with the context and request. Every rule-defined value must appear directly as a SQL literal, with no parameter entry. Every user filter value must appear as a named parameter, with one entry. Time bounds are parameters; relative ones are also listed in `periods`. Fix either mismatch before returning; do not include extra inputs just because the SQL references that field.
 
 # Response fields
 
-- `ok`: `reason = null`, `clarifications = []`; provide statement, parameters and a short reusable snake_case tool name/description in `tool_suggestion`.
-- `ambiguous`: reason and specific clarifications; `statement = null`, `parameters = []`, `tool_suggestion = null`.
-- `unanswerable`: reason, `clarifications = []`, `statement = null`, `parameters = []`, `tool_suggestion = null`.
+- `ok`: `reason = null`, `clarifications = []`; provide statement, parameters, periods (`[]` when none) and a short reusable snake_case tool name/description in `tool_suggestion`.
+- `ambiguous`: reason and specific clarifications; `statement = null`, `parameters = []`, `periods = []`, `tool_suggestion = null`.
+- `unanswerable`: reason, `clarifications = []`, `statement = null`, `parameters = []`, `periods = []`, `tool_suggestion = null`.
 
 Do not turn unresolved meaning or missing data into SQL.
 

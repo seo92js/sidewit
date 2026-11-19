@@ -8,13 +8,14 @@ from pydantic import ValidationError
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.dialect import Dialect
 from sidewit.domain.issue import Issue
-from sidewit.domain.metric import MetricBinding, Period
+from sidewit.domain.metric import MetricBinding
 from sidewit.domain.operation import SqlOperation
 from sidewit.domain.params import value_matches_type
+from sidewit.domain.period import PERIOD_RULE, Period, period_bounds
 from sidewit.generation.clarification import LLMClarification
 from sidewit.generation.metric_plan import LLMMetricPlan
 from sidewit.generation.parameters import convert_parameter
-from sidewit.validation.metric_contract import canonical_ref, metric_template, period_bounds
+from sidewit.validation.metric_contract import canonical_ref, metric_template
 
 
 @dataclass
@@ -56,11 +57,9 @@ def compile_plan(
     if set(values) != set(expected):
         return invalid("All metric inputs are required; extra inputs are forbidden.")
     try:
-        period = period_override or (
-            Period.model_validate(plan.period.model_dump()) if plan.period else None
-        )
+        period = period_override or (plan.period.period() if plan.period else None)
     except ValidationError:
-        return invalid("Invalid period; rolling days must be between 1 and 3660.")
+        return invalid(PERIOD_RULE)
     resolved: str | None = None
     if period is not None:
         # Text interpretation belongs to the planner. Never infer a choice from a mention:
@@ -79,10 +78,14 @@ def compile_plan(
                 if metric.time_fields
                 else invalid("This metric does not support a period.")
             )
-        if resolved.lower() not in {ref.lower() for ref in metric.time_fields}:
-            return invalid("Date field must be one of the selected metric's time_fields.", resolved)
+        listed = metric.time_field(resolved)
+        if listed is None:
+            return invalid(
+                "Date field must be exactly one of: " + ", ".join(metric.time_fields) + ".",
+                resolved,
+            )
         try:
-            resolved = canonical_ref(definition, resolved)
+            resolved = canonical_ref(definition, listed)
             statement, types = metric_template(definition, metric, resolved, dialect)
             values["start_at"], values["end_at"] = period_bounds(
                 period, reference_time, timezone, types["start_at"]

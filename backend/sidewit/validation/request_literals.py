@@ -10,29 +10,13 @@ and never runs for manually authored Tools.
 
 import functools
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 
 from sqlglot import exp
 
 from sidewit.domain.context import ContextDefinition
-from sidewit.domain.dialect import Dialect, to_sqlglot
 from sidewit.domain.issue import Issue
 
-_DATA_CONTAINERS = (
-    exp.EQ,
-    exp.NEQ,
-    exp.GT,
-    exp.GTE,
-    exp.LT,
-    exp.LTE,
-    exp.Like,
-    exp.ILike,
-    exp.In,
-    exp.Between,
-    exp.Limit,
-    exp.Offset,
-)
-_WRAPPERS = (exp.Paren, exp.Cast, exp.TryCast, exp.Neg)
 # A number directly followed by one of these in the request is a date or duration.
 _DATE_UNIT = re.compile(
     r"\s*(년|개월|월|주일|주|일|시간|시|분|초"
@@ -42,15 +26,13 @@ _DATE_UNIT = re.compile(
 
 
 def request_literal_issues(
-    ast: exp.Expression,
-    dialect: Dialect,
+    data: Iterable[tuple[exp.Expression, str]],
     definition: ContextDefinition,
     question: str,
     constant_literals: Collection[int],
 ) -> list[Issue]:
-    """`constant_literals`: ids of literal nodes the validator matched to a registered
-    constant (Rule condition or metric fixed filter) on their field. Those are context
-    constants by structure. Rule/description prose is a fallback for unstructured rules."""
+    """`data`: literals used as values, each with the ref it is compared against.
+    `constant_literals`: ids of literals matched to a registered constant on their field."""
     constants = [rule.text for rule in definition.rules]
     for resource in definition.resources:
         if resource.description:
@@ -58,23 +40,17 @@ def request_literal_issues(
         constants.extend(f.description for f in resource.fields if f.description)
 
     issues: dict[str, Issue] = {}
-    for literal in ast.find_all(exp.Literal):
-        value = literal.this
-        node: exp.Expression = literal
-        while isinstance(node.parent, _WRAPPERS):
-            node = node.parent
-            if isinstance(node, exp.Neg):
-                value = "-" + value
-        container = node.parent
-        if not value or not isinstance(container, _DATA_CONTAINERS):
-            continue  # Projection labels, JSON keys and format strings are not data.
-        if id(literal) in constant_literals:
+    for node, ref in data:
+        literal = node.this if isinstance(node, exp.Neg) else node
+        if not isinstance(literal, exp.Literal):
+            continue
+        value = ("-" if literal is not node else "") + literal.this
+        if not literal.this or id(literal) in constant_literals:
             continue
         if not _requested(value, question, numeric=literal.is_number):
             continue
         if any(_mentioned(value, text) for text in constants):
             continue
-        ref = _ref(container, dialect)
         issues.setdefault(
             ref,
             Issue(
@@ -86,14 +62,6 @@ def request_literal_issues(
             ),
         )
     return list(issues.values())
-
-
-def _ref(container: exp.Expression, dialect: Dialect) -> str:
-    if isinstance(container, exp.Limit | exp.Offset):
-        return container.key
-    column = container.find(exp.Column)
-    target = column if column is not None else container.this
-    return target.sql(dialect=to_sqlglot(dialect))
 
 
 def _requested(value: str, question: str, *, numeric: bool) -> bool:

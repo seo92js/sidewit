@@ -12,7 +12,7 @@ import type {
   PendingForeignKey,
   Revalidation,
 } from "@/api/types";
-import { ErrorAlert, IssueList, Loading } from "@/components/app/common";
+import { ErrorAlert, IssueList, Loading, splitQueryError } from "@/components/app/common";
 import { TimezoneInput } from "@/components/app/TimezoneInput";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -96,9 +96,10 @@ export function ContextEditor({ id }: { id: string }) {
     [definition],
   );
 
+  const contextError = splitQueryError(context);
   if (context.isLoading) return <Loading />;
-  if (context.error && !context.data)
-    return <ErrorAlert error={context.error} title="Could not load context" />;
+  if (contextError.blocking)
+    return <ErrorAlert error={contextError.blocking} title="Could not load context" />;
   if (!context.data || !saved || !draft) return null;
   const current = context.data;
   const remoteChanged = draft.version !== current.version;
@@ -140,7 +141,7 @@ export function ContextEditor({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      <ErrorAlert error={context.error} title="Could not refresh context" />
+      <ErrorAlert error={contextError.notice} title="Could not refresh context" />
       <UnsavedChangesGuard
         dirty={!remove.isSuccess && (dirty || importHasInput)}
         busy={update.isPending || remove.isPending}
@@ -303,6 +304,7 @@ export function ContextEditor({ id }: { id: string }) {
       )}
       <ErrorAlert
         error={update.error}
+        resource="Context"
         title={conflict ? "Version conflict" : "Could not save context"}
         action={
           conflict && (
@@ -320,7 +322,7 @@ export function ContextEditor({ id }: { id: string }) {
           )
         }
       />
-      <ErrorAlert error={remove.error} title="Could not delete context" />
+      <ErrorAlert error={remove.error} resource="Context" title="Could not delete context" />
       {revalidation && <RevalidationNotice revalidation={revalidation} />}
 
       <Tabs value={tab} onValueChange={setTab}>

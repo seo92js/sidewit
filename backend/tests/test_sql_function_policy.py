@@ -1,5 +1,7 @@
 """Review regressions; SQL is parsed only, never executed."""
 
+from dataclasses import replace
+
 import pytest
 
 from sidewit.domain.context import ContextDefinition
@@ -242,15 +244,14 @@ async def test_stale_tool_status_is_derived_without_overwriting_record(client, s
     tool = await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
     from uuid import UUID
 
-    record = store.context(UUID(context["id"]))
-    record.version += 1
-    store.save_context(record)
+    record = store.context_snapshot(UUID(context["id"]))
+    store.save_context(replace(record, version=record.version + 1))
     response = await client.get(f"/api/v1/tools/{tool['id']}")
     assert response.json()["status"] == "stale"
     assert response.json()["validation"] is None
     listing = await client.get("/api/v1/tools")
     assert listing.json()["items"][0]["status"] == "stale"
-    assert store.tool(tool["name"]).status == "valid"
+    assert store.tools[tool["name"]].status == "valid"
 
 
 @pytest.mark.parametrize(
@@ -284,14 +285,12 @@ def test_temporal_operands_still_reject_database_clock(sql):
     assert "relative_time_function" in {e.code for e in result.errors}
 
 
-def test_builtin_allowlist_contains_only_canonical_expression_names():
-    from sqlglot import exp
+def test_every_allowed_postgresql_function_passes_the_policy():
+    from sidewit.validation.functions import POSTGIS, POSTGRES_FUNCTIONS
 
-    from sidewit.validation.functions import BUILTINS
-
-    canonical = {
-        node.sql_name().lower()
-        for node in vars(exp).values()
-        if isinstance(node, type) and issubclass(node, exp.Func) and node is not exp.Func
-    }
-    assert BUILTINS <= canonical
+    for name in sorted(POSTGRES_FUNCTIONS | POSTGIS):
+        verdicts = []
+        for args in ("id", "id, id", "id, id, id"):
+            result = check(f"SELECT {name}({args}) FROM orders", extensions=["postgis"])
+            verdicts.append("function_not_allowed" in {e.code for e in result.errors})
+        assert not all(verdicts), name

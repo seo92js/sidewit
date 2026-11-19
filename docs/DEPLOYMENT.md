@@ -22,7 +22,8 @@ whose retention Sidewit does not control.
 1. Keep the API private. The supplied Compose file publishes web and API on loopback only.
    Configure HTTPS at your ingress before allowing remote traffic.
 2. Mount a persistent directory at `SIDEWIT_DATA_DIR` (default `/data`), writable by the
-   container user. Run **one API process** per directory on a local filesystem; multiple Uvicorn
+   container user (see [data directory owner](#data-directory-owner)). Run **one API process**
+   per directory on a local filesystem; multiple Uvicorn
    workers and network filesystems are not supported. A lifetime `.lock` prevents a second
    process from opening the same directory. Do not delete this lock file while the API runs.
 3. Set non-default `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD`, a nonempty
@@ -36,6 +37,26 @@ whose retention Sidewit does not control.
    draft, save and invoke as well as Generate.
 
 The web UI is optional; the API alone provides every function.
+
+Compose restarts both containers unless you stop them (`restart: unless-stopped`). Their
+health checks (Docker Engine 25+ for `start_interval`) probe every second while starting, so `docker compose up --wait` returns as soon
+as they are ready, then every 30 seconds. Each API probe is a logged `/api/v1/health` request.
+
+### Data directory owner
+
+The API image runs as the unprivileged UID/GID 1000, which owns `/data` in the image. Compose
+runs it as `SIDEWIT_UID:SIDEWIT_GID` (default `1000:1000`); set these to the owner of
+`SIDEWIT_DATA_PATH` on the host. On Linux, create the directory as the user that will back it
+up (`mkdir -p data`) and set `SIDEWIT_UID` and `SIDEWIT_GID` in `.env` to that user's
+`id -u` and `id -g`. If Docker creates a missing bind-mount directory itself, it belongs to root and the API cannot
+start (`Data directory /data is not usable by UID ...`). Docker Desktop on macOS and Windows
+maps bind-mount ownership to your user, so the defaults work there. Outside Compose, run the
+container with `--user UID:GID` for a bind mount, or keep the default user with a named volume.
+
+New data files get the mode of a normal file creation (`0666` minus the umask; `0644` in the
+image), and a replaced file keeps its existing mode, so the host owner can copy the directory
+without root. To keep other host users out, restrict the directory itself, for example
+`chmod 700 data`.
 
 ## Optional MCP endpoint
 
@@ -80,8 +101,8 @@ kept only in API process memory. Logout revokes the current browser session and 
 management data. Session expiry asks the user to sign in again while preserving the mounted
 editor's unsaved changes. Logout from an unsaved editor uses the existing discard confirmation.
 Navigation is blocked while logout is pending; a failed logout offers an explicit retry.
-Failed sign-ins are limited to 10 per client address per minute; clients behind the same proxy
-can share this limit.
+Failed sign-ins are limited to 10 per client address per minute; see
+[client addresses behind a proxy](#client-addresses-behind-a-proxy).
 
 Web requests use `/api/web/session` and session-protected `/api/web/v1`; they include the
 `X-Sidewit-Web: 1` header to prevent cross-origin form requests. Cross-origin CORS access is not
@@ -93,6 +114,31 @@ the public API unauthenticated**; web login alone does not protect that API from
 For HTTPS deployments, set `SIDEWIT_ADMIN_COOKIE_SECURE=true`, use non-default administrator
 credentials and a nonempty `SIDEWIT_API_KEY`, and configure TLS at your ingress. Enable the
 Secure cookie setting only when the browser accesses the UI over HTTPS.
+
+### Client addresses behind a proxy
+
+The API identifies a client by its connection address. It takes `X-Forwarded-For` and
+`X-Forwarded-Proto` into account only on connections from addresses listed in Uvicorn's
+`FORWARDED_ALLOW_IPS` environment variable (default `127.0.0.1,::1`; comma-separated
+addresses or CIDR ranges), and then uses the rightmost untrusted address. List only proxies
+that **replace** these headers with the address they received the connection from; a proxy that
+appends to them lets clients choose their own address.
+
+- **Bundled Compose deployment.** The web container is the edge proxy: nginx sets
+  `X-Forwarded-For` to the connecting address, discarding any value the client sent. Compose
+  gives the web container the fixed address `${SIDEWIT_NETWORK_PREFIX}.2` (default
+  `172.30.255.2`) on a dedicated `/24` network and sets `FORWARDED_ALLOW_IPS` on the API to that
+  address only. Connections to the API port, including the published `127.0.0.1:8000`, keep
+  their own address. If the default `172.30.255.0/24` overlaps another network, set
+  `SIDEWIT_NETWORK_PREFIX` (three octets, such as `10.123.45`) and recreate the containers.
+- **Another proxy in front of the web container** (for example a TLS ingress). nginx then sees
+  only the ingress address, so every client shares one limit. Have the ingress replace
+  `X-Forwarded-For`, and add `set_real_ip_from <ingress address>;` and
+  `real_ip_header X-Forwarded-For;` to the web server configuration so that it forwards the
+  client address it received.
+- **Without Compose.** Point `FORWARDED_ALLOW_IPS` at your reverse proxy's address(es) and make
+  that proxy replace `X-Forwarded-For`. Do not set `*` unless the API port is reachable only
+  through that proxy.
 
 ## Desktop platforms
 
@@ -175,13 +221,16 @@ overwrite them.
 Each file is replaced atomically and synced. A Context update persists its new version before
 saving Tool revalidation results. There is no transaction across all files: after a 503 or a
 restart during a write, retrieve current versions before retrying. A Tool tied to an older
-Context version is revalidated before invoke. If files cannot be reloaded after an error, API
-operations fail closed with 503. Repair the directory while stopped, then restart.
+Context version is revalidated before invoke. After a failed write or delete, the API reloads
+all files once. If they cannot be reloaded, the store closes: API and MCP operations return
+503 `storage_unavailable` and health checks 503, without reading the directory again. Repairs
+take effect only at the next start. Stop the API, repair the directory, then start it again.
 Directory listing errors also stop startup or recovery; an unreadable directory is never
 treated as an empty store. Health checks test directory listing as well as temporary writes.
-Storage failure logs report the operation, exception type, OS error number and recovery outcome;
-they omit file paths, file contents and exception messages. Recovery and shutdown discard that
-store's in-memory Tool validation cache.
+Storage failure logs report the operation, exception type, OS error number and recovery outcome
+once per failed write; requests answered by a closed store add no further storage events.
+They omit file paths, file contents and exception messages. Recovery and shutdown discard that
+store's in-memory Tool validation cache and parsed Context definitions.
 
 ## Upgrades
 
@@ -194,6 +243,24 @@ Record the image versions you run and back up the data directory before upgradin
 image validates the existing files at startup; if it rejects them, keep the old image running
 on a copy of the backup until the files are migrated.
 
+Earlier images ran the API as root and wrote data files as `0600`, so on Linux the files in a
+bind-mounted directory belong to root and only root can read them. The API now runs as
+`SIDEWIT_UID:SIDEWIT_GID` (default `1000:1000`) and cannot open such a directory. Before
+starting the new image, stop the API and hand the directory to the account that will run it:
+
+```bash
+docker compose stop api
+sudo chown -R "$(id -u):$(id -g)" ./data   # or your SIDEWIT_DATA_PATH
+```
+
+Existing files keep their owner-only `0600` mode when they are rewritten; that is enough for
+the new owner. New files get the mode described above.
+
+Then set `SIDEWIT_UID`/`SIDEWIT_GID` in `.env` to those IDs (see
+[data directory owner](#data-directory-owner)) and run `docker compose up -d --build --wait`.
+Docker Desktop on macOS needs no migration. Named volumes created by earlier images need
+`docker run --rm -v <volume>:/data alpine chown -R 1000:1000 /data` instead.
+
 
 ### Browser security policy
 
@@ -202,3 +269,11 @@ disables MIME sniffing. Monaco uses a local worker (blob worker URLs are permitt
 allow inline declarations required by the editor. API calls use the same-origin /api/ proxy.
 If you customize the deployment to load remote assets or connect directly to another origin,
 update CSP narrowly for those origins. These headers do not replace API authentication.
+They are kept in one snippet (`frontend/nginx/sidewit-security-headers.conf`) included by every
+location that sets its own headers, because nginx drops inherited `add_header` directives there.
+
+The web server compresses static text files and sends `/index.html` with `Cache-Control:
+no-cache`. Files under `/assets/` have content hashes in their names and are cached as
+`immutable` for a year; a missing asset returns 404 instead of the application page, so a page
+loaded before a redeployment fails visibly rather than executing HTML as a script. Reload such
+a page. API and MCP responses are proxied uncompressed.

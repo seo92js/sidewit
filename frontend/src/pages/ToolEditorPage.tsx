@@ -1,5 +1,5 @@
 import { ApiError } from "@/api/client";
-import { useQuery } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
@@ -20,6 +20,7 @@ import {
   JsonBlock,
   Loading,
   SectionTitle,
+  splitQueryError,
   ValidationPanel,
 } from "@/components/app/common";
 import { LazySqlEditor } from "@/components/app/LazySqlEditor";
@@ -117,11 +118,13 @@ export default function ToolEditorPage() {
   const draft = useToolDraft(generationId, stepId);
   const contexts = useContexts();
 
+  const toolError = splitQueryError(tool);
+  const contextsError = splitQueryError(contexts);
   if (tool.isLoading || draft.isLoading || contexts.isLoading) return <Loading />;
-  if (tool.error && !tool.data)
-    return <ErrorAlert error={tool.error} title={`Could not load tool ${id}`} />;
-  if (contexts.error && !contexts.data)
-    return <ErrorAlert error={contexts.error} title="Could not load contexts" />;
+  if (toolError.blocking)
+    return <ErrorAlert error={toolError.blocking} title={`Could not load tool ${id}`} />;
+  if (contextsError.blocking)
+    return <ErrorAlert error={contextsError.blocking} title="Could not load contexts" />;
 
   let initial: FormState;
   if (tool.data) {
@@ -170,9 +173,12 @@ export default function ToolEditorPage() {
         </Link>{" "}
         / {tool.data ? <span className="font-mono">{tool.data.name}</span> : "New tool"}
       </div>
-      <ErrorAlert error={tool.error} title="Could not refresh tool; your edits are preserved" />
       <ErrorAlert
-        error={contexts.error}
+        error={toolError.notice}
+        title="Could not refresh tool; your edits are preserved"
+      />
+      <ErrorAlert
+        error={contextsError.notice}
         title="Could not refresh contexts; your edits are preserved"
       />
       <ErrorAlert error={draft.error} title="Could not create a draft from this generation" />
@@ -191,15 +197,21 @@ export default function ToolEditorPage() {
       <ToolForm
         key={tool.data?.id ?? `${generationId ?? "blank"}:${stepId ?? ""}`}
         initial={initial}
-        saved={tool.data}
+        savedQuery={tool}
       />
     </div>
   );
 }
 
-function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
+function ToolForm({
+  initial,
+  savedQuery,
+}: {
+  initial: FormState;
+  savedQuery: Pick<UseQueryResult<Tool>, "data" | "isFetching" | "refetch">;
+}) {
+  const saved = savedQuery.data;
   const navigate = useNavigate();
-  const latest = useTool(saved?.id);
   const contexts = useContexts();
   const create = useCreateTool();
   const update = useUpdateTool(saved?.id ?? "");
@@ -655,17 +667,17 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
             </p>
           </div>
 
-          <ErrorAlert error={saveError} title="Could not save tool" />
+          <ErrorAlert error={saveError} resource="Tool" title="Could not save tool" />
           {saved && (saved.version !== baseVersion || writeConflict) && (
             <>
               <p className="text-sm">Your edits are preserved. Copy them before reloading.</p>
               <Button
                 variant="outline"
-                disabled={latest.isFetching}
+                disabled={savedQuery.isFetching}
                 onClick={async () => {
                   setReloading(true);
                   try {
-                    const result = await latest.refetch();
+                    const result = await savedQuery.refetch();
                     if (result.data && !result.isError) reload(result.data);
                   } finally {
                     setReloading(false);
@@ -676,8 +688,7 @@ function ToolForm({ initial, saved }: { initial: FormState; saved?: Tool }) {
               </Button>
             </>
           )}
-          <ErrorAlert error={latest.error} title="Could not reload tool" />
-          <ErrorAlert error={remove.error} title="Could not delete tool" />
+          <ErrorAlert error={remove.error} resource="Tool" title="Could not delete tool" />
           <div className="flex flex-wrap gap-2">
             <Button onClick={save} disabled={!canSave || create.isPending || update.isPending}>
               <Save />{" "}

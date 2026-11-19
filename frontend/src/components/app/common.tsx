@@ -15,7 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { cn } from "cn";
 
 export function Loading({ label = "Loading…" }: { label?: string }) {
   return (
@@ -65,9 +65,11 @@ export function IssueList({
   );
 }
 
-const ERROR_HINTS: Record<string, string> = {
-  version_conflict:
-    "Someone else saved this context first. Reload to get the latest version, then re-apply your edits.",
+export type ErrorResource = "Context" | "Tool";
+
+const ERROR_HINTS: Record<string, string | ((resource: ErrorResource | undefined) => string)> = {
+  version_conflict: (resource) =>
+    `${resource ? `This ${resource}` : "The server"} has a newer saved version than the one you loaded. Reload the latest version, then try again.`,
   unauthorized: "Check the API credentials configured for this request.",
   admin_session_required: "Sign in again to continue; your editor contents are preserved.",
   network_error: "Check that the API is running.",
@@ -83,21 +85,40 @@ const ERROR_HINTS: Record<string, string> = {
   context_has_tools: "Delete the tools that use this context first.",
 };
 
+function errorHint(error: unknown, resource?: ErrorResource): string | null {
+  if (!(error instanceof ApiError)) return null;
+  const hint = ERROR_HINTS[error.error];
+  return typeof hint === "function" ? hint(resource) : (hint ?? null);
+}
+
+/** An error blocks the view only before data exists; afterwards it is a notice. */
+export function splitQueryError({ data, error }: { data: unknown; error: unknown }): {
+  blocking: unknown;
+  notice: unknown;
+} {
+  return data === undefined
+    ? { blocking: error ?? null, notice: null }
+    : { blocking: null, notice: error ?? null };
+}
+
 /** Renders any API error, including the issue lists carried in `details`. */
 export function ErrorAlert({
   error,
   title,
   action,
   issues: shownIssues,
+  resource,
 }: {
   error: unknown;
   title?: string;
   action?: ReactNode;
   /** Replaces the error's own issue list, e.g. when some issues are shown elsewhere. */
   issues?: Issue[];
+  resource?: ErrorResource;
 }) {
   if (!error) return null;
   const apiError = error instanceof ApiError ? error : null;
+  const hint = errorHint(error, resource);
   const issues =
     shownIssues ??
     (apiError ? [...apiError.issues("validation_errors"), ...apiError.issues("errors")] : []);
@@ -119,9 +140,7 @@ export function ErrorAlert({
       </AlertTitle>
       <AlertDescription className="space-y-2">
         <p>{error instanceof Error ? error.message : String(error)}</p>
-        {apiError && ERROR_HINTS[apiError.error] && (
-          <p className="text-muted-foreground">{ERROR_HINTS[apiError.error]}</p>
-        )}
+        {hint && <p className="text-muted-foreground">{hint}</p>}
         {issues.length > 0 && <IssueList issues={issues} />}
         {requestErrors && (
           <ul className="list-disc pl-5 text-sm">

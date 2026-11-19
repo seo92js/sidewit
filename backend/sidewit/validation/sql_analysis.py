@@ -80,9 +80,29 @@ def selected(scope: Scope) -> dict[str, Source]:
     """Sources in this scope's FROM/JOIN. `Scope.sources` also contains every CTE visible to
     the scope, which must not take part in column resolution."""
     try:
-        return {name: source for name, (_, source) in scope.selected_sources.items()}
+        sources = {name: source for name, (_, source) in scope.selected_sources.items()}
     except OptimizeError as e:
         raise SqlAnalysisError(str(e)) from e
+    if _is_aliased_join(scope):
+        # sqlglot omits the first table of `(a JOIN b ...) AS j` from the join's scope.
+        sources.setdefault(scope.expression.alias_or_name, scope.expression)
+    return sources
+
+
+def from_clause(scope: Scope) -> tuple[exp.Expression, list[exp.Join]] | None:
+    """(first item, joins) of a SELECT's FROM or of an aliased join `(a JOIN b) AS j`."""
+    expression = scope.expression
+    if isinstance(expression, exp.Select):
+        from_ = expression.args.get("from_")
+        return None if from_ is None else (from_.this, expression.args.get("joins") or [])
+    if _is_aliased_join(scope):
+        return expression, expression.args["joins"]
+    return None
+
+
+def _is_aliased_join(scope: Scope) -> bool:
+    expression = scope.expression
+    return isinstance(expression, exp.Table) and bool(expression.args.get("joins"))
 
 
 @dataclass(frozen=True)
@@ -166,6 +186,13 @@ class SqlAnalysis:
                 selected(scope)  # duplicate aliases fail before any policy checks
         except OptimizeError as e:
             raise SqlAnalysisError(str(e)) from e
+        self._roots = {id(scope.expression): scope for scope in self.scopes}
+        self._owners: dict[int, Scope | None] = {}  # id(expression) -> scope of its children
+        # Queries sqlglot builds no scope for (in a set operation's ORDER BY/LIMIT/OFFSET or
+        # an aliased join's ON): their names are not resolved.
+        self.unscoped = [
+            q for q in ast.find_all(exp.Select, exp.SetOperation) if id(q) not in self._roots
+        ]
         self._outputs: dict[int, list[OutputColumn] | None] = {}
         self._joined: dict[int, _FromState] = {}
         for values in ast.find_all(exp.Values):
@@ -183,6 +210,34 @@ class SqlAnalysis:
             # width; computing its outputs checks that.
             if isinstance(select, exp.SetOperation):
                 self.outputs(scope)
+
+    def scope_of(self, node: exp.Expression) -> Scope | None:
+        """Nearest enclosing scope root (an aliased join's ON belongs to the join); None
+        inside an unscoped query."""
+        path = []
+        current = node.parent
+        owner: Scope | None = None
+        while current is not None:
+            key = id(current)
+            if key in self._owners:
+                owner = self._owners[key]
+                break
+            if key in self._roots:
+                owner = self._owners[key] = self._roots[key]
+                break
+            path.append(key)
+            if isinstance(current, exp.Select | exp.SetOperation):
+                break  # unscoped query
+            current = current.parent
+        for key in path:
+            self._owners[key] = owner
+        return owner
+
+    def owned(self, scope: Scope, *types: type[exp.Expression]) -> Iterator[exp.Expression]:
+        """Nodes of `types` in `scope` itself, not in nested scopes."""
+        for node in scope.expression.find_all(*types):
+            if node is not scope.expression and self.scope_of(node) is scope:
+                yield node
 
     # columns ----------------------------------------------------------------------------
 
@@ -268,7 +323,7 @@ class SqlAnalysis:
           the left side of its join;
         - anywhere else (SELECT list, WHERE, ...): None, the whole FROM clause."""
         select = scope.expression
-        if not isinstance(select, exp.Select) or select.args.get("from_") is None:
+        if from_clause(scope) is None:
             return None
         state = self._from(scope)
         child, parent = node, node.parent
@@ -296,13 +351,13 @@ class SqlAnalysis:
 
     def _evaluate_from(self, scope: Scope) -> _FromState:
         state = _FromState()
-        select = scope.expression
-        if not isinstance(select, exp.Select) or select.args.get("from_") is None:
+        clause = from_clause(scope)
+        if clause is None:
             return state
         sources = selected(scope)
-        first: exp.Expression = select.args["from_"].this
+        first, joins = clause
         group_joins: list[exp.Join] = []
-        for join in [*(select.args.get("joins") or []), None]:
+        for join in [*joins, None]:
             if join is None or _is_comma(join):
                 state.groups.append(
                     self._tree_env(first, group_joins, sources, len(state.groups), state)
@@ -344,11 +399,9 @@ class SqlAnalysis:
         columns = [JoinedColumn(n, (alias,)) for n in names or []]
         return Env(frozenset({alias}), columns, names is None)
 
-    def _aliased_join_outputs(self, scope: Scope, first: exp.Table) -> list[OutputColumn]:
-        """`(a JOIN b ...) AS j`: the join's columns, each tied to the field it carries.
-        sqlglot leaves the first table out of the scope's sources, so it is added here."""
-        sources = {**selected(scope), first.alias_or_name: first}
-        env = self._tree_env(first, first.args["joins"], sources, 0, _FromState())
+    def _aliased_join_outputs(self, scope: Scope) -> list[OutputColumn]:
+        sources = selected(scope)
+        env = self._from(scope).all()
         columns = []
         for column in env.columns:
             origins = {
@@ -411,7 +464,7 @@ class SqlAnalysis:
         elif isinstance(expression, exp.Lateral) and scope.subquery_scopes:
             columns = self.outputs(scope.subquery_scopes[0])
         elif isinstance(expression, exp.Table) and expression.args.get("joins"):
-            columns = self._aliased_join_outputs(scope, expression)
+            columns = self._aliased_join_outputs(scope)
         else:
             columns = None  # table function (unnest, jsonb_each, ...): known only by name list
         aliases = _column_aliases(scope)

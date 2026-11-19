@@ -14,6 +14,10 @@ it is not an execution sandbox or a user/tenant authorization boundary.
   `SIDEWIT_ADMIN_USERNAME` and `SIDEWIT_ADMIN_PASSWORD`, a nonempty `SIDEWIT_API_KEY`, and
   `SIDEWIT_ADMIN_COOKIE_SECURE=true` behind HTTPS. Web login alone does not protect the public
   `/api/v1` API when the API key is unset. See [credential recovery](docs/DEPLOYMENT.md#web-login-and-recovery).
+- Failed web sign-ins are limited per client address. The API accepts forwarded addresses only
+  from proxies listed in `FORWARDED_ALLOW_IPS` (in Compose, the bundled web container, which
+  replaces client-supplied `X-Forwarded-For`). Never list a proxy that appends to that header.
+  See [client addresses behind a proxy](docs/DEPLOYMENT.md#client-addresses-behind-a-proxy).
 - MCP is disabled by default. If enabled, configure its separate `SIDEWIT_MCP_KEY` or keep it
   private: enabling it with an empty key permits unauthenticated discovery, generation and
   invocation across the instance. REST API keys and web sessions do not authenticate MCP.
@@ -29,7 +33,9 @@ it is not an execution sandbox or a user/tenant authorization boundary.
 
 Sidewit connects to no database and requires no database credentials. Contexts and saved Tools
 persist in the data directory and may contain private schema details, SQL literals and values.
-Protect that directory and its backups.
+Protect that directory and its backups. The API container runs as a non-root user that owns the
+directory; files are created with the usual umask-based mode (`0644` by default), so restrict
+access with the directory's permissions (for example `chmod 700`).
 
 Generation questions, SQL, parameters and rejected SQL stay in bounded process memory and are
 lost on restart. Sidewit logs request/Generation metadata, not this content or raw exception

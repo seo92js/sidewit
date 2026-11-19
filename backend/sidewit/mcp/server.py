@@ -121,13 +121,17 @@ def _list_contexts(store: Store, request: PageRequest) -> dict[str, Any]:
 def _list_tools(store: Store, request: ListToolsRequest) -> dict[str, Any]:
     context = get_context(store, request.context_id)
     items = []
-    for tool in sorted(store.tools_of(context.id), key=lambda t: t.id):
+    for tool in sorted(store.tool_snapshots(context.id), key=lambda t: t.id):
         if not tool.enabled or not is_current(tool, context):
             continue
         validation = store.tool_check(tool, context)
         if validation is None:
             validation = validate_tool(
-                context, tool.input_schema, tool.operation["statement"], tool_binding(tool)
+                context,
+                store.definition(context),
+                tool.input_schema,
+                tool.operation["statement"],
+                tool_binding(tool),
             )
             # Discovery does not persist verdicts. Cache only successes so invocation
             # can still revalidate and save an invalid verdict through the Tool service.

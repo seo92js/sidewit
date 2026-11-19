@@ -6,7 +6,14 @@ import { ApiError } from "@/api/client";
 import { useApiKeyRequired } from "@/components/app/AdminAccess";
 import { useContexts, useGenerate, useGeneration } from "@/api/queries";
 import type { ClarificationAnswer, GenerateRequest, GenerateResponse } from "@/api/types";
-import { CopyButton, Empty, ErrorAlert, IssueList, Loading } from "@/components/app/common";
+import {
+  CopyButton,
+  Empty,
+  ErrorAlert,
+  IssueList,
+  Loading,
+  splitQueryError,
+} from "@/components/app/common";
 import { NativeSelect } from "@/components/app/NativeSelect";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -113,8 +120,10 @@ export default function PlaygroundPage() {
     send(requestPayload);
   };
 
+  const contextsError = splitQueryError(contexts);
   if (contexts.isLoading) return <Loading />;
-  if (contexts.error) return <ErrorAlert error={contexts.error} title="Could not load contexts" />;
+  if (contextsError.blocking)
+    return <ErrorAlert error={contextsError.blocking} title="Could not load contexts" />;
   if (!contexts.data?.length) {
     return (
       <Empty>
@@ -136,6 +145,10 @@ export default function PlaygroundPage() {
             Describe what you need. Review the returned operations; your application runs them.
           </p>
         </div>
+        <ErrorAlert
+          error={contextsError.notice}
+          title="Could not refresh contexts; showing the last loaded versions"
+        />
 
         <div className="space-y-1.5">
           <Label htmlFor="context">Context</Label>

@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { request } from "./client";
+import { ApiError, request } from "./client";
 import type {
   Context,
   ContextCreate,
@@ -31,10 +31,23 @@ const keys = {
   generation: (id: string) => ["generations", id] as const,
 };
 
+function isHealth(value: unknown): value is Health {
+  const health = value as Partial<Health> | null;
+  return typeof health?.status === "string" && typeof health.storage === "string";
+}
+
+/** An unhealthy API answers 503 with a health body; anything else is unreachable. */
+function fetchHealth(): Promise<Health> {
+  return request<Health>("GET", "/health", undefined, {
+    answerStatuses: [503],
+    isValid: isHealth,
+  });
+}
+
 export function useHealth() {
   return useQuery({
     queryKey: keys.health,
-    queryFn: () => request<Health>("GET", "/health"),
+    queryFn: fetchHealth,
     refetchInterval: 30_000,
   });
 }
@@ -100,9 +113,37 @@ export function useImportDdl(id: string) {
 
 // Generate ---------------------------------------------------------------------------
 
+function refreshContext(qc: QueryClient, id: string) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: keys.contexts, exact: true }),
+    qc.invalidateQueries({ queryKey: keys.context(id), exact: true }),
+  ]);
+}
+
+const CONTEXT_STATE_ERRORS = new Set(["context_changed", "context_not_found"]);
+
 export function useGenerate() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: GenerateRequest) => request<GenerateResponse>("POST", "/generate", body),
+    // The response's context_version is authoritative; refresh a stale cached Context.
+    onSuccess: (result, body) => {
+      const cached = qc
+        .getQueryData<Context[]>(keys.contexts)
+        ?.find((c) => c.id === body.context_id);
+      const detail = qc.getQueryData<Context>(keys.context(body.context_id));
+      if (
+        cached?.version !== result.context_version ||
+        (detail && detail.version !== result.context_version)
+      ) {
+        void refreshContext(qc, body.context_id);
+      }
+    },
+    onError: (error, body) => {
+      if (error instanceof ApiError && CONTEXT_STATE_ERRORS.has(error.error)) {
+        void refreshContext(qc, body.context_id);
+      }
+    },
   });
 }
 
@@ -145,13 +186,25 @@ export function useToolDraft(generationId: string | undefined, stepId?: string) 
   });
 }
 
+function storeWrittenTool(qc: QueryClient, tool: Tool) {
+  qc.setQueryData(keys.tool(tool.id), tool);
+  return qc.invalidateQueries({ queryKey: keys.tools, exact: true });
+}
+
+/** A failed write may still have committed: read back without retrying or touching edits. */
+function readBackTool(qc: QueryClient, id: string) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
+    qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
+  ]);
+}
+
 export function useCreateTool() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ToolCreate) => request<Tool>("POST", "/tools", body),
     onSuccess: (tool) => {
-      qc.setQueryData(keys.tool(tool.id), tool);
-      qc.invalidateQueries({ queryKey: keys.tools, exact: true });
+      void storeWrittenTool(qc, tool);
     },
   });
 }
@@ -160,17 +213,9 @@ export function useUpdateTool(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ToolUpdate) => request<Tool>("PUT", `/tools/${id}`, body),
-    onError: async () => {
-      // The write may have committed even if its response was lost. Refresh the same
-      // identity without retrying the write or replacing the local editor contents.
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
-        qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
-      ]);
-    },
+    onError: () => readBackTool(qc, id),
     onSuccess: (tool) => {
-      qc.setQueryData(keys.tool(tool.id), tool);
-      qc.invalidateQueries({ queryKey: keys.tools, exact: true });
+      void storeWrittenTool(qc, tool);
     },
   });
 }
@@ -180,18 +225,9 @@ export function useSetToolEnabled(id: string) {
   return useMutation({
     mutationFn: (body: { expected_version: number; enabled: boolean }) =>
       request<Tool>("PATCH", `/tools/${id}`, body),
-    onError: async () => {
-      // A failed response can still follow a committed write. Read back availability
-      // and versions before allowing another change; do not retry the write itself.
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
-        qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
-      ]);
-    },
-    onSuccess: async (tool) => {
-      qc.setQueryData(keys.tool(id), tool);
-      await qc.invalidateQueries({ queryKey: keys.tools, exact: true });
-    },
+    onError: () => readBackTool(qc, id),
+    // Stays pending until the list shows the new availability.
+    onSuccess: (tool) => storeWrittenTool(qc, tool),
   });
 }
 
@@ -213,17 +249,9 @@ export function useRefreshContract(id: string) {
   return useMutation({
     mutationFn: (expected_version: number) =>
       request<Tool>("POST", `/tools/${id}/refresh-contract`, { expected_version }),
-    onError: async () => {
-      // Rebuild may conflict or commit before its response is lost. Read back the
-      // saved version without overwriting local edits or repeating the write.
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.tool(id), exact: true }),
-        qc.invalidateQueries({ queryKey: keys.tools, exact: true }),
-      ]);
-    },
+    onError: () => readBackTool(qc, id),
     onSuccess: (tool) => {
-      qc.setQueryData(keys.tool(id), tool);
-      qc.invalidateQueries({ queryKey: keys.tools, exact: true });
+      void storeWrittenTool(qc, tool);
     },
   });
 }

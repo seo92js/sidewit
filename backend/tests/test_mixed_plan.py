@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -129,6 +130,58 @@ async def test_task_text_cannot_bypass_original_request_literal_policy(client, c
     )
 
 
+async def test_selected_tools_are_invoked_once_when_unchanged_during_generation(
+    client, context, fake, monkeypatch
+):
+    from sidewit.generation import tool_selection
+
+    await saved_tool(client, context)
+    fake(mixed(calls=[call(), call("부산")]), ids())
+    invocations = []
+    invoke = tool_selection.invoke
+
+    def counted(*args, **kwargs):
+        invocations.append(args[1].name)
+        return invoke(*args, **kwargs)
+
+    monkeypatch.setattr(tool_selection, "invoke", counted)
+    response = await ask(client, context, question="서울과 부산 고객 수와 고객 ID 목록")
+    assert response.status_code == 200, response.text
+    assert [s["source"] for s in response.json()["operations"]] == ["tool", "tool", "generated_sql"]
+    assert invocations == ["count_customers", "count_customers"]
+
+
+@pytest.mark.parametrize("change", ["disable", "rename", "recreate"])
+async def test_versioned_tool_changes_during_generation_reject_entire_plan(
+    client, context, fake, store, change
+):
+    tool = await saved_tool(client, context)
+    provider = fake()
+
+    async def generate(system, messages, schema):
+        if schema is ToolPlanSelection:
+            return StructuredResult(parsed=mixed())
+        path = f"/api/v1/tools/{tool['id']}"
+        if change == "disable":
+            body = {"expected_version": 1, "enabled": False}
+            assert (await client.patch(path, json=body)).status_code == 200
+        elif change == "rename":
+            body = {k: tool[k] for k in ("description", "input_schema", "operation")}
+            body |= {"expected_version": 1, "name": "renamed_tool"}
+            assert (await client.put(path, json=body)).status_code == 200
+        else:
+            assert (await client.delete(path)).status_code == 204
+            await saved_tool(client, context)
+        return StructuredResult(parsed=ids())
+
+    provider.generate_structured = generate
+    response = await ask(client, context)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == "tool_changed"
+    assert response.json()["details"]["step_id"] == "step_1"
+    assert "operations" not in response.json()
+
+
 @pytest.mark.parametrize("change", ["context", "tool", "delete_context", "delete_tool"])
 async def test_changes_during_generation_reject_entire_plan(client, context, fake, store, change):
     tool = await saved_tool(client, context)
@@ -138,17 +191,15 @@ async def test_changes_during_generation_reject_entire_plan(client, context, fak
         if schema is ToolPlanSelection:
             return StructuredResult(parsed=mixed())
         if change == "context":
-            current = store.context(UUID(context["id"]))
-            current.version += 1
-            store.save_context(current)
+            current = store.context_snapshot(UUID(context["id"]))
+            store.save_context(replace(current, version=current.version + 1))
         elif change == "tool":
-            current = store.tool(tool["name"])
-            current.version += 1
-            store.save_tool(current)
+            current = store.tools[tool["name"]]
+            store.save_tool(replace(current, version=current.version + 1))
         elif change == "delete_tool":
-            store.delete_tool(store.tool(tool["name"]))
+            store.delete_tool(store.tools[tool["name"]])
         else:
-            store.delete_tool(store.tool(tool["name"]))
+            store.delete_tool(store.tools[tool["name"]])
             await client.delete(f"/api/v1/contexts/{context['id']}")
         return StructuredResult(parsed=ids())
 
@@ -216,7 +267,7 @@ async def test_metric_only_context_cannot_generate_unrestricted_sql(client, metr
     from tests.test_metric_contracts import plan
 
     await saved(client, metric_context)
-    selection = mixed(calls=[{"tool_name": "count_orders", "parameters": []}])
+    selection = mixed(calls=[{"tool_name": "count_orders", "parameters": [], "periods": []}])
     provider = fake(selection, plan())
     response = await ask(client, metric_context)
     assert response.status_code == 200, response.text
@@ -244,7 +295,7 @@ async def test_generated_step_draft_save_preserves_provenance(
     saved = await client.post("/api/v1/tools", json=payload)
     assert saved.status_code == 201, saved.text
     assert saved.json()["source_step_id"] == "step_2"
-    assert store.tool("customer_ids").source_step_id == "step_2"
+    assert store.tools["customer_ids"].source_step_id == "step_2"
     import shutil
 
     from sidewit.store import Store
@@ -253,7 +304,7 @@ async def test_generated_step_draft_save_preserves_provenance(
     shutil.copytree(store.root, restored_path)
     restored = Store(restored_path)
     try:
-        assert restored.tool("customer_ids").source_step_id == "step_2"
+        assert restored.tools["customer_ids"].source_step_id == "step_2"
     finally:
         restored.close()
 
@@ -270,7 +321,7 @@ async def test_metric_step_binding_cannot_be_stripped(client, metric_context, fa
     from tests.test_metric_contracts import plan
 
     await saved(client, metric_context)
-    fake(mixed(calls=[{"tool_name": "count_orders", "parameters": []}]), plan())
+    fake(mixed(calls=[{"tool_name": "count_orders", "parameters": [], "periods": []}]), plan())
     body = (await ask(client, metric_context)).json()
     payload = (
         await client.post(

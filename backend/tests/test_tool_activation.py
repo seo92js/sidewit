@@ -159,7 +159,7 @@ async def test_create_disabled_and_file_restart(client, context, store, tmp_path
     store.close()
     reopened = Store(tmp_path / "data")
     try:
-        assert reopened.tool(created.json()["name"]).enabled is False
+        assert reopened.tools[created.json()["name"]].enabled is False
     finally:
         reopened.close()
 
