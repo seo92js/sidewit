@@ -1,6 +1,7 @@
 """Release review regressions: verification evidence, concurrency, bounds and retention."""
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -60,11 +61,14 @@ async def test_nonblocking_warnings_survive_save_and_invoke(client):
 async def test_stale_tool_that_no_longer_validates_is_blocked_on_invoke(client, store):
     context = await create_context(client, DEFINITION)
     tool = await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    record = store.tool(tool["name"])
-    record.operation = {"type": "sql", "statement": "SELECT missing FROM orders"}
-    record.status = "stale"
-    record.validation = None
-    store.save_tool(record)
+    store.save_tool(
+        replace(
+            store.tools[tool["name"]],
+            operation={"type": "sql", "statement": "SELECT missing FROM orders"},
+            status="stale",
+            validation=None,
+        )
+    )
     res = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     assert res.status_code == 409
     stored = (await client.get(tool_path("review_tool"))).json()
@@ -200,12 +204,10 @@ async def test_history_eviction_preserves_saved_tools(client, store, history):
         )
         history.add(record)
         records.append(record)
-    saved = store.tool(tool["name"])
-    saved.source_generation_id = records[0].id
-    store.save_tool(saved)
+    store.save_tool(replace(store.tools[tool["name"]], source_generation_id=records[0].id))
     assert history.get(records[0].id) is None
     assert history.get(records[1].id) is records[1]
     assert (await client.get(f"/api/v1/generations/{records[0].id}")).status_code == 404
     res = await client.post(tool_path("review_tool", "/invoke"), json={"arguments": {}})
     assert res.status_code == 200
-    assert store.tool(tool["name"]).source_generation_id == records[0].id
+    assert store.tools[tool["name"]].source_generation_id == records[0].id

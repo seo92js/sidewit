@@ -429,15 +429,20 @@ def _table_name(table: exp.Expression, parsed: _Parsed) -> str:
         qualified = f"{table.db}.{name}"
         key = name.lower()
         previous = parsed.qualified_tables.get(key)
-        if previous is not None and previous != qualified:
+        if previous is None:
+            # Warn once per table; pg_dump repeats the qualifier in every ALTER/FK.
+            parsed.qualified_tables[key] = qualified
+            parsed.warnings.append(
+                Issue(
+                    code="schema_qualifier_removed",
+                    message=f"Schema qualifier removed: '{qualified}' → '{name}'.",
+                )
+            )
+        elif previous != qualified:
             raise DdlParseError(
                 f"Tables '{previous}' and '{qualified}' collapse to the same Context name. "
                 "Import them into separate Contexts."
             )
-        parsed.qualified_tables[key] = qualified
-        message = f"Schema qualifier removed: '{table.db}.{name}' → '{name}'."
-        if not any(w.message == message for w in parsed.warnings):
-            parsed.warnings.append(Issue(code="schema_qualifier_removed", message=message))
     return name
 
 

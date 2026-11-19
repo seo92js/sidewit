@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -6,6 +7,7 @@ from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from sidewit.api.state import HistoryDep, StoreDep
+from sidewit.application.tools import get_context as context_or_404
 from sidewit.ddl.importer import DdlParseError, ImportMode, PendingForeignKey, import_ddl
 from sidewit.domain.context import (
     ContextDefinition,
@@ -106,14 +108,14 @@ class ImportDdlResult(BaseModel):
     pending_foreign_keys: list[PendingForeignKey]
 
 
-def _out(record: ContextRecord) -> ContextOut:
+def _out(record: ContextRecord, store: Store) -> ContextOut:
     return ContextOut(
         id=record.id,
         name=record.name,
         dialect=record.dialect,
         timezone=record.timezone,
         allow_generated_sql=record.allow_generated_sql,
-        definition=ContextDefinition.model_validate(record.definition),
+        definition=store.definition(record),
         version=record.version,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -135,23 +137,15 @@ def _name_conflict(name: str) -> SidewitError:
     return SidewitError(409, "context_name_conflict", f"A context named '{name}' already exists.")
 
 
-def _get_or_404(store: Store, context_id: uuid.UUID) -> ContextRecord:
-    record = store.context(context_id)
-    if record is None:
-        raise SidewitError(404, "context_not_found", f"Context '{context_id}' does not exist.")
-    return record
-
-
 def _check_name(store: Store, name: str, own_id: uuid.UUID | None = None) -> None:
-    other = store.context_named(name)
-    if other is not None and other.id != own_id:
+    if any(c.name == name and c.id != own_id for c in store.contexts.values()):
         raise _name_conflict(name)
 
 
 @router.get("")
 async def list_contexts(store: StoreDep) -> ContextList:
     records = sorted(store.contexts.values(), key=lambda r: r.name)
-    return ContextList(items=[_out(r) for r in records])
+    return ContextList(items=[_out(r, store) for r in records])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -165,20 +159,19 @@ async def create_context(body: ContextBody, store: StoreDep) -> ContextOut:
         allow_generated_sql=body.allow_generated_sql,
         definition=body.definition.to_json(),
     )
-    store.save_context(record)
-    return _out(record)
+    return _out(store.save_context(record), store)
 
 
 @router.get("/{context_id}")
 async def get_context(context_id: uuid.UUID, store: StoreDep) -> ContextOut:
-    return _out(_get_or_404(store, context_id))
+    return _out(context_or_404(store, context_id), store)
 
 
 @router.put("/{context_id}")
 async def update_context(
     context_id: uuid.UUID, body: ContextUpdate, store: StoreDep
 ) -> ContextUpdateResult:
-    record = _get_or_404(store, context_id)
+    record = context_or_404(store, context_id)
     if record.version != body.expected_version:
         raise SidewitError(
             409,
@@ -195,28 +188,31 @@ async def update_context(
         or record.dialect != body.dialect
         or record.timezone != body.timezone
         or record.allow_generated_sql != body.allow_generated_sql
-        or ContextDefinition.model_validate(record.definition).to_json() != definition
+        or store.definition(record).to_json() != definition
     )
-    if changed:
-        record.name = body.name
-        record.dialect = body.dialect
-        record.timezone = body.timezone
-        record.allow_generated_sql = body.allow_generated_sql
-        record.definition = definition
-        record.version += 1
     if not changed:
-        return ContextUpdateResult(context=_out(record), revalidation=Revalidation())
+        return ContextUpdateResult(context=_out(record, store), revalidation=Revalidation())
     # Persist the version first. Interrupted Tool writes then leave older versions, which
     # must be revalidated against this persisted Context before invocation.
-    store.save_context(record)
-    revalidation = revalidate_context_tools(store, record)
-    return ContextUpdateResult(context=_out(record), revalidation=revalidation)
+    saved = store.save_context(
+        replace(
+            record,
+            name=body.name,
+            dialect=body.dialect,
+            timezone=body.timezone,
+            allow_generated_sql=body.allow_generated_sql,
+            definition=definition,
+            version=record.version + 1,
+        )
+    )
+    revalidation = revalidate_context_tools(store, saved)
+    return ContextUpdateResult(context=_out(saved, store), revalidation=revalidation)
 
 
 @router.delete("/{context_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_context(context_id: uuid.UUID, store: StoreDep, history: HistoryDep) -> Response:
-    record = _get_or_404(store, context_id)
-    names = [t.name for t in store.tools_of(context_id)]
+    record = context_or_404(store, context_id)
+    names = [t.name for t in store.tool_snapshots(context_id)]
     if names:
         raise SidewitError(
             409,
@@ -233,7 +229,7 @@ async def delete_context(context_id: uuid.UUID, store: StoreDep, history: Histor
 async def import_context_ddl(
     context_id: uuid.UUID, body: ImportDdlRequest, store: StoreDep
 ) -> ImportDdlResult:
-    record = _get_or_404(store, context_id)
+    record = context_or_404(store, context_id)
     if body.expected_version is not None and record.version != body.expected_version:
         raise SidewitError(
             409,
@@ -241,6 +237,7 @@ async def import_context_ddl(
             "Context changed before the DDL preview was created.",
             {"current_version": record.version, "expected_version": body.expected_version},
         )
+    # Private parse: the importer mutates fields it carries over.
     existing = body.base_definition or ContextDefinition.model_validate(record.definition)
     try:
         result = import_ddl(

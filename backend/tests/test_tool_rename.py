@@ -49,7 +49,7 @@ async def test_rename_preserves_identity_restart_and_name_reuse(client, tool, st
         assert renamed[key] == original[key]
     assert json.loads(path.read_text())["name"] == renamed["name"]
     assert list(path.parent.glob("*.json")) == [path]
-    assert store.tool(tool["name"]) is None
+    assert tool["name"] not in store.tools
     assert (await client.get(f"/api/v1/tools/{tool['id']}")).json()["name"] == renamed["name"]
     assert (await rename(client, renamed, renamed["name"])).json()["version"] == renamed["version"]
 
@@ -61,12 +61,12 @@ async def test_rename_preserves_identity_restart_and_name_reuse(client, tool, st
     store.close()
     reopened = Store(root)
     try:
-        assert reopened.tool(renamed["name"]).id == uuid.UUID(tool["id"])
-        assert reopened.tool(renamed["name"]).enabled is False
-        assert reopened.tool(tool["name"]).id == uuid.UUID(reused.json()["id"])
-        reopened.delete_tool(reopened.tool(renamed["name"]))
+        assert reopened.tools[renamed["name"]].id == uuid.UUID(tool["id"])
+        assert reopened.tools[renamed["name"]].enabled is False
+        assert reopened.tools[tool["name"]].id == uuid.UUID(reused.json()["id"])
+        reopened.delete_tool(reopened.tools[renamed["name"]])
         assert not path.exists()
-        assert reopened.tool(tool["name"]) is not None
+        assert tool["name"] in reopened.tools
     finally:
         reopened.close()
 
@@ -137,7 +137,7 @@ async def test_failed_rename_recovers_one_identity_and_file(
     reopened = Store(store.root)
     try:
         assert len(reopened.tools) == 1
-        assert reopened.tool(current[0]["name"]).id == uuid.UUID(tool["id"])
+        assert reopened.tools[current[0]["name"]].id == uuid.UUID(tool["id"])
     finally:
         reopened.close()
 

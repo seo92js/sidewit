@@ -9,17 +9,24 @@ Concurrency model: one process owns the directory. Every mutation runs synchrono
 event loop (no `await` between reading the current state and writing the file), so a request
 never observes or overwrites another request's half-done change. This replaces database row
 locks. Each file is replaced atomically (write a temporary file, fsync, rename).
+
+Stored records are immutable snapshots shared by `*_snapshot`, `definition` and `tool_check`;
+records are frozen and their dict fields must not be modified either; derive changes with
+`dataclasses.replace`.
 """
 
+import errno
 import fcntl
 import json
 import os
 import re
+import secrets
+import stat
 import tempfile
 import uuid
 from collections import OrderedDict
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -41,7 +48,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ContextRecord:
     name: str
     dialect: Dialect
@@ -54,7 +61,7 @@ class ContextRecord:
     updated_at: datetime = field(default_factory=_now)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ToolRecord:
     context_id: uuid.UUID
     name: str
@@ -86,6 +93,16 @@ class StoreError(Exception):
     ) -> None:
         super().__init__(message)
         self.operation = operation
+
+
+class StoreUnavailable(StoreError):
+    """Recovery already failed; nothing is served until restart."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Storage recovery failed; restart after repairing the data directory",
+            operation="access",
+        )
 
 
 class _ContextFile(BaseModel):
@@ -154,6 +171,7 @@ class Store:
         self._tools_dir = root / "tools"
         self.contexts: dict[uuid.UUID, ContextRecord] = {}
         self.tools: dict[str, ToolRecord] = {}
+        self._definitions: dict[uuid.UUID, ContextDefinition] = {}
         self._tool_names: dict[uuid.UUID, str] = {}
         # Existing name-based files keep their path; renaming changes one file atomically.
         self._tool_paths: dict[uuid.UUID, Path] = {}
@@ -172,42 +190,47 @@ class Store:
             self.close()
             if isinstance(e, StoreError):
                 raise
-            raise StoreError(
-                "Data directory is unavailable or already owned by another process",
-                operation="open",
-            ) from e
+            if isinstance(e, BlockingIOError):
+                message = "Data directory is already owned by another process"
+            else:
+                message = f"Data directory {root} is not usable by UID {os.getuid()}: {e.strerror}"
+            raise StoreError(message, operation="open") from e
 
     def close(self) -> None:
         self._available = False
         self._tool_checks.clear()
+        self._definitions.clear()
         if self._lock is not None:
             self._lock.close()
             self._lock = None
 
     def require_available(self) -> None:
         if not self._available:
-            raise StoreError("Storage recovery failed; restart after repairing the data directory")
+            raise StoreUnavailable()
 
-    # reads ----------------------------------------------------------------------------
+    # read-only snapshots (shared) -----------------------------------------------------
 
-    def context(self, context_id: uuid.UUID) -> ContextRecord | None:
-        return deepcopy(self.contexts.get(context_id))
+    def context_snapshot(self, context_id: uuid.UUID) -> ContextRecord | None:
+        return self.contexts.get(context_id)
 
-    def context_named(self, name: str) -> ContextRecord | None:
-        return deepcopy(next((c for c in self.contexts.values() if c.name == name), None))
-
-    def tool(self, name: str) -> ToolRecord | None:
-        return deepcopy(self.tools.get(name))
-
-    def tool_by_id(self, tool_id: uuid.UUID) -> ToolRecord | None:
+    def tool_snapshot(self, tool_id: uuid.UUID) -> ToolRecord | None:
         name = self._tool_names.get(tool_id)
-        return deepcopy(self.tools.get(name)) if name is not None else None
+        return self.tools.get(name) if name is not None else None
 
-    def tools_of(self, context_id: uuid.UUID) -> list[ToolRecord]:
+    def tool_snapshots(self, context_id: uuid.UUID) -> list[ToolRecord]:
         return sorted(
-            (deepcopy(t) for t in self.tools.values() if t.context_id == context_id),
-            key=lambda t: t.name,
+            (t for t in self.tools.values() if t.context_id == context_id), key=lambda t: t.name
         )
+
+    def definition(self, context: ContextRecord) -> ContextDefinition:
+        """Parsed `context.definition`, cached only for the currently stored snapshot."""
+        if self.contexts.get(context.id) is not context:
+            return ContextDefinition.model_validate(context.definition)
+        parsed = self._definitions.get(context.id)
+        if parsed is None:
+            parsed = ContextDefinition.model_validate(context.definition)
+            self._definitions[context.id] = parsed
+        return parsed
 
     def healthy(self) -> bool:
         """The directory is readable and writable."""
@@ -227,7 +250,7 @@ class Store:
         result = self._tool_checks.get(key)
         if result is not None:
             self._tool_checks.move_to_end(key)
-        return deepcopy(result)
+        return result
 
     def remember_tool_check(
         self, tool: ToolRecord, context: ContextRecord, result: ValidationResult
@@ -240,16 +263,18 @@ class Store:
 
     # writes ---------------------------------------------------------------------------
 
-    def save_context(self, record: ContextRecord) -> None:
+    def save_context(self, record: ContextRecord) -> ContextRecord:
         self.require_available()
         for key in list(self._tool_checks):
             if key[2] == record.id:
                 del self._tool_checks[key]
-        record.updated_at = _now()
-        self._write(self._contexts_dir / f"{record.id}.json", record)
-        self.contexts[record.id] = deepcopy(record)
+        self._definitions.pop(record.id, None)
+        stored = deepcopy(replace(record, updated_at=_now()))
+        self._write(self._contexts_dir / f"{record.id}.json", stored)
+        self.contexts[record.id] = stored
+        return stored
 
-    def save_tool(self, record: ToolRecord) -> None:
+    def save_tool(self, record: ToolRecord) -> ToolRecord:
         self.require_available()
         occupied = self.tools.get(record.name)
         if occupied is not None and occupied.id != record.id:
@@ -257,18 +282,20 @@ class Store:
         previous_name = self._tool_names.get(record.id)
         path = self._tool_paths.get(record.id, self._tools_dir / f"{record.id}.json")
         self._forget_tool_checks(record.id)
-        record.updated_at = _now()
-        self._write(path, record)
+        stored = deepcopy(replace(record, updated_at=_now()))
+        self._write(path, stored)
         if previous_name is not None and previous_name != record.name:
             self.tools.pop(previous_name)
-        self.tools[record.name] = deepcopy(record)
+        self.tools[record.name] = stored
         self._tool_names[record.id] = record.name
         self._tool_paths[record.id] = path
+        return stored
 
     def delete_context(self, record: ContextRecord) -> None:
         self.require_available()
         self._unlink(self._contexts_dir / f"{record.id}.json")
         self.contexts.pop(record.id, None)
+        self._definitions.pop(record.id, None)
 
     def delete_tool(self, record: ToolRecord) -> None:
         self.require_available()
@@ -300,7 +327,7 @@ class Store:
         except (ValueError, TypeError) as e:
             raise StoreError("Record contains unsupported JSON values.", operation="write") from e
         try:
-            fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+            fd, temporary = _create_temporary(path)
             try:
                 with os.fdopen(fd, "wb") as f:
                     f.write(encoded)
@@ -334,6 +361,7 @@ class Store:
             ) from e
         problems: list[str] = []
         contexts: dict[uuid.UUID, ContextRecord] = {}
+        definitions: dict[uuid.UUID, ContextDefinition] = {}
         tools: dict[str, ToolRecord] = {}
         tool_paths: dict[uuid.UUID, Path] = {}
         for path in _json_files(self._contexts_dir):
@@ -350,9 +378,11 @@ class Store:
             elif any(c.name == parsed.name for c in contexts.values()):
                 problems.append(f"{path}: another Context is named '{parsed.name}'")
             else:
-                record = ContextRecord(**_fields(parsed, ContextRecord))
-                record.definition = parsed.definition.to_json()
+                record = ContextRecord(
+                    **(_fields(parsed, ContextRecord) | {"definition": parsed.definition.to_json()})
+                )
                 contexts[record.id] = record
+                definitions[record.id] = parsed.definition
         for path in _json_files(self._tools_dir):
             parsed = _parse(path, _ToolFile, problems)
             if parsed is None:
@@ -374,6 +404,7 @@ class Store:
                 operation="validate",
             )
         self.contexts, self.tools = contexts, tools
+        self._definitions = definitions
         self._tool_names = {t.id: t.name for t in tools.values()}
         self._tool_paths = tool_paths
         self._available = True
@@ -407,6 +438,31 @@ def _parse[M: BaseModel](path: Path, model: type[M], problems: list[str]) -> M |
 def _fields(parsed: BaseModel, record_type: type) -> dict[str, Any]:
     data = parsed.model_dump(mode="python")
     return {f.name: data[f.name] for f in fields(record_type)}
+
+
+def _create_temporary(path: Path) -> tuple[int, Path]:
+    """Like mkstemp, but with normal file permissions (umask, or the replaced file's mode)
+    instead of 0600, so backups can read the data."""
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mode = None
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    for _ in range(100):
+        temporary = path.parent / f".{path.name}.{secrets.token_hex(8)}"
+        try:
+            fd = os.open(temporary, flags, 0o666)
+        except FileExistsError:
+            continue
+        if mode is not None:
+            try:
+                os.fchmod(fd, mode)
+            except BaseException:
+                os.close(fd)
+                temporary.unlink(missing_ok=True)
+                raise
+        return fd, temporary
+    raise FileExistsError(errno.EEXIST, "No unused temporary file name")
 
 
 def _sync_directory(path: Path) -> None:

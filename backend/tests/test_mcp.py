@@ -2,6 +2,7 @@
 
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import httpx
 import httpx2
@@ -566,13 +567,12 @@ async def test_discovery_pagination_and_invalid_stale_tools(mcp_app, seed, store
             offset = page["next_offset"]
         assert len(set(ids)) == 3
         record = store.tools[tool["name"]]
-        record.context_version = 0
+        store.tools[tool["name"]] = replace(record, context_version=0)
         assert (
             payload(await session.call_tool("list_tools", {"context_id": context["id"]}))["items"]
             == []
         )
-        record.context_version = context["version"]
-        record.status = "invalid"
+        store.tools[tool["name"]] = replace(record, status="invalid")
         assert (
             payload(await session.call_tool("list_tools", {"context_id": context["id"]}))["items"]
             == []
@@ -665,8 +665,8 @@ async def test_storage_failure_recovers_without_leaking_details(
     from tests.test_tools_api import ARGS
 
     _, tool, rest = seed
-    record = store.tools[tool["name"]]
-    record.context_version = 0  # Invocation must persist revalidation.
+    # Invocation must persist revalidation.
+    store.tools[tool["name"]] = replace(store.tools[tool["name"]], context_version=0)
     store._tool_checks.clear()
 
     def fail(*args):
@@ -678,6 +678,33 @@ async def test_storage_failure_recovers_without_leaking_details(
         assert result.is_error and payload(result)["error"] == "storage_unavailable"
         assert "PRIVATE_FILE_CONTENT" not in result.content[0].text + caplog.text
         assert (await rest.get("/api/v1/health")).status_code == 200
+
+
+async def test_unavailable_storage_is_not_reloaded_by_each_tool_call(
+    mcp_app, seed, store, monkeypatch, caplog
+):
+    from sidewit.store import Store, StoreError
+    from tests.test_tools_api import ARGS
+
+    context, tool, _ = seed
+    path = store.root / "contexts" / f"{context['id']}.json"
+    path.write_text("broken json")
+    with pytest.raises(StoreError):
+        store.restore()
+    loads = []
+    load = Store._load
+    monkeypatch.setattr(Store, "_load", lambda self: loads.append(1) or load(self))
+    caplog.clear()
+    async with connect(mcp_app) as session:
+        for name, arguments in [
+            ("list_contexts", {}),
+            ("list_tools", {"context_id": context["id"]}),
+            ("invoke_tool", {"tool_id": tool["id"], "arguments": ARGS}),
+        ]:
+            result = await session.call_tool(name, arguments)
+            assert result.is_error and payload(result)["error"] == "storage_unavailable"
+    assert loads == []
+    assert not [r for r in caplog.records if getattr(r, "event_name", None) == "storage_failure"]
 
 
 async def test_mixed_tool_and_generated_operations(mcp_app, seed):
@@ -701,6 +728,7 @@ async def test_mixed_tool_and_generated_operations(mcp_app, seed):
                                 "value": "2026-09-01T00:00:00+09:00",
                             },
                         ],
+                        "periods": [],
                     }
                 ],
             ),

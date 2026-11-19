@@ -99,6 +99,47 @@ def test_warnings_for_schema_qualifier_and_ignored_statements():
     assert any(w.startswith("Ignored statement: CREATE INDEX") for w in warnings)
 
 
+def test_schema_qualifier_warning_is_deduplicated_without_rescanning_warnings(monkeypatch):
+    from dataclasses import dataclass
+    from dataclasses import field as dataclass_field
+
+    from sidewit.ddl import importer
+
+    scans = []
+
+    class ScanCountingList(list):
+        def __iter__(self):
+            scans.append(len(self))
+            return super().__iter__()
+
+    @dataclass
+    class CountingParsed(importer._Parsed):
+        warnings: list = dataclass_field(default_factory=ScanCountingList)
+
+    monkeypatch.setattr(importer, "_Parsed", CountingParsed)
+    # pg_dump repeats the schema in every statement: one warning per table, while ignored
+    # statements keep the warning list growing.
+    tables = 40
+    ddl = "\n".join(
+        f"CREATE TABLE public.t{i} (id int PRIMARY KEY, prev_id int);\n"
+        f"ALTER TABLE public.t{i} OWNER TO app;\n"
+        + (
+            f"ALTER TABLE ONLY public.t{i} ADD CONSTRAINT t{i}_fk "
+            f"FOREIGN KEY (prev_id) REFERENCES public.t{i - 1}(id);"
+            if i
+            else ""
+        )
+        for i in range(tables)
+    )
+    messages = [w.message for w in run(ddl).warning_details]
+    qualifier = [m for m in messages if m.startswith("Schema qualifier removed")]
+    assert sorted(qualifier) == sorted(
+        f"Schema qualifier removed: 'public.t{i}' → 't{i}'." for i in range(tables)
+    )
+    assert len(messages) > tables
+    assert len(scans) < tables
+
+
 def test_foreign_key_to_table_outside_ddl_is_skipped_with_warning():
     result = run("CREATE TABLE orders (id int, user_id int REFERENCES users(id));")
     assert result.definition.relations == []
