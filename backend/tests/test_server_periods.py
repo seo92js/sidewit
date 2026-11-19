@@ -8,7 +8,7 @@ import sqlglot
 from sidewit.generation.dto import LLMParameter, LLMPeriodBounds
 from sidewit.generation.periods import bind_periods
 from sidewit.generation.tool_plan import ToolPlanSelection
-from sidewit.validation.periods import period_usage_issues
+from sidewit.validation.periods import period_inputs, period_usage_issues
 from tests.test_generate_api import ask, ok
 from tests.test_generate_api import context as context
 from tests.test_generate_api import fake as fake
@@ -42,6 +42,7 @@ def usage(where):
         ":s <= x AND :e > x",
         "(x >= (:s)) AND x < :e",
         "x BETWEEN :s AND y AND x < :e",
+        "NOT (x < :s) AND x < :e",
     ],
 )
 def test_half_open_bounds_pass(where):
@@ -59,6 +60,8 @@ def test_half_open_bounds_pass(where):
         ("(x, y) >= (:s, 1) AND x < :e", ["s"]),
         ("x >= :s AND x < :e AND y = :s", ["s"]),
         (":s >= :e", ["e", "s"]),
+        ("NOT (x >= :s) AND x < :e", ["s"]),
+        ("NOT (x >= :s OR y = 1) AND x < :e", ["s"]),
     ],
 )
 def test_other_uses_are_rejected(where, refs):
@@ -188,3 +191,33 @@ async def test_tool_with_inclusive_end_rejects_a_period(client, context, fake):
     res = await ask(client, context, question="지난주 주문 건수")
     assert res.status_code == 422
     assert "period_bound_misused" in res.text
+
+
+@pytest.mark.parametrize(
+    ("where", "pairs"),
+    [
+        ("x >= :s AND x < :e", [("s", "e")]),
+        (":e > x AND (x >= :s)", [("s", "e")]),
+        ("x BETWEEN :s AND :e", []),
+        ("x >= :s::date AND x < :e", []),
+        ("x >= :s AND y < :e", []),
+        ("a >= :s1 AND a < :e1 AND b >= :s2 AND b < :e2", [("s1", "e1"), ("s2", "e2")]),
+    ],
+)
+def test_period_inputs_are_half_open_pairs_on_the_same_expression(where, pairs):
+    ast = sqlglot.parse_one(f"SELECT 1 FROM t WHERE {where}", read="postgres")
+    assert period_inputs(ast, ["s", "e", "s1", "e1", "s2", "e2"]) == pairs
+
+
+async def test_catalog_lists_period_inputs_only_for_half_open_tools(client, context, fake):
+    await saved_range_tool(client, context, COUNT_SQL)
+    provider = fake(tool_plan([week()]))
+    await ask(client, context, question="지난주 주문 건수")
+    assert '"period_inputs": [{"start": "start_at", "end": "end_at"}]' in provider.calls[0][0]
+
+
+async def test_catalog_has_no_period_inputs_for_an_inclusive_tool(client, context, fake):
+    await saved_range_tool(client, context, COUNT_SQL.replace("< :end_at", "<= :end_at"))
+    provider = fake(tool_plan([week()]))
+    await ask(client, context, question="지난주 주문 건수")
+    assert '"period_inputs": []' in provider.calls[0][0]

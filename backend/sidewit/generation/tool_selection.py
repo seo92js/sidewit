@@ -7,13 +7,17 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
+from sqlglot.errors import SqlglotError
 
+from sidewit.domain.dialect import to_sqlglot
 from sidewit.domain.operation import SqlOperation
+from sidewit.domain.params import DATE_TYPES
 from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS
 from sidewit.generation.dto import LLMParameter, LLMPeriodBounds
 from sidewit.generation.parameters import convert_parameter
 from sidewit.generation.periods import bind_periods
 from sidewit.generation.planners import GenerationInput
+from sidewit.sql import parse_sql
 from sidewit.store import ContextRecord, Store, ToolRecord
 from sidewit.tools.service import (
     InvalidArguments,
@@ -23,6 +27,7 @@ from sidewit.tools.service import (
     invoke,
 )
 from sidewit.validation.input_schema import parameter_types
+from sidewit.validation.periods import period_inputs
 from sidewit.validation.sql_validator import ValidationResult
 
 MAX_CATALOG_CHARS = 100_000
@@ -56,6 +61,9 @@ def selection_context(
                 "input_schema": t.input_schema,
                 "operation": t.operation,
                 "status": effective_status(t, context),
+                "period_inputs": [
+                    {"start": start, "end": end} for start, end in _period_inputs(t, context)
+                ],
             }
             for t in candidates
         ],
@@ -71,6 +79,17 @@ def selection_context(
         f"\nContext: {json.dumps(context.definition, ensure_ascii=False)}"
         f"\nTool catalog: {catalog}" + CLARIFICATION_INSTRUCTIONS
     )
+
+
+def _period_inputs(tool: ToolRecord, context: ContextRecord) -> list[tuple[str, str]]:
+    dates = [n for n, kind in parameter_types(tool.input_schema).items() if kind in DATE_TYPES]
+    if len(dates) < 2:
+        return []
+    try:
+        ast = parse_sql(tool.operation["statement"], to_sqlglot(context.dialect))[0]
+    except (SqlglotError, RecursionError):
+        return []
+    return period_inputs(ast, dates) if ast is not None else []
 
 
 def unchanged_tool(

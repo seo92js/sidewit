@@ -83,9 +83,10 @@ Multiple steps require an explicit ID. Saved Tool steps cannot be drafted again.
 5. Present or compare the results in your application.
 
 Relative periods on a saved Tool's date inputs (the last N days, yesterday, the last calendar
-week or month) are computed by the server, not the model, when the Tool uses them as
-`field >= :start` and `field < :end`. A Tool with any other use, such as an inclusive end, makes
-such a call fail with 422 `invalid_tool_arguments`.
+week or month) are computed by the server, not the model. The Tool catalog lists as
+`period_inputs` the input pairs used only as `field >= :start` and `field < :end`; a Tool
+without them, such as one with an inclusive end, is not used for a relative period, and that
+part becomes a generated task.
 
 Independent means there are no step-output bindings or required result dependencies.
 Your application can choose its execution order, concurrency, transaction policy and handling
