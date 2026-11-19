@@ -12,9 +12,15 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 RUN uv sync --frozen --no-dev
 
-# Contexts and Tools (SPEC §11). Mount a persistent volume here.
-RUN mkdir -p /data
+# Non-root; Compose `user:` may override it with the data directory's owner.
+ARG UID=1000 GID=1000
+RUN groupadd --gid "$GID" sidewit \
+    && useradd --uid "$UID" --gid "$GID" --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin sidewit \
+    && mkdir -p /data \
+    && chown "$UID:$GID" /data
 ENV SIDEWIT_DATA_DIR=/data
+USER $UID:$GID
 
 EXPOSE 8000
 CMD ["uvicorn", "sidewit.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
