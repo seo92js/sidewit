@@ -3,7 +3,7 @@ import { Link } from "react-router";
 
 import { useContexts, useTools, useSetToolEnabled } from "@/api/queries";
 import type { Tool } from "@/api/types";
-import { Empty, ErrorAlert, Loading } from "@/components/app/common";
+import { Empty, ErrorAlert, Loading, splitQueryError } from "@/components/app/common";
 import { ToolStatusBadge } from "@/components/app/ToolStatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
 
 export default function ToolsPage() {
   const tools = useTools();
+  const toolsError = splitQueryError(tools);
   const contexts = useContexts();
   const contextName = (id: string) =>
     contexts.data?.find((c) => c.id === id)?.name ?? id.slice(0, 8);
@@ -39,7 +40,8 @@ export default function ToolsPage() {
         </Button>
       </div>
       {tools.isLoading && <Loading />}
-      {tools.error && <ErrorAlert error={tools.error} title="Could not load tools" />}
+      <ErrorAlert error={toolsError.blocking} title="Could not load tools" />
+      <ErrorAlert error={toolsError.notice} title="Could not refresh tools" />
       {tools.data?.length === 0 && (
         <Empty>
           No tools yet. Generate an operation in the{" "}
@@ -111,7 +113,11 @@ function ToolRow({ tool, contextName }: { tool: Tool; contextName: string }) {
             {activation.isPending ? "Updating…" : tool.enabled ? "Disable" : "Enable"}
           </Button>
         </div>
-        <ErrorAlert error={activation.error} title="Could not change Tool availability" />
+        <ErrorAlert
+          error={activation.error}
+          resource="Tool"
+          title="Could not change Tool availability"
+        />
       </TableCell>
       <TableCell>
         <ToolStatusBadge status={tool.status} />

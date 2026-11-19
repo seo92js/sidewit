@@ -794,25 +794,31 @@ test("Starting a new request drops prior clarification answers", async () => {
 });
 
 test("Clarification retry uses the response Context version after the cache catches up", async () => {
-  vi.mocked(request)
-    .mockResolvedValueOnce({
+  const generate: unknown[] = [
+    {
       ...clarification,
       context_version: 2,
       continuation_request: {
         ...clarification.continuation_request,
         expected_context_version: 2,
       },
-    })
-    .mockRejectedValueOnce(new Error("Offline"));
+    },
+    new Error("Offline"),
+    { status: "unanswerable", generation_id: "g2", context_version: 2, reason: "No matching data" },
+  ];
+  vi.mocked(request).mockImplementation(async (method, path) => {
+    // The cached list still says v1; the v2 response makes the page re-read it.
+    if (method === "GET" && path === "/contexts") return { items: [{ ...context, version: 2 }] };
+    const next = generate.shift();
+    if (next instanceof Error) throw next;
+    return next;
+  });
   const qc = client();
   playground(qc);
   const user = userEvent.setup();
   fireEvent.change(screen.getByLabelText("Question"), { target: { value: "This month reviews" } });
   await user.click(screen.getByRole("button", { name: "Generate operation" }));
   await screen.findByRole("button", { name: "Created" });
-  await act(async () => {
-    qc.setQueryData(["contexts"], [{ ...context, version: 2 }]);
-  });
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Created" }).matches(":disabled")).toBe(false),
   );
@@ -823,12 +829,6 @@ test("Clarification retry uses the response Context version after the cache catc
   expect(screen.getByRole("button", { name: "Continue with answers" }).matches(":disabled")).toBe(
     false,
   );
-  vi.mocked(request).mockResolvedValueOnce({
-    status: "unanswerable",
-    generation_id: "g2",
-    context_version: 2,
-    reason: "No matching data",
-  });
   await user.click(screen.getByRole("button", { name: "Continue with answers" }));
   await screen.findByText("No matching data");
   expect(request).toHaveBeenLastCalledWith(

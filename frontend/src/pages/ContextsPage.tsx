@@ -3,25 +3,27 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { useContexts, useCreateContext } from "@/api/queries";
-import { Empty, ErrorAlert, Loading } from "@/components/app/common";
+import { Empty, ErrorAlert, Loading, splitQueryError } from "@/components/app/common";
 import { TimezoneInput } from "@/components/app/TimezoneInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn } from "cn";
 
 import { ContextEditor } from "./ContextEditor";
 
 export default function ContextsPage() {
   const { id } = useParams();
   const contexts = useContexts();
+  const contextsError = splitQueryError(contexts);
 
   return (
     <div className="grid gap-5 md:grid-cols-[240px_1fr]">
       <aside className="space-y-3">
         <h1 className="text-lg font-semibold">Contexts</h1>
         {contexts.isLoading && <Loading />}
-        {contexts.error && <ErrorAlert error={contexts.error} title="Could not load contexts" />}
+        <ErrorAlert error={contextsError.blocking} title="Could not load contexts" />
+        <ErrorAlert error={contextsError.notice} title="Could not refresh contexts" />
         {contexts.data && contexts.data.length === 0 && (
           <p className="text-sm text-muted-foreground">No contexts yet.</p>
         )}

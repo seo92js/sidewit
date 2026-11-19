@@ -68,9 +68,17 @@ export function SavedToolStatus({
           edit this Tool.
         </p>
       )}
-      <ErrorAlert error={activationError} title="Could not change Tool availability" />
+      <ErrorAlert
+        error={activationError}
+        resource="Tool"
+        title="Could not change Tool availability"
+      />
       {tool.validation && <ValidationPanel result={tool.validation} label="Saved Tool checks" />}
-      <ErrorAlert error={rebuildError} title="Could not rebuild from the contract" />
+      <ErrorAlert
+        error={rebuildError}
+        resource="Tool"
+        title="Could not rebuild from the contract"
+      />
       {tool.status === "invalid" && (
         <Alert variant="destructive">
           <AlertTitle>This tool is invalid and cannot be invoked</AlertTitle>

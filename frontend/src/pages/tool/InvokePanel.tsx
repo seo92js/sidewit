@@ -211,6 +211,7 @@ export function InvokePanel({
         <ErrorAlert
           error={allShownPerField ? null : invoke.error}
           issues={otherIssues}
+          resource="Tool"
           title={
             invoke.error instanceof ApiError && invoke.error.error === "tool_invalid"
               ? "Tool is invalid (409)"
