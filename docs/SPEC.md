@@ -128,8 +128,8 @@ Rules:
 `definition.metrics` contains developer-registered contracts and defaults to `[]`. A contract specifies its metric ID, aggregate, explicit INNER JOINs, GROUP BY, fixed scalar comparisons, required inputs and allowed/default date columns. `row_count` means COUNT(*); `non_null_count` counts non-NULL values of the specified column. Overlapping fields between fixed conditions and caller inputs, or invalid types, references or JOINs, return 422 when saving the Context. DDL import preserves contracts and warns about invalid references.
 
 When no saved Tool is selected (§5.3), generation tries **registered metrics first** through three paths:
-- Without metrics, the model writes SQL (`generate_v10`).
-- With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v5`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
+- Without metrics, the model writes SQL (`generate_v11`).
+- With metrics and `allow_generated_sql: true` (the default), **hybrid** generation (`hybrid_v6`) selects a path in one LLM call. If one registered metric answers the entire question, `route: metric` lets the server compile SQL from the contract; otherwise `route: sql` lets the model write SQL. The SQL path is also instructed to follow registered metric aggregates and fixed filters as business definitions.
 - With `allow_generated_sql: false`, this generation stage uses metrics only (`metric_plan_v3`) and returns unanswerable when none matches. At least one registered metric is required for this setting; otherwise it returns 422 `no_generation_path`.
 
 When saved Tools are selected, successful `/generate` responses have top-level `source: "plan"`;
@@ -222,12 +222,13 @@ created_at
 1. **The only canonical style is named `:name`.** Placeholder names match `^[a-z][a-z0-9_]{0,63}$`. `?`, `$1` and `%(x)s` produce `unsupported_placeholder_style`. The application adapts placeholders to its driver and must never interpolate values into SQL strings.
 2. **Parameters represent variable values from the user request, not constants required by the Context or Business Rules.** For example, the request value "서울" becomes `:region`, while a Rule's `'COMPLETED'` remains a literal.
 3. **Generate resolves relative time into absolute values.** Expressions such as "최근 30일", "지난달" and "어제" become absolute parameters based on `reference_time` and the Context `timezone`. Newly generated SQL must not use `NOW()` or `CURRENT_DATE`.
+   - The server, not the model, computes the last N days, yesterday, the last calendar week (Monday start) and the last calendar month. The model names the period and its two bound parameters (`periods`, §6.2); the server writes both values with the same computation as metric periods. Other periods are written by the model as absolute values.
    - `reference_time` makes relative time reproducible; it does not select the date column. That decision uses Context field descriptions and Business Rules (§6.3).
    - Use `date-time` (with an offset) for timestamp columns and `date` for date columns.
 4. **Operation parameters and Tool inputs are distinct concepts.** Operation parameters are concrete values for this request; Tool inputs define a reusable contract.
    - `/tools/draft` maps Operation parameters **directly** to Tool inputs without automatic generalization.
    - Users generalize inputs in the Tool Editor, for example replacing `:start_date` with `NOW() - :days * INTERVAL '1 day'` and using a `days: integer` input. Tool statements allow `NOW()`.
-5. **Dates and times are ISO 8601 strings.** Their JSON Schema forms are `{"type":"string","format":"date"}` and `{"type":"string","format":"date-time"}`. The application handles type conversion.
+5. **Dates and times are ISO 8601 strings.** Their JSON Schema forms are `{"type":"string","format":"date"}` and `{"type":"string","format":"date-time"}`. A `date` is `YYYY-MM-DD`; a `date-time` is `YYYY-MM-DDThh:mm[:ss[.ffffff]]` followed by `Z` or a `±hh:mm` offset, an absolute instant that PostgreSQL's timestamptz input reads the same way. Other ISO 8601 forms (week dates, hour-only times, basic format without separators, more than six fractional digits) are rejected. The application handles type conversion.
 6. **Unsupported in v0.1:** optional parameters, defaults, arrays (IN bindings) and placeholders inside string literals.
 7. **Sidewit never interpolates values into SQL strings.** Statements retain placeholders, and values are returned separately in `parameters`.
 
@@ -294,7 +295,10 @@ the container with the new environment. See [deployment and recovery](DEPLOYMENT
 - `POST /api/web/session` accepts `{username, password}` and returns `{username,
   api_key_required}`. Incorrect credentials return 401 `invalid_admin_credentials` without
   identifying which field failed. Ten failed attempts per client address per minute cause
-  429 `login_rate_limited`, with seconds remaining in `details.retry_after`.
+  429 `login_rate_limited`, with seconds remaining in `details.retry_after`. The client address
+  is the connection's, or the `X-Forwarded-For` address set by a proxy trusted through
+  `FORWARDED_ALLOW_IPS` (the bundled web container in Compose); see
+  [client addresses behind a proxy](DEPLOYMENT.md#client-addresses-behind-a-proxy).
 - `GET /api/web/session` returns the same session information. Missing/expired sessions
   return 401 `admin_session_required`.
 - `DELETE /api/web/session` revokes the current token and clears its cookie; it is idempotent
@@ -371,7 +375,7 @@ for uncovered parts, up to five operations in total. If no Tool fits, generation
 whole question as one operation. No UI toggle or API mode is needed. Explicit metric options bypass Tool selection. With no
 Tools, the selection call is skipped. Context generation policy still applies.
 
-Selection uses `tool_plan_v3` and receives saved SQL and input contracts, Context-local
+Selection uses `tool_plan_v4` and receives saved SQL and input contracts, Context-local
 reference time and clarification answers. Successful plans return `status: "ok", source:
 "plan", execution: "independent", operations: [...]`; there is no top-level operation or
 validation, even for one step. Each step contains its ID, source, operation, validation and optional metric binding.
@@ -388,7 +392,9 @@ between steps. Generated operations reuse the existing planner and repair loop. 
 model-written subquestions; validation uses the original request/answers and reference time.
 Workers run concurrently under the shared request deadline. Unexpected worker exceptions
 cancel and join all remaining workers before the request exits. Tool and Context versions are
-rechecked after generation. Each generated step exposes its task, source and optional
+rechecked after generation; any change returns 409 (`context_changed`, or `tool_changed` with
+the step ID). Saved Tool steps are invoked once, before generation: unchanged versions produce
+the same operations, so they are not invoked again. Each generated step exposes its task, source and optional
 Tool suggestion. See [operation plans](TOOL_PLANS.md) for lifecycle and draft behavior.
 
 When multiple generated tasks are ambiguous, return only the first unresolved task's
@@ -505,7 +511,7 @@ A 200 response is a successful single operation or plan, ambiguous, or unanswera
 ```
 
 Generation flow when no saved Tool is selected:
-1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v10`) without metrics; `HybridPlanner` (`hybrid_v5`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v3`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. A structured `date_field` request option takes precedence. Otherwise, the model returns a `date_field` intent after interpreting the question, answers, field descriptions and metric default. The compiler accepts only a member of that metric's `time_fields` using the existing case-insensitive reference resolution; it never infers a choice from field-name mentions. A null choice returns ambiguous without silently applying a default; an invalid field triggers repair. Negated fields and fields requested only in the output must not select the period basis. Interpreting natural language remains probabilistic.
+1. Choose a planner (`generation/planners.py`): `SqlPlanner` (`generate_v11`) without metrics; `HybridPlanner` (`hybrid_v6`) with metrics and generated SQL allowed; otherwise `MetricPlanner` (`metric_plan_v3`), also used for explicit metric options. Hybrid reuses SQL/Metric conversion and validation according to the model's `route`; a missing route triggers repair with `route_missing`. Metric options on a Context without metrics return 422 `invalid_metric_request` before the LLM call. The metric compiler builds aggregates, JOINs, filters and grouping. A structured `date_field` request option takes precedence. Otherwise, the model returns a `date_field` intent after interpreting the question, answers, field descriptions and metric default. The compiler accepts only a member of that metric's `time_fields`, case-insensitively; an unqualified name resolves only when exactly one listed field has it (`MetricDefinition.time_field`). It never infers a choice from field-name mentions. A null choice returns ambiguous without silently applying a default; an invalid field triggers repair. Negated fields and fields requested only in the output must not select the period basis. Interpreting natural language remains probabilistic.
 2. For `status=ok`, run the static Validator with the appropriate Generate policy (§7): `generate_policy(original question + answer values)` for SQL (including request-literal checks), or `CONTRACT_POLICY` for metrics. Return ambiguous/unanswerable without validation; discard any SQL the LLM supplied with those statuses.
 3. On validation failure, attach the errors and request repair **once only**.
 4. If repair also fails, return 422 `generation_invalid`. **The response contains no SQL.**
@@ -690,14 +696,16 @@ For provider compatibility, use lists instead of objects with dynamic keys. `val
   "reason": "string | null",
   "clarifications": [{"question": "string", "options": ["string"]}],
   "statement": "string | null",
-  "parameters": [{ "name": "region", "type": "string", "value": "서울" }, { "name": "days", "type": "integer", "value": "30" }],
+  "parameters": [{ "name": "region", "type": "string", "value": "서울" }, { "name": "start_at", "type": "date-time", "value": "" }, { "name": "end_at", "type": "date-time", "value": "" }],
+  "periods": [{ "kind": "rolling_days", "days": 30, "start": "start_at", "end": "end_at" }],
   "tool_suggestion": { "name": "snake_case", "description": "string" }
 }
 ```
 
+- `periods` (`generation/periods.py`): each entry names two declared parameters of the same type, `date` or `date-time`, used by no other entry. The server replaces their values with the half-open bounds of `kind` (`domain/period.py`, shared with metrics); a bad entry requests repair with `period_invalid`. The Validator then requires each bound to appear only as `field >= :start` and `field < :end` (flipped operands and parentheses allowed, no casts, no BETWEEN end), otherwise `period_bound_misused`. Hybrid answers keep the routes apart: a metric answer with `periods`, or a SQL answer with `period`/`date_field`, requests repair with `period_invalid` instead of dropping the period. Saved Tool calls accept the same `periods`; a mismatch returns 422 `invalid_tool_arguments`.
 - Convert integer/number values **only when exactly representable** (`domain/params.exact_number`, shared by metrics and DDL CHECK values). Integral values in the bigint range become ints (`"9007199254740993"`, `"3.0"`); others become floats only when representable under the exact-number rules (`"0.1"`, `"1e30"`). Values requiring rounding, becoming infinite or using excessive exponents remain strings and trigger repair through `parameter_type_mismatch`. The server never silently rounds numbers.
 - Duplicate parameter names trigger repair with `duplicate_parameter` rather than choosing one value (a Generate conversion-stage code).
-- `request_value_literal` is also Generate-only. `generate_policy(original question + answer values)` (`validation/request_literals.py`) requests repair when a direct literal in a comparison/IN/BETWEEN/LIMIT/OFFSET appears verbatim in the original question or an answer. Offered clarification questions are excluded. Numbers immediately followed by date/duration units (`1월`, `30일`, `7 days`) are period expressions, not matches. Literals matching registered constants on the same field are exempt. For Rules without conditions, values mentioned in Context descriptions or Rule prose are conservatively protected as potential constants. This does not validate semantics or Rule application and does not apply to manually authored Tools/`DEFAULT_POLICY`.
+- `request_value_literal` is also Generate-only. `generate_policy(original question + answer values)` (`validation/request_literals.py`) requests repair when a literal used as a value (an operand of any comparison form in §7.1, traced through ARRAY, ANY, VALUES, casts and subqueries, or a LIMIT/OFFSET) appears verbatim in the original question or an answer. Offered clarification questions are excluded. Numbers immediately followed by date/duration units (`1월`, `30일`, `7 days`) are period expressions, not matches. Literals matching registered constants on the same field are exempt. For Rules without conditions, values mentioned in Context descriptions or Rule prose are conservatively protected as potential constants. This does not validate semantics or Rule application and does not apply to manually authored Tools/`DEFAULT_POLICY`.
 - This DTO is internal to `generation/`, not a domain model or public API contract.
 
 ### 6.2.1 Internal output for registered metrics
@@ -727,9 +735,9 @@ This DTO contains a selected metric, inputs, period and date-field reference, bu
   - Return unanswerable when required data is absent from the Context.
   - Return ambiguous with clarifications when multiple interpretations remain unresolved by Rules.
   - Generate a single SELECT statement.
-  - Apply §4 rules 2 and 3: parameterize only variable values, resolve relative times to absolute values, prohibit `NOW()` in new SQL and prohibit placeholders in literals.
+  - Apply §4 rules 2 and 3: parameterize only variable values, name supported relative periods in `periods` for the server to fill (write other periods as absolute values), prohibit `NOW()` in new SQL and prohibit placeholders in literals.
   - Apply Business Rules.
-- Current generation prompts are `sidewit/prompts/generate_v10.md`, `sidewit/prompts/hybrid_v5.md` and `sidewit/prompts/metric_plan_v3.md`; each Generation records `prompt_version`. Tables/columns needing quotes for case or reserved words receive exact SQL spellings from the compiler's identifier renderer. Repairs for `unknown_resource`/`unknown_field` also include those spellings and quoting rules; SQL is not rewritten automatically and validation is not relaxed. `allowed_values` instructions require exact spelling without translation, transliteration or invention. Multiple undescribed date/timestamp fields produce an ambiguity hint, excluding bookkeeping timestamps such as `updated_at` and `deleted_at`. These are model instructions, not enforced validation.
+- Current generation prompts are `sidewit/prompts/generate_v11.md`, `sidewit/prompts/hybrid_v6.md` and `sidewit/prompts/metric_plan_v3.md`; each Generation records `prompt_version`. Tables/columns needing quotes for case or reserved words receive exact SQL spellings from the compiler's identifier renderer. Repairs for `unknown_resource`/`unknown_field` also include those spellings and quoting rules; SQL is not rewritten automatically and validation is not relaxed. `allowed_values` instructions require exact spelling without translation, transliteration or invention. Multiple undescribed date/timestamp fields are listed per resource as dates with no documented period basis, a fact rather than an instruction (when to ask is the system prompt's rule), excluding bookkeeping timestamps such as `updated_at` and `deleted_at`. These are model instructions, not enforced validation.
 
 ---
 
@@ -760,9 +768,17 @@ It does not check function/operator existence or argument types, type compatibil
 
 **Checks stay within their supported scope.** When required policies (allowed values or registered constants) cannot be analyzed outside supported expressions, reject with `value_unverifiable` rather than passing them.
 
+**One definition of a comparison.** Allowed values, registered constants, relative time and request literals all use the comparison forms in `validation/comparisons.py`: `=`, `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`, `LIKE`/`ILIKE`, `[NOT] IN` (lists, subqueries, VALUES), `[NOT] BETWEEN [SYMMETRIC]`, simple `CASE x WHEN v`, `NULLIF(x, v)` and row comparisons. Rows are compared element by element as PostgreSQL does: `(a, b) < (c, d)` compares `a` with `c` by `<` and by `=`, and `b` with `d` by `<`. Either operand may be the field. A row compared with something other than a row constructor, subquery or VALUES list yields no isolable value and fails closed.
+
+Subqueries SQLGlot does not analyze as their own scope (inside a set operation's ORDER BY/LIMIT/OFFSET, or inside an aliased join's ON) are not name-checked. When they are present, required value policies fail with `value_unverifiable`, and Generate's relative-time policy fails with `relative_time_unverifiable` if they contain text or parameters.
+
 ### 7.2 Policies and checks
 
 The functions check uses a closed allowlist on every SQL path, including saved Tools.
+The allowlist names PostgreSQL functions, and a call is identified by the name PostgreSQL
+resolves: an unquoted name folds to lower case, a quoted name is exact (`"LOWER"(x)` is not
+`lower(x)`). Spellings SQLGlot understands but PostgreSQL does not provide (`median`,
+`timestamp_trunc`) are rejected.
 Unknown functions, schema-qualified calls, dynamic-SQL helpers, file access, sequence
 mutation and administration helpers are rejected with function_not_allowed.
 Supported table functions (unnest, generate_series, JSON element/entry functions) remain
@@ -793,7 +809,7 @@ echoing the malformed input. `/validate` returns its normal HTTP 200 validation 
 
 | Check | Code | Severity |
 |---|---|---|
-| sqlglot parsing failure, SQL exceeding 64,000 characters or complexity limits | `sql_parse_error` | error |
+| sqlglot parsing failure, SQL exceeding 64,000 characters or complexity limits, or syntax sqlglot misreads as names (an unquoted reserved keyword as the first part of a table, column or FROM-alias name, e.g. PostgreSQL's `TABLE t`; names after a dot may be keywords) | `sql_parse_error` | error |
 | More than one statement | `multiple_statements` | error |
 | Statements other than SELECT / WITH…SELECT / UNION, `SELECT INTO`, `FOR UPDATE` | `statement_not_allowed` | error |
 | Resource absent from Context (excluding visible CTEs), schema-qualified table, system table such as `pg_roles`, or invisible alias | `unknown_resource` | error |
@@ -809,11 +825,12 @@ echoing the malformed input. `/validate` returns its normal HTTP 200 validation 
 | Parameter declarations or values contain malformed Unicode, including JSON keys and nested values | `parameter_type_mismatch` | error |
 | Expression depends on the database's current time (only when `allow_relative_time=false`) | `relative_time_function` | error |
 | A date input uses a computation or cast whose independence from the database clock cannot be established (only when `allow_relative_time=false`) | `relative_time_unverifiable` | error |
+| A server-filled period bound is used other than as `field >= :start` / `field < :end` (only for `periods`, §6.2) | `period_bound_misused` | error |
 | Parameter binds the **same field, operator and value** as a registered constant (`allow_constant_parameters=false`, with supplied values). `:x <= fee` is treated as `fee >= :x` | `constant_as_parameter` | error |
 | Literal or supplied parameter compared with an `allowed_values` field using `=`, `!=`, `IS [NOT] DISTINCT FROM`, `[NOT] IN` or `= ANY/SOME/ALL(ARRAY[...])` is absent from the list. Text matches exactly; numbers compare by value. Range comparisons and LIKE are excluded | `value_not_allowed` | error |
-| A value compared with a constrained field cannot be evaluated within the supported scope, e.g. `upper(:s)` | `value_unverifiable` | error |
+| A value compared with a constrained field (one with allowed values, or a registered constant's field and operator under Generate) cannot be evaluated within the supported scope, e.g. `upper(:s)` | `value_unverifiable` | error |
 
-PostgreSQL expressions covered by `relative_time_function`: `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `timeofday()`, `'now'`/`'today'`/`'tomorrow'`/`'yesterday'` cast to date/time types, and single-argument `age(x)`. Special date words followed by a time (for example 'yesterday 10:00') and literals compared directly to known temporal fields are also checked, including aliases and CTE lineage. Its sole purpose is `reference_time` reproducibility; general nondeterministic functions such as `random()` are excluded.
+PostgreSQL expressions covered by `relative_time_function`: `NOW()`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `timeofday()`, `'now'`/`'today'`/`'tomorrow'`/`'yesterday'` cast to date/time types, and single-argument `age(x)`. Special date words anywhere in the text, as PostgreSQL reads them (for example 'yesterday 10:00', '00:00 yesterday', '10:00yesterday'; 'todayx' is not a special word), and literals compared directly to known temporal fields are also checked, including aliases and CTE lineage. Its sole purpose is `reference_time` reproducibility; general nondeterministic functions such as `random()` are excluded.
 
 Date-input checks follow supplied parameter values, nested casts, CTE/subquery/VALUES outputs,
 and the possible result branches of COALESCE and CASE. Date conversion, date_trunc and age
@@ -856,7 +873,8 @@ Implemented in `validation/sql_analysis.py`.
 - Visibility depends on **where** a name is used. FROM contains comma-separated groups, each a JOIN tree. JOIN binds more tightly than commas (`a, b JOIN c ON ...` means a and (b JOIN c)). Parenthesized JOINs form nested trees; an aliased parenthesized JOIN (`(a JOIN b) AS j`) is one item. Correlated subqueries see all outer FROM items. LATERAL items and FROM table-function arguments see **preceding** items, except that the right side of a RIGHT/FULL JOIN cannot see that JOIN's left side. JOIN ON sees only items up to that JOIN within the same group. Unqualified names use the JOIN state at their location. Non-LATERAL derived tables and CTEs cannot see sibling FROM items.
 - `JOIN ... USING (c)` and `NATURAL JOIN` merge shared columns. A USING column missing on either side produces `unknown_field`; multiple matches on the left produce `ambiguous_field`.
 - Table column aliases (`orders AS o(x, s)`) rename leading columns.
-- SELECT aliases resolve only in GROUP BY and ORDER BY of the same SELECT.
+- SELECT aliases resolve only in GROUP BY and ORDER BY of the same SELECT, and only when the item is the bare name (parentheses aside; ROLLUP, CUBE and GROUPING SETS elements included). `ORDER BY a + 1` or `ORDER BY a COLLATE "C"` must use an input column. The ORDER BY of UNION/INTERSECT/EXCEPT takes only output column names or positions (`sql_analysis_error` otherwise).
+- An aliased parenthesized JOIN (`(a JOIN b ON ...) AS j`) is its own scope: its ON clauses and LATERAL items see the items inside it, while the query around it sees only `j`.
 - Sources with unknown column lists (table functions without explicit lists) skip field checks. An explicit list such as `unnest(...) AS t(x)` enables checking against that list.
 - The placeholder-in-literal check matches `:name` only when not preceded by a letter or `:`. It catches `INTERVAL ':days days'`, but not `'10:30'` or `'a::b'`.
 - `undeclared_relation` checks only `JOIN ... ON a = b` between two Context tables.
@@ -1062,13 +1080,15 @@ Sidewit uses no database. State lives in files under the data directory (`SIDEWI
 
 - Files use UTF-8 JSON, sorted keys and two-space indentation for readable diffs. Numbers are preserved without precision loss.
 - **At startup**, read and validate every file. Unreadable directory listings or any format/integrity error (invalid JSON, failed Context validation, duplicate names, Tools referencing missing Contexts, etc.) report the path and cause and prevent startup. Missing directories are created empty; unreadable directories are never treated as empty.
-- **Writes** use a temporary file in the same directory, fsync, rename and parent-directory fsync. One API process serializes changes synchronously without intervening awaits. Save the Context before Tool revalidation results. This is not a multi-file transaction: failures or interruptions can leave partial changes, so clients must retrieve current versions. Tools tied to older Context versions are revalidated before invocation. Failed writes restore memory and validation caches; if files cannot be reloaded, the API fails closed with 503 and requires restart.
+- **Writes** use a temporary file in the same directory, fsync, rename and parent-directory fsync. One API process serializes changes synchronously without intervening awaits. Save the Context before Tool revalidation results. This is not a multi-file transaction: failures or interruptions can leave partial changes, so clients must retrieve current versions. Tools tied to older Context versions are revalidated before invocation. Failed writes restore memory and validation caches; if files cannot be reloaded, the API fails closed with 503 `storage_unavailable` and requires restart. A closed store does not retry recovery or log a storage failure per request.
+- Files are written by the API's non-root user with the mode of a normal file creation (`0666` minus the umask); replacing a file keeps its existing mode.
 - Version conflicts (`expected_version`) and name conflicts use current in-memory state.
 - New Tool files use immutable UUID filenames. Existing name-based files retain their paths;
   the Tool name is read from the JSON contents. Renaming updates one file atomically without
   moving or deleting it. Duplicate Tool IDs or names prevent startup. Renames invalidate cached
   validation and in-flight plans; historical generation snapshots keep their original names.
 - Tool validation caches belong to each store instance. Context/Tool saves invalidate related verdicts; recovery and shutdown clear the cache. Caching does not eliminate all SQL reparsing: invocation always checks actual input values.
+- Stored records are immutable snapshots shared by readers; a save stores a new record. Each stored Context version's definition is parsed once and reused by listing, validation, invocation and generation until that Context is saved again.
 - **Use one instance and one API worker.** Hold the data directory's `.lock` for the process lifetime; a second process opening the same directory refuses to start. Use a local filesystem. Network shares and multiple instances are unsupported.
 - Manual file changes take effect only after restart, and a running Sidewit may overwrite them. Stop Sidewit before editing files directly.
 - Back up by copying the directory. Restrict access because it contains Contexts with schema descriptions, business rules and allowed values.
