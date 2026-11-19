@@ -57,6 +57,7 @@ def ok(statement=REVENUE_SQL, parameters=REVENUE_PARAMS, suggestion=True):
         clarifications=[],
         statement=statement,
         parameters=parameters,
+        periods=[],
         tool_suggestion=LLMToolSuggestion(name="regional_revenue", description="지역 매출")
         if suggestion
         else None,
@@ -72,6 +73,7 @@ def not_ok(status, reason, clarifications=(), statement=None):
         ],
         statement=statement,
         parameters=[],
+        periods=[],
         tool_suggestion=None,
     )
 
@@ -160,7 +162,7 @@ async def test_ok_returns_validated_parameterized_operation(client, context, fak
     assert record["status"] == "ok"
     assert record["attempts"] == 1
     assert record["provider"] == "fake"
-    assert record["prompt_version"] == "generate_v10"
+    assert record["prompt_version"] == "generate_v11"
     assert record["reference_time"] == "2026-10-02T00:00:00Z"
 
 

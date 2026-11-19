@@ -3,6 +3,7 @@
 the prompts and provider DTOs."""
 
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC
 
@@ -23,6 +24,8 @@ from sidewit.generation.providers.base import LLMError, LLMProvider, Message
 from sidewit.generation.tool_plan import (
     MAX_PLAN_OPERATIONS,
     PlannedDraftOperation,
+    PlannedOperation,
+    PlannedToolOperation,
     ToolPlanSelection,
     invoke_plan,
     plan_prompt,
@@ -30,7 +33,7 @@ from sidewit.generation.tool_plan import (
 from sidewit.generation.tool_plan import (
     PROMPT_VERSION as PLAN_PROMPT_VERSION,
 )
-from sidewit.generation.tool_selection import ToolSelectionError
+from sidewit.generation.tool_selection import ToolSelectionError, unchanged_tool
 from sidewit.observability import annotate
 from sidewit.security import redact
 from sidewit.store import ContextRecord, Store
@@ -85,7 +88,7 @@ async def generate(
     selection_error: ToolSelectionError | None = None
     handled = False
     candidates = (
-        [tool for tool in store.tools_of(context.id) if tool.enabled]
+        [tool for tool in store.tool_snapshots(context.id) if tool.enabled]
         if not request.options.any()
         else []
     )
@@ -102,18 +105,14 @@ async def generate(
             if selection_result.output_tokens is not None:
                 output_tokens.append(selection_result.output_tokens)
             record.tool_selection = selection_result.parsed.model_dump(mode="json")
-            current_context = store.context(context.id)
-            if current_context is None:
-                raise ContextDeleted(context.id)
-            if current_context.version != record.context_version:
-                raise ToolSelectionError(
-                    409, "context_changed", "Context changed. Start a new request."
-                )
+            current_context = _unchanged_context(store, context.id, record.context_version)
             selection = selection_result.parsed
             if selection.route == "plan":
                 if len(selection.calls) + len(selection.generated_tasks) > MAX_PLAN_OPERATIONS:
                     raise ToolSelectionError(422, "invalid_tool_plan", "Inconsistent plan steps.")
-                operations = invoke_plan(selection, candidates, store, current_context)
+                operations = invoke_plan(
+                    selection, candidates, store, current_context, request.reference_time
+                )
                 if selection.generated_tasks:
                     drafts = await generate_remaining(
                         selection.generated_tasks, provider, context, definition, request
@@ -124,14 +123,9 @@ async def generate(
                         input_tokens.extend(draft.input_tokens)
                         output_tokens.extend(draft.output_tokens)
                     # Recheck ALL selected Tools after generation; never mix snapshots.
-                    current_context = store.context(context.id)
-                    if current_context is None:
-                        raise ContextDeleted(context.id)
-                    if current_context.version != record.context_version:
-                        raise ToolSelectionError(
-                            409, "context_changed", "Context changed. Start a new request."
-                        )
-                    operations = invoke_plan(selection, candidates, store, current_context)
+                    # Invocation is deterministic per Context and Tool version.
+                    _unchanged_context(store, context.id, record.context_version)
+                    _require_selected_tools_unchanged(operations, store)
                     failures = [(i, d) for i, d in enumerate(drafts) if d.outcome != "ok"]
                     if failures:
                         priority = {"llm_error": 0, "invalid": 1, "unanswerable": 2, "ambiguous": 3}
@@ -247,7 +241,7 @@ async def generate(
     record.input_tokens = sum(input_tokens) if input_tokens else None
     record.output_tokens = sum(output_tokens) if output_tokens else None
     # The Context is not held while the model answers, so it may have been deleted since.
-    current_context = store.context(context.id)
+    current_context = store.context_snapshot(context.id)
     if current_context is None:
         raise ContextDeleted(context.id)
     if current_context.version != record.context_version:
@@ -258,6 +252,25 @@ async def generate(
         selection_error.details = {**selection_error.details, "generation_id": str(record.id)}
         raise selection_error
     return GenerationResult(outcome=outcome, record=record, errors=errors)
+
+
+def _unchanged_context(store: Store, context_id: uuid.UUID, version: int) -> ContextRecord:
+    current = store.context_snapshot(context_id)
+    if current is None:
+        raise ContextDeleted(context_id)
+    if current.version != version:
+        raise ToolSelectionError(409, "context_changed", "Context changed. Start a new request.")
+    return current
+
+
+def _require_selected_tools_unchanged(operations: list[PlannedOperation], store: Store) -> None:
+    """Every selected Tool still exists (same id) at the version it was invoked with."""
+    for step in operations:
+        if not isinstance(step, PlannedToolOperation):
+            continue
+        unchanged_tool(
+            store, step.selected_tool.id, step.selected_tool.version, {"step_id": step.id}
+        )
 
 
 def _conclude(record: GenerationRecord, status: str, reason: str | None) -> None:

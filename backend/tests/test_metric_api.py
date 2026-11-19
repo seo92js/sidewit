@@ -1,11 +1,11 @@
 import copy
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
 
 from sidewit.application.runtime import get_llm_provider
-from sidewit.generation.dto import LLMParameter
-from sidewit.generation.metric_plan import LLMPeriod
+from sidewit.generation.dto import LLMParameter, LLMPeriod
 from sidewit.generation.providers.fake import FakeProvider
 from sidewit.main import app
 from tests.test_metric_contracts import DEFINITION, plan
@@ -248,9 +248,7 @@ async def test_old_context_without_metrics_has_no_spurious_version_change(client
         },
     )
     context = res.json()
-    record = store.context(UUID(context["id"]))
-    record.definition = raw
-    store.save_context(record)
+    store.save_context(replace(store.context_snapshot(UUID(context["id"])), definition=raw))
     res = await client.put(
         f"/api/v1/contexts/{context['id']}",
         json={

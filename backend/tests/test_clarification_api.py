@@ -6,8 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from sidewit.generation.dto import LLMParameter
-from sidewit.generation.metric_plan import LLMPeriod
+from sidewit.generation.dto import LLMParameter, LLMPeriod
 from sidewit.generation.providers.base import StructuredResult
 from tests.test_generate_api import REFERENCE_TIME, ask, not_ok, ok
 from tests.test_generate_api import context as context

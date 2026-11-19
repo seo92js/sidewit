@@ -19,6 +19,7 @@ def output(statement):
         clarifications=[],
         statement=statement,
         parameters=[],
+        periods=[],
         tool_suggestion=None,
     )
 

@@ -2,8 +2,8 @@
 
 import pytest
 
-from sidewit.generation.dto import LLMParameter, LLMToolSuggestion
-from sidewit.generation.metric_plan import LLMHybridPlan, LLMPeriod
+from sidewit.generation.dto import LLMParameter, LLMPeriod, LLMToolSuggestion
+from sidewit.generation.metric_plan import LLMHybridPlan
 from tests.test_metric_api import ask, install
 from tests.test_metric_contracts import DEFINITION, plan
 
@@ -24,6 +24,7 @@ def hybrid(route, *, metric_id=None, period=None, date_field=None, statement=Non
         period=period,
         statement=statement,
         parameters=list(parameters),
+        periods=[],
         tool_suggestion=LLMToolSuggestion(name="answer", description="Answer"),
     )
 
@@ -83,7 +84,7 @@ async def test_metric_route_is_contract_built(client, hybrid_context):
     assert body["operations"][0]["operation"]["parameters"]["region"] == "서울"
     assert "metric_contract" in body["operations"][0]["validation"]["checks"]
     record = await detail(client, body["generation_id"])
-    assert (record["prompt_version"], record["source"]) == ("hybrid_v5", "metric")
+    assert (record["prompt_version"], record["source"]) == ("hybrid_v6", "metric")
 
     system = provider.calls[0][0]
     assert "# SQL rules for `ok`" in system, "the SQL route rules are included"
@@ -154,6 +155,7 @@ async def test_non_ok_answers_have_no_route_or_source(client, hybrid_context, st
             period=None,
             statement="SELECT 1",
             parameters=[],
+            periods=[],
             tool_suggestion=None,
         )
     )
@@ -192,7 +194,7 @@ async def test_context_without_metrics_uses_the_sql_planner(client):
     install(ok("SELECT 1", []))
     res = await ask(client, context)
     assert res.json()["source"] == "generated_sql"
-    assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == "generate_v10"
+    assert (await detail(client, res.json()["generation_id"]))["prompt_version"] == "generate_v11"
 
 
 async def test_tool_drafts_keep_the_route(client, hybrid_context):

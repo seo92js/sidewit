@@ -64,23 +64,25 @@ class MetricDefinition(ContractModel):
     time_fields: list[str] = []
     default_time_field: str | None = None
 
+    def time_field(self, ref: str) -> str | None:
+        """The listed time field `ref` names: case-insensitive, and an unqualified name
+        resolves only when exactly one listed field has it."""
+        ref = ref.lower()
+        exact = [f for f in self.time_fields if f.lower() == ref]
+        if exact or "." in ref:
+            return exact[0] if exact else None
+        named = [f for f in self.time_fields if f.lower().rsplit(".", 1)[-1] == ref]
+        return named[0] if len(named) == 1 else None
+
 
 class MetricBinding(ContractModel):
     metric_id: MetricId
     time_field: str | None = None
 
 
-class Period(ContractModel):
-    kind: Literal["rolling_days", "previous_day", "previous_week", "previous_month"]
-    days: Annotated[int, Field(strict=True, ge=1, le=3660)] | None = None
-
-
 def field_for(definition: "ContextDefinition", ref: str) -> "ContextField | None":
-    resource, _, name = ref.partition(".")
-    table = definition.find_resource(resource)
-    return (
-        next((f for f in table.fields if f.name.lower() == name.lower()), None) if table else None
-    )
+    found = definition.find_field(ref)
+    return None if found is None else found[1]
 
 
 def field_type(field: "ContextField") -> ParamType | None:

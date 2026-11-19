@@ -8,9 +8,10 @@ from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from sidewit.domain.context import ContextDefinition, check_context_size
+from sidewit.application.tools import get_context
+from sidewit.domain.context import check_context_size
 from sidewit.domain.issue import Issue
-from sidewit.domain.metric import Period
+from sidewit.domain.period import Period
 from sidewit.errors import SidewitError
 from sidewit.generation.clarification import (
     MAX_CLARIFICATION_ANSWERS,
@@ -163,9 +164,7 @@ async def generate_operation(
 async def _generate_operation(
     body: GenerateRequest, store: Store, history: GenerationHistory, provider: LLMProvider | None
 ):
-    context = store.context(body.context_id)
-    if context is None:
-        raise SidewitError(404, "context_not_found", f"Context '{body.context_id}' does not exist.")
+    context = get_context(store, body.context_id)
     annotate(context_version=context.version)
     if (
         body.expected_context_version is not None
@@ -177,7 +176,7 @@ async def _generate_operation(
             "Context changed. Start a new request.",
             {"expected_version": body.expected_context_version, "current_version": context.version},
         )
-    definition = ContextDefinition.model_validate(context.definition)
+    definition = store.definition(context)
     try:
         check_context_size(definition)
     except ValueError as e:

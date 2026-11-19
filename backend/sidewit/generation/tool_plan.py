@@ -2,12 +2,14 @@
 
 import json
 import uuid
-from typing import Annotated, Literal
+from datetime import datetime
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from sidewit.domain.metric import MetricBinding
 from sidewit.domain.operation import SqlOperation
+from sidewit.domain.period import PeriodKind
 from sidewit.generation.clarification import LLMClarification
 from sidewit.generation.dto import LLMToolSuggestion
 from sidewit.generation.planners import GenerationInput
@@ -20,7 +22,7 @@ from sidewit.generation.tool_selection import (
 from sidewit.store import ContextRecord, Store, ToolRecord
 from sidewit.validation.sql_validator import ValidationResult
 
-PROMPT_VERSION = "tool_plan_v3"
+PROMPT_VERSION = "tool_plan_v4"
 MAX_PLAN_OPERATIONS = 5
 
 
@@ -93,7 +95,13 @@ def plan_prompt(
         "duplicate identical calls. Never bypass an invalid matching Tool with a different Tool "
         "or generated task. Supply exact tool_name and typed string-encoded parameters. "
         "Ground inputs in the original question, Context and answers. Preserve literal/enum values "
-        "exactly. Resolve relative periods against the reference time in the Context timezone. "
+        "exactly. Never compute relative dates: when a Tool's two date inputs are a half-open "
+        "range (`field >= :start`, `field < :end`) and the user asks for the last N days, "
+        "yesterday, the last calendar week or the last calendar month, add "
+        '{"kind": ' + " | ".join(f'"{k}"' for k in get_args(PeriodKind)) + ", "
+        '"days": N or null, "start": "<start input>", "end": "<end input>"} to the call\'s '
+        "periods; the server computes both values. Write explicit dates only when the user "
+        "gives them. "
         "Write generated tasks in the original question's language. Tasks must preserve intent "
         "and exact values, never invent inputs or instruct a worker to bypass validation. "
         "Registered metrics are available to the worker. If model-written SQL is disabled, "
@@ -108,6 +116,7 @@ def invoke_plan(
     candidates: list[ToolRecord],
     store: Store,
     context: ContextRecord,
+    reference_time: datetime,
 ) -> list[PlannedOperation]:
     if not 1 <= len(selection.calls) <= MAX_PLAN_OPERATIONS:
         raise ToolSelectionError(422, "invalid_tool_plan", "A plan requires 1 to 5 Tool calls.")
@@ -119,7 +128,9 @@ def invoke_plan(
     # Publish only after ALL invocations validate. invoke() never executes SQL.
     for index, call in enumerate(selection.calls, start=1):
         try:
-            operation, validation, tool = invoke_selection(call, candidates, store, context)
+            operation, validation, tool = invoke_selection(
+                call, candidates, store, context, reference_time
+            )
         except ToolSelectionError as exc:
             exc.details = {**exc.details, "step_id": f"step_{index}"}
             raise

@@ -1,5 +1,6 @@
 """Automatic independent Tool plans share normal Tool validation and never expose partial plans."""
 
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,7 @@ def call(region="서울", name="count_customers"):
     return {
         "tool_name": name,
         "parameters": [{"name": "region", "type": "string", "value": region}],
+        "periods": [],
     }
 
 
@@ -56,7 +58,7 @@ async def test_repeated_tool_with_distinct_inputs_returns_validated_independent_
     assert record["operations"] == body["operations"]
     assert record["source"] == "plan"
     assert record["operation"] is None
-    assert record["prompt_version"] == "tool_plan_v3"
+    assert record["prompt_version"] == "tool_plan_v4"
     draft = await client.post("/api/v1/tools/draft", json={"generation_id": body["generation_id"]})
     assert draft.status_code == 409
     assert draft.json()["error"] == "plan_not_draftable"
@@ -80,7 +82,10 @@ async def test_plan_bounds_and_different_tools(client, context, fake, count):
         ([], "invalid_tool_plan"),
         ([call(), call()], "invalid_tool_plan"),
         ([call(), call(name="unknown")], "invalid_tool_selection"),
-        ([call(), {"tool_name": "count_customers", "parameters": []}], "invalid_tool_arguments"),
+        (
+            [call(), {"tool_name": "count_customers", "parameters": [], "periods": []}],
+            "invalid_tool_arguments",
+        ),
         (
             [
                 call(),
@@ -89,6 +94,7 @@ async def test_plan_bounds_and_different_tools(client, context, fake, count):
                     "parameters": [
                         {"name": "region", "type": "integer", "value": "1"},
                     ],
+                    "periods": [],
                 },
             ],
             "invalid_tool_arguments",
@@ -175,9 +181,8 @@ async def test_context_change_during_selection_returns_conflict(client, context,
     provider = fake()
 
     async def select(*args):
-        record = store.context(UUID(context["id"]))
-        record.version += 1
-        store.save_context(record)
+        record = store.context_snapshot(UUID(context["id"]))
+        store.save_context(replace(record, version=record.version + 1))
         return StructuredResult(parsed=plan())
 
     provider.generate_structured = select
@@ -216,9 +221,12 @@ async def test_changed_second_tool_returns_conflict_without_first_operation(clie
 async def test_invalid_second_tool_does_not_expose_first_step(client, context, fake, store):
     await saved_tool(client, context)
     other = await saved_tool(client, context, name="other")
-    record = store.tool(other["name"])
-    record.operation = {"type": "sql", "statement": "SELECT pg_sleep(1)"}
-    store.save_tool(record)
+    store.save_tool(
+        replace(
+            store.tools[other["name"]],
+            operation={"type": "sql", "statement": "SELECT pg_sleep(1)"},
+        )
+    )
     fake(plan([call(), call(name="other")]))
     response = await ask(client, context)
     assert response.status_code == 409, response.text
@@ -295,7 +303,7 @@ async def test_default_no_complete_match_generates_whole_question(client, contex
     assert len(provider.calls) == 2
     assert "generate: if no saved Tool fits" in provider.calls[0][0]
     record = await detail(client, response.json()["generation_id"])
-    assert record["prompt_version"].startswith("tool_plan_v3+")
+    assert record["prompt_version"].startswith("tool_plan_v4+")
 
 
 @pytest.mark.parametrize(
@@ -342,7 +350,7 @@ async def test_default_selects_different_operations(client, context, fake):
         },
     )
     assert response.status_code == 201, response.text
-    fake(plan([call(), {"tool_name": "list_customers", "parameters": []}]))
+    fake(plan([call(), {"tool_name": "list_customers", "parameters": [], "periods": []}]))
     response = await ask(client, context, question="서울 고객 수와 고객 ID 다섯 개")
     assert response.status_code == 200, response.text
     steps = response.json()["operations"]

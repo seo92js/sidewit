@@ -10,7 +10,7 @@ A planner owns its prompt, provider DTO and conversion into a domain Operation. 
 DTOs never leave this module and `service`.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
@@ -19,8 +19,9 @@ from pydantic import BaseModel
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.dialect import Dialect
 from sidewit.domain.issue import Issue
-from sidewit.domain.metric import MetricBinding, Period
+from sidewit.domain.metric import MetricBinding
 from sidewit.domain.operation import SqlOperation
+from sidewit.domain.period import Period
 from sidewit.generation.clarification import ClarificationAnswer, LLMClarification
 from sidewit.generation.dto import LLMGenerationOutput, LLMToolSuggestion
 from sidewit.generation.metric_compiler import compile_plan
@@ -31,6 +32,7 @@ from sidewit.generation.metric_plan import (
     metric_prompt,
 )
 from sidewit.generation.parameters import convert_parameter
+from sidewit.generation.periods import bind_periods
 from sidewit.generation.prompt import (
     HYBRID_PROMPT_VERSION,
     PROMPT_VERSION,
@@ -146,13 +148,9 @@ def _check_metric_options(definition: ContextDefinition, options: MetricOptions)
         if metric is None:
             raise InvalidGenerateRequest("Choose a registered metric.")
     if options.date_field is not None and (
-        metric is None
-        or options.date_field.lower() not in {ref.lower() for ref in metric.time_fields}
+        metric is None or metric.time_field(options.date_field) is None
     ):
         raise InvalidGenerateRequest("date_field requires a metric_id and one of its time_fields.")
-    period = options.period
-    if period is not None and (period.kind == "rolling_days") != (period.days is not None):
-        raise InvalidGenerateRequest("Only rolling_days takes days.")
 
 
 class _PlannerBase:
@@ -198,6 +196,10 @@ class SqlPlanner(_PlannerBase):
                 continue
             parameters[param.name] = convert_parameter(param.value, param.type)
             parameter_types[param.name] = param.type
+        periods = bind_periods(
+            output.periods, parameter_types, self.request.reference_time, self.timezone
+        )
+        parameters.update(periods.values)
 
         operation = SqlOperation(
             dialect=self.dialect,
@@ -211,11 +213,14 @@ class SqlPlanner(_PlannerBase):
             self.definition,
             operation.parameter_types,
             operation.parameters,
-            generate_policy(self.request.intent),
+            replace(generate_policy(self.request.intent), period_parameters=periods.parameters),
         )
-        if duplicates:
+        if duplicates or periods.errors:
             validation = validation.model_copy(
-                update={"valid": False, "errors": duplicates + validation.errors}
+                update={
+                    "valid": False,
+                    "errors": duplicates + periods.errors + validation.errors,
+                }
             )
         return Plan(
             kind="ok" if validation.valid else "invalid",
@@ -327,6 +332,15 @@ class HybridPlanner(_PlannerBase):
             "parameters": output.parameters,
             "tool_suggestion": output.tool_suggestion,
         }
+        misplaced = _misplaced_period(output)
+        if misplaced is not None:
+            self._last = None
+            return Plan(
+                kind="invalid",
+                validation=ValidationResult(
+                    valid=False, errors=[misplaced], warnings=[], checks=[]
+                ),
+            )
         if output.route == "metric":
             self._last = self.metric
             return self.metric.plan(
@@ -339,7 +353,9 @@ class HybridPlanner(_PlannerBase):
             )
         if output.route == "sql":
             self._last = self.sql
-            return self.sql.plan(LLMGenerationOutput(**common, statement=output.statement))
+            return self.sql.plan(
+                LLMGenerationOutput(**common, statement=output.statement, periods=output.periods)
+            )
         self._last = None
         issue = Issue(
             code="route_missing",
@@ -362,3 +378,14 @@ class HybridPlanner(_PlannerBase):
             base + " You may switch the route if a registered metric answers the whole "
             "question exactly, or if none does."
         )
+
+
+def _misplaced_period(output: LLMHybridPlan) -> Issue | None:
+    """A period in the other route's field would be dropped silently, widening the result."""
+    if output.route == "metric" and output.periods:
+        message = "A metric answer sets `period`; `periods` must be empty."
+    elif output.route == "sql" and (output.period is not None or output.date_field is not None):
+        message = "A SQL answer uses `periods`; `period` and `date_field` must be null."
+    else:
+        return None
+    return Issue(code="period_invalid", message=message, ref="periods")

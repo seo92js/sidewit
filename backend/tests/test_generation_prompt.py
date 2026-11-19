@@ -77,14 +77,12 @@ def test_multiple_undescribed_dates_are_highlighted_without_hiding_rules():
         }
     )
     prompt = render_system_prompt(definition, "postgresql", "UTC", datetime.now(UTC))
-    assert "Only for requests needing date-dependent filtering or grouping." in prompt
-    assert "Period choice is unresolved by field descriptions: opened_at, closed_at." in prompt
-    assert "If no relevant rule or explicit user choice settles it" in prompt
+    assert "visits dates with no documented period basis: opened_at, closed_at." in prompt
     assert "[period] The period uses closed_at." in prompt
 
 
 def test_described_dates_do_not_emit_an_unresolved_period_hint():
-    assert "Period choice is unresolved" not in render()
+    assert "no documented period basis" not in render()
 
 
 def test_prompt_states_the_generation_policies():
