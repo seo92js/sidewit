@@ -6,9 +6,17 @@ Tool saves and Tool invocations. It is independent of the model and cannot be ch
 instructions in a question.
 
 Common aggregates, string, numeric, date/time, window and JSON functions are supported.
-The authoritative canonical-expression lists are
-[BUILTINS and POSTGIS](../backend/sidewit/validation/functions.py). SQLGlot maps some SQL
-spellings to different canonical names (for example date_trunc to timestamp_trunc).
+The authoritative lists are [POSTGRES_FUNCTIONS and POSTGIS](../backend/sidewit/validation/functions.py),
+written as PostgreSQL function names (for example `unnest`, `json_agg`, `var_pop`,
+`date_trunc`, `string_agg`).
+
+A call is identified by the name PostgreSQL resolves. An unquoted name folds to lower case;
+a quoted name is used exactly as written, so `"lower"(x)` is lower but `"LOWER"(x)` names a
+different (possibly user-defined) function and is rejected. Names SQLGlot understands but
+PostgreSQL does not provide, such as `median` or `timestamp_trunc`, are rejected too.
+A type name followed by parentheses (`uuid(x)`, `varchar(10)`) is treated as a cast.
+SQL syntax and operators that SQLGlot represents as functions (CASE, CAST, COLLATE, ARRAY,
+EXISTS, `->`, `->>`, `#>`, `#>>`, `?`, `@>`, `~`, `^`) are listed separately as SYNTAX.
 
 Unknown functions and schema-qualified calls are rejected with function_not_allowed.
 This includes pg_sleep, pg_read_file, lo_import, set_config, sequence mutation,

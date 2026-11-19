@@ -47,7 +47,7 @@ CONTEXT = ContextDefinition.model_validate(
     }
 )
 # Context value rules, deliberately stricter than PostgreSQL.
-VALUE_RULES = {"value_not_allowed"}
+VALUE_RULES = {"value_not_allowed", "value_unverifiable"}
 
 STATEMENTS = [
     # JOIN USING / NATURAL
@@ -85,6 +85,15 @@ STATEMENTS = [
     "SELECT status AS s FROM orders ORDER BY s",
     "SELECT status AS s, COUNT(*) FROM orders GROUP BY s",
     "SELECT status AS s FROM orders WHERE s = 'ACTIVE'",
+    # output aliases only as whole ORDER BY / GROUP BY items
+    "SELECT amount AS a FROM orders ORDER BY a + 1",
+    "SELECT amount AS a FROM orders GROUP BY a + 1",
+    'SELECT status AS s FROM orders ORDER BY s COLLATE "C"',
+    "SELECT amount AS a FROM orders ORDER BY (a)",
+    "SELECT amount AS a FROM orders ORDER BY a DESC NULLS LAST",
+    "SELECT status AS s, COUNT(*) FROM orders GROUP BY ROLLUP (s)",
+    "SELECT status AS s, COUNT(*) FROM orders GROUP BY GROUPING SETS ((s), ())",
+    "SELECT status AS s, COUNT(*) FROM orders GROUP BY (s)",
     # table functions, recursion, set operations
     "SELECT id FROM orders CROSS JOIN LATERAL unnest(tags) AS t",
     "SELECT o.id, t FROM orders o CROSS JOIN LATERAL unnest(o.tags) AS t",
@@ -137,6 +146,21 @@ STATEMENTS = [
     "SELECT 1 FROM customers x JOIN (orders o JOIN customers c ON o.id = c.id) ON x.id = o.id",
     "SELECT o.id FROM (orders o JOIN customers c ON true) JOIN customers x USING (id)",
     "SELECT q.id FROM (orders o JOIN LATERAL (SELECT o.id) q ON true)",
+    # set operations: ORDER BY takes output names, as whole items only
+    "SELECT id FROM orders UNION SELECT id FROM customers ORDER BY id",
+    "SELECT id AS x FROM orders UNION SELECT id FROM customers ORDER BY x",
+    "SELECT id AS x FROM orders UNION SELECT id FROM customers ORDER BY id",
+    "SELECT id FROM orders UNION SELECT id FROM customers ORDER BY id + 1",
+    "SELECT id FROM orders UNION SELECT id FROM customers ORDER BY orders.id",
+    # subqueries sqlglot does not scope are not name-checked
+    "SELECT id FROM orders UNION SELECT id FROM orders LIMIT (SELECT max(id) FROM orders)",
+    "SELECT id FROM orders UNION SELECT id FROM orders ORDER BY (SELECT 1)",
+    # aliased parenthesized join trees
+    "SELECT * FROM (customers c JOIN LATERAL (SELECT c.id AS z) s ON true) AS j",
+    "SELECT * FROM (customers c JOIN orders o ON o.id = (SELECT c.id)) AS j",
+    "SELECT j.z FROM (customers c JOIN LATERAL (SELECT c.id AS z) s ON true) AS j",
+    "SELECT * FROM (customers c JOIN LATERAL (SELECT x.id) s ON true) AS j",
+    "SELECT c.id FROM (customers c JOIN orders o ON true) AS j",
     # table column alias lists rename columns
     "SELECT o.x FROM orders AS o(x, s)",
     "SELECT o.id FROM orders AS o(x, s)",
