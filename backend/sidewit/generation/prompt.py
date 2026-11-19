@@ -6,6 +6,7 @@ from sidewit.domain.context import ContextDefinition, ContextField, Rule
 from sidewit.domain.dialect import Dialect, identifier, to_sqlglot
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
+from sidewit.domain.params import DATE_TYPES
 from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS
 from sidewit.generation.prompts import template
 from sidewit.validation.functions import POSTGIS
@@ -180,7 +181,7 @@ def _period_candidate(field: ContextField) -> bool:
     """An undescribed date/time field that could plausibly define a requested period."""
     return (
         not field.description
-        and field_type(field) in {"date", "date-time"}
+        and field_type(field) in DATE_TYPES
         and not _AUDIT_FIELD.search(field.name)
     )
 

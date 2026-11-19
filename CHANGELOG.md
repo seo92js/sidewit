@@ -15,9 +15,10 @@ Initial release candidate.
   `172.30.255`) so the API trusts forwarded client addresses only from the bundled proxy.
   Recreate the containers after upgrading.
 
-- `date-time` parameters and arguments accept only `YYYY-MM-DDThh:mm[:ss[.ffffff]]` with `Z`
-  or a `±hh:mm` offset. Week dates, hour-only times and basic-format values, which
-  PostgreSQL does not read, are rejected.
+- `date-time` parameters and arguments accept RFC 3339 with optional seconds:
+  `YYYY-MM-DDThh:mm[:ss[.ffffff]]` with `Z` or a `±hh:mm[:ss]` offset (`T`/`Z` in either case).
+  Week dates, hour-only times, basic format, a space instead of `T` and more than six
+  fractional digits are rejected.
 
 - The SQL function allowlist is written in PostgreSQL names and checks the name PostgreSQL
   resolves. Quoted names that differ from the built-in (`"LOWER"(x)`) and SQLGlot-only
@@ -65,9 +66,19 @@ Initial release candidate.
   aliases resolve only as whole ORDER BY / GROUP BY items, `UNION ... ORDER BY` resolves
   output column names, and names inside an aliased parenthesized join resolve within that
   join, matching PostgreSQL. Subqueries SQLGlot does not scope fail closed for value policies.
+  A comparison under NOT uses the negated operator, so `NOT (state = :s)` cannot bypass a
+  registered `state <> 'RETIRED'` constant.
 
-- Storage: a store closed after failed recovery answers 503 without reloading every file and
-  logging on each request. Reads share stored snapshots and a parsed definition per Context
+- Validator: unaliased output columns get PostgreSQL's names, so `ORDER BY count` and
+  `q.count` over `count(*)` are accepted, and `q.year` over `extract(year FROM ...)` is no
+  longer accepted. Names that are not certain from the parse are rejected, not guessed. GROUP BY
+  naming an aggregate or window output, and an ORDER BY name matching two outputs, are
+  rejected as PostgreSQL does. A JOIN USING of two unknown tables reports them instead of
+  failing with an internal error.
+
+- Storage: a store closed after failed recovery answers 503 and retries the reload at most
+  every 5 seconds, so a transient error heals without a restart and a broken directory is not
+  re-read or logged on each request. Reads share stored snapshots and a parsed definition per Context
   version instead of deep-copying and re-parsing, and a field type is parsed once instead of
   on every validation.
 

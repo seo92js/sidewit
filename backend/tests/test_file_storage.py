@@ -436,7 +436,7 @@ async def test_saving_context_invalidates_verdicts_even_without_version_incremen
     assert "unknown_field" in res.text
 
 
-async def test_unavailable_store_fails_closed_without_reloading_or_logging_each_request(
+async def test_closed_store_retries_recovery_only_after_the_interval(
     client, store, monkeypatch, caplog
 ):
     context = await create_context(client, DEFINITION)
@@ -469,21 +469,22 @@ async def test_unavailable_store_fails_closed_without_reloading_or_logging_each_
         response = await request
         assert response.status_code == 503
         assert response.json()["error"] == "storage_unavailable"
-        assert "restart" in response.json()["message"]
+        assert "retried automatically" in response.json()["message"]
     assert (await client.get("/api/v1/health")).status_code == 503
     assert loads == []
     assert not [r for r in caplog.records if getattr(r, "event_name", None) == "storage_failure"]
-    # A repaired directory is read at the next start, not by the next request.
-    path.write_bytes(original)
+    # Due again: a still-broken directory is retried once and logged once.
+    store._next_restore = 0.0
     assert (await client.get("/api/v1/contexts")).status_code == 503
-    assert loads == []
-    store.close()
-    reopened = Store(store.root)
-    app.dependency_overrides[get_store] = lambda: reopened
-    try:
-        assert (await client.get(f"/api/v1/contexts/{context['id']}")).json() == context
-    finally:
-        reopened.close()
+    assert (await client.get("/api/v1/contexts")).status_code == 503
+    assert loads == [1]
+    retries = [r for r in caplog.records if getattr(r, "event_name", None) == "storage_failure"]
+    assert [r.event_fields["recovery"] for r in retries] == ["unavailable"]
+    # Once repaired, the next due retry reloads without a restart.
+    path.write_bytes(original)
+    store._next_restore = 0.0
+    assert (await client.get(f"/api/v1/contexts/{context['id']}")).json() == context
+    assert loads == [1, 1]
 
 
 @pytest.mark.parametrize(

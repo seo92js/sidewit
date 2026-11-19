@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from sidewit.domain.issue import Issue
-from sidewit.domain.params import ParamType
+from sidewit.domain.params import DATE_TYPES, ParamType
 from sidewit.domain.period import PERIOD_RULE, period_bounds
 from sidewit.generation.dto import LLMPeriodBounds
 
@@ -36,7 +36,7 @@ def bind_periods(
             continue
         seen.update(names)
         kinds = {types.get(name) for name in names}
-        if len(kinds) != 1 or not kinds <= {"date", "date-time"}:
+        if len(kinds) != 1 or not kinds <= DATE_TYPES:
             error(
                 f"Period parameters '{item.start}' and '{item.end}' must both be declared, "
                 "with the same type: date or date-time.",

@@ -27,6 +27,7 @@ from sqlglot.optimizer.scope import Scope, ScopeType, traverse_scope
 
 from sidewit.domain.dialect import unbounded_text, user_type_identity
 from sidewit.sql import AnalysisBudget
+from sidewit.validation.output_names import output_name
 
 FieldRef = tuple[str, str]
 Source = exp.Expression | Scope
@@ -47,7 +48,8 @@ class OutputColumn:
 
 @dataclass(frozen=True)
 class JoinedColumn:
-    """A column of a FROM clause. A JOIN USING / NATURAL column merges several origins."""
+    """A column of a FROM clause. A JOIN USING / NATURAL column merges several origins, and has
+    none when every side is opaque (an unknown table or function)."""
 
     name: str
     aliases: tuple[str, ...]
@@ -484,7 +486,7 @@ class SqlAnalysis:
         columns: list[OutputColumn] = []
         for projection in select.expressions:
             if not projection.is_star:
-                columns.append(OutputColumn(projection.alias_or_name, scope, projection))
+                columns.append(OutputColumn(output_name(projection) or "", scope, projection))
                 continue
             if isinstance(projection, exp.Column) and projection.table:
                 # alias.*: every column of that one item, merged USING columns included.

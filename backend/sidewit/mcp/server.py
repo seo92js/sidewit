@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.applications import Starlette
 
 from sidewit.application.generate import GenerateRequest, generate_operation
-from sidewit.application.storage import storage_failure
+from sidewit.application.storage import retry_recovery, storage_failure
 from sidewit.application.tools import InvokeRequest, get_context, invoke_tool
 from sidewit.config import Settings
 from sidewit.errors import SidewitError
@@ -200,6 +200,7 @@ def create_mcp_app(
             )
         try:
             store = get_store()
+            retry_recovery(store)
             store.require_available()
             match name:
                 case "list_contexts":

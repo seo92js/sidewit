@@ -23,6 +23,7 @@ import re
 import secrets
 import stat
 import tempfile
+import time
 import uuid
 from collections import OrderedDict
 from copy import deepcopy
@@ -96,13 +97,15 @@ class StoreError(Exception):
 
 
 class StoreUnavailable(StoreError):
-    """Recovery already failed; nothing is served until restart."""
+    """Recovery failed; nothing is served until a later retry reloads the files."""
 
     def __init__(self) -> None:
-        super().__init__(
-            "Storage recovery failed; restart after repairing the data directory",
-            operation="access",
-        )
+        super().__init__("Storage recovery failed", operation="access")
+
+
+# A failed recovery is retried at most this often, so a broken directory is not re-read per
+# request while a transient error still heals without a restart.
+RESTORE_INTERVAL_SECONDS = 5.0
 
 
 class _ContextFile(BaseModel):
@@ -180,6 +183,7 @@ class Store:
             OrderedDict()
         )
         self._available = False
+        self._next_restore = 0.0
         self._lock = None
         try:
             root.mkdir(parents=True, exist_ok=True)
@@ -203,6 +207,9 @@ class Store:
         if self._lock is not None:
             self._lock.close()
             self._lock = None
+
+    def restore_due(self) -> bool:
+        return not self._available and time.monotonic() >= self._next_restore
 
     def require_available(self) -> None:
         if not self._available:
@@ -312,6 +319,7 @@ class Store:
 
     def restore(self) -> None:
         """Reload memory from disk after a failed write left a record changed in memory."""
+        self._next_restore = time.monotonic() + RESTORE_INTERVAL_SECONDS
         self._available = False
         self._tool_checks.clear()
         self._load()

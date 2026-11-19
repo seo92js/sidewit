@@ -25,6 +25,8 @@ _BINARY: dict[type[exp.Expression], str] = {
     exp.ILike: "like",
 }
 FLIPPED = {"=": "=", "!=": "!=", ">": "<", ">=": "<=", "<": ">", "<=": ">=", "like": "like"}
+# Under NOT; a negated LIKE still compares the same operands.
+NEGATED = {"=": "!=", "!=": "=", ">": "<=", ">=": "<", "<": ">=", "<=": ">", "like": "like"}
 EQUALITY = frozenset({"=", "!="})
 _STRICT = {">": ">", ">=": ">", "<": "<", "<=": "<"}
 NODES = (*_BINARY, exp.In, exp.Between, exp.Case, exp.Nullif)
@@ -53,9 +55,10 @@ def comparisons(node: exp.Expression) -> list[Comparison]:
 
 
 def _comparisons(node: exp.Expression) -> Iterator[Comparison]:
-    negated = isinstance(node.parent, exp.Not)
+    negated = _negated(node)
     if type(node) in _BINARY:
-        yield from _pairs(node, node.this, _BINARY[type(node)], node.expression)
+        op = _BINARY[type(node)]
+        yield from _pairs(node, node.this, NEGATED[op] if negated else op, node.expression)
     elif isinstance(node, exp.In):
         if node.args.get("unnest") is not None:
             return  # `IN UNNEST(...)` is not PostgreSQL syntax
@@ -77,6 +80,17 @@ def _comparisons(node: exp.Expression) -> Iterator[Comparison]:
                 yield from _pairs(node, subject, "=", branch.this)
     elif isinstance(node, exp.Nullif):
         yield from _pairs(node, node.this, "=", node.expression)
+
+
+def _negated(node: exp.Expression) -> bool:
+    """Odd number of NOTs on the path through boolean connectives: by De Morgan,
+    `NOT (a = 1 AND b = 2)` tests `a != 1` and `b != 2`."""
+    negated = False
+    parent = node.parent
+    while isinstance(parent, exp.Paren | exp.And | exp.Or | exp.Not):
+        negated ^= isinstance(parent, exp.Not)
+        parent = parent.parent
+    return negated
 
 
 def _pairs(

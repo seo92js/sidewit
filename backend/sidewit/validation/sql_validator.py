@@ -31,6 +31,7 @@ from sidewit.domain.dialect import (
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
 from sidewit.domain.params import (
+    DATE_TYPES,
     PARAM_NAME_PATTERN,
     ParamType,
     exact_number,
@@ -508,7 +509,7 @@ class _Validator:
         name = column.name
         for current, env in self.analysis.reachable(scope, column):
             columns, opaque = self.analysis.candidates(current, env, name)
-            matches = [c.aliases[0] for c in columns]
+            matches = [c.aliases[0] if c.aliases else f"USING ({name})" for c in columns]
             if len(matches) > 1:
                 where = (
                     f"'{matches[0]}' has more than one '{name}'."
@@ -563,10 +564,27 @@ class _Validator:
             clause = holder if isinstance(holder, exp.Group) else None
         if clause is None or clause.parent is not query:
             return False
-        if isinstance(query, exp.Select):
-            return column.name in {e.alias for e in query.expressions if e.alias}
         outputs = self.analysis.outputs(scope)
-        return outputs is None or column.name in {c.name for c in outputs}
+        if not isinstance(query, exp.Select):
+            return outputs is None or column.name in {c.name for c in outputs}
+        if outputs is None:  # unknown star expansion: explicit aliases only
+            return column.name in {e.alias for e in query.expressions if e.alias}
+        named = [c for c in outputs if c.name == column.name]
+        if len(named) != 1:  # PostgreSQL: absent, or ambiguous
+            return False
+        target = named[0].expression
+        if (
+            isinstance(clause, exp.Group)
+            and target is not None
+            and target.find(exp.AggFunc, exp.Window)
+        ):
+            self._error(
+                "sql_analysis_error",
+                f"GROUP BY '{column.name}' refers to an output with an aggregate or window "
+                "function.",
+                column.name,
+            )
+        return True
 
     # relations (warning) --------------------------------------------------------------
 
@@ -905,7 +923,7 @@ class _Validator:
             (r.name, f.name)
             for r in self.context.resources
             for f in r.fields
-            if field_type(f) in {"date", "date-time"}
+            if field_type(f) in DATE_TYPES
         }
         if not analyzed:
             return

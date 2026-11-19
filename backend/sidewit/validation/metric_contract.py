@@ -11,7 +11,7 @@ from sidewit.domain.context import ContextDefinition
 from sidewit.domain.dialect import Dialect, identifier, render_sql, to_sqlglot
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import MetricBinding, MetricDefinition, field_for, field_type
-from sidewit.domain.params import ParamType
+from sidewit.domain.params import DATE_TYPES, ParamType
 from sidewit.sql import parse_sql
 
 _COMPARISONS = {"=": exp.EQ, "!=": exp.NEQ, ">": exp.GT, ">=": exp.GTE, "<": exp.LT, "<=": exp.LTE}
@@ -96,7 +96,7 @@ def metric_template(
             raise ValueError("Time field is not allowed by this metric.")
         field = field_for(definition, canonical)
         kind = field_type(field) if field else None
-        if kind not in {"date", "date-time"}:
+        if kind not in DATE_TYPES:
             raise ValueError("Unsupported time field type.")
         for name, comparison in (("start_at", exp.GTE), ("end_at", exp.LT)):
             predicates.append(

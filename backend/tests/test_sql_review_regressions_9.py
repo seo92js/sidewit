@@ -421,7 +421,57 @@ def test_date_time_rejects_forms_outside_the_documented_grammar(value):
         "2024-01-01T10:00+09:00",
         "2024-01-01T10:00:00Z",
         "2024-01-01T10:00:00.123456-05:30",
+        "2024-01-01t10:00:00z",
+        "1890-01-01T10:00:00+08:27:52",
     ],
 )
 def test_date_time_accepts_absolute_iso_forms(value):
     assert value_matches_type(value, "date-time")
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["state <> :s", "NOT (state = :s)", "NOT (state = :s AND id > 0)", "NOT NOT (state <> :s)"],
+)
+def test_negated_comparisons_keep_their_meaning_for_registered_constants(where):
+    definition = ContextDefinition.model_validate(
+        {
+            "resources": [
+                {
+                    "name": "m",
+                    "fields": [{"name": "id", "type": "bigint"}, {"name": "state", "type": "text"}],
+                }
+            ],
+            "rules": [
+                {
+                    "id": "available",
+                    "text": "Available machines are not retired.",
+                    "condition": {"field": "m.state", "op": "!=", "value": "RETIRED"},
+                }
+            ],
+        }
+    )
+    result = validate_sql_operation(
+        f"SELECT id FROM m WHERE {where}",
+        "postgresql",
+        definition,
+        {"s": "string"},
+        {"s": "RETIRED"},
+        generate_policy("available machines"),
+    )
+    assert [e.code for e in result.errors] == ["constant_as_parameter"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM ghosts JOIN phantoms USING (id)",
+        "SELECT id FROM (ghosts JOIN phantoms USING (id)) JOIN orders o ON true",
+    ],
+)
+def test_using_join_of_unknown_tables_reports_them_instead_of_crashing(sql):
+    definition = ContextDefinition.model_validate(
+        {"resources": [{"name": "orders", "fields": [{"name": "id", "type": "bigint"}]}]}
+    )
+    result = validate_sql_operation(sql, "postgresql", definition, {})
+    assert "unknown_resource" in [e.code for e in result.errors]

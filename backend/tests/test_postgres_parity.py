@@ -174,6 +174,43 @@ STATEMENTS = [
     "SELECT * FROM (VALUES (1, 2), (3, 4)) q",
     "SELECT *",
     "SELECT * FROM (SELECT 1) q(a, b)",
+    # names PostgreSQL gives unaliased output columns
+    "SELECT status, count(*) FROM orders GROUP BY status ORDER BY count DESC",
+    "SELECT sum(amount) FROM orders ORDER BY sum",
+    "SELECT upper(name) FROM customers ORDER BY upper",
+    "SELECT q.count FROM (SELECT count(*) FROM orders) q",
+    "SELECT q.count FROM (SELECT count(*) OVER () FROM orders) q",
+    "SELECT q.count FROM (SELECT count(*) FILTER (WHERE flag) FROM orders) q",
+    "SELECT q.coalesce FROM (SELECT coalesce(amount, 0) FROM orders) q",
+    "SELECT q.nullif FROM (SELECT nullif(status, 'x') FROM orders) q",
+    "SELECT q.greatest FROM (SELECT greatest(id, 1) FROM orders) q",
+    "SELECT q.current_date FROM (SELECT current_date FROM orders) q",
+    "SELECT q.exists FROM (SELECT EXISTS (SELECT 1) FROM orders) q",
+    "SELECT q.tags FROM (SELECT tags[1] FROM orders) q",
+    "SELECT q.amount FROM (SELECT amount::text FROM orders) q",
+    "SELECT q.case FROM (SELECT CASE WHEN flag THEN 1 END FROM orders) q",
+    "SELECT q.amount FROM (SELECT CASE WHEN flag THEN 0 ELSE amount END FROM orders) q",
+    "SELECT q.case FROM (SELECT CASE WHEN flag THEN 0 ELSE amount END FROM orders) q",
+    "SELECT q.max FROM (SELECT (SELECT max(id) FROM customers) FROM orders) q",
+    "SELECT q.id FROM (SELECT (SELECT max(id) FROM customers) FROM orders) q",
+    "SELECT q.year FROM (SELECT extract(year FROM current_date) FROM orders) q",
+    "SELECT q.mod FROM (SELECT amount % 2 FROM orders) q",
+    "SELECT id AS x, amount AS x FROM orders ORDER BY x",
+    "SELECT status AS s, count(*) FROM orders GROUP BY s",
+    "SELECT count(*) FROM orders GROUP BY count",
+    "SELECT count(*) AS c FROM orders GROUP BY c",
+    "SELECT row_number() OVER () AS r FROM orders GROUP BY r",
+]
+
+# PostgreSQL accepts these, but the written name is not certain from the parse tree (ceil and
+# ceiling, now() and CURRENT_TIMESTAMP, cast type names), so references are rejected instead
+# of guessed.
+UNCERTAIN_NAMES = [
+    "SELECT q.ceil FROM (SELECT ceil(amount) FROM orders) q",
+    "SELECT q.now FROM (SELECT now() FROM orders) q",
+    "SELECT q.extract FROM (SELECT extract(year FROM current_date) FROM orders) q",
+    "SELECT q.text FROM (SELECT 'a'::text FROM orders) q",
+    "SELECT length(name) FROM customers ORDER BY length",
 ]
 
 
@@ -190,7 +227,7 @@ def postgres_verdicts(database_url) -> dict[str, str | None]:
                 for statement in filter(None, (s.strip() for s in DDL.split(";"))):
                     await conn.execute(text(statement))
                 await conn.execute(text(f"SET search_path TO {SCHEMA}"))
-                for sql in STATEMENTS:
+                for sql in STATEMENTS + UNCERTAIN_NAMES:
                     try:
                         await conn.exec_driver_sql("EXPLAIN " + sql)
                         verdicts[sql] = None
@@ -212,3 +249,10 @@ def test_validator_matches_postgres(sql, postgres_verdicts):
     assert (postgres is None) == (not structural), (
         f"PostgreSQL: {postgres or 'accepts'}; validator: {structural or 'accepts'}"
     )
+
+
+@pytest.mark.parametrize("sql", UNCERTAIN_NAMES)
+def test_uncertain_output_names_are_rejected_not_guessed(sql, postgres_verdicts):
+    assert postgres_verdicts[sql] is None
+    result = validate_sql_operation(sql, "postgresql", CONTEXT, {})
+    assert [e.code for e in result.errors] == ["unknown_field"]
