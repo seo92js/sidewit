@@ -12,7 +12,7 @@ from sqlglot.schema import MappingSchema
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.dialect import Dialect, to_sqlglot
 from sidewit.sql import COMPLEXITY_MESSAGE, parse_sql
-from sidewit.validation.comparisons import FLIPPED
+from sidewit.validation.comparisons import FLIPPED, NEGATED
 from sidewit.validation.sql_validator import is_current_time
 
 _OPS: dict[type[exp.Expression], str] = {
@@ -26,7 +26,6 @@ _OPS: dict[type[exp.Expression], str] = {
     exp.LT: "<",
     exp.LTE: "<=",
 }
-_NEGATED = {"=": "!=", "!=": "=", ">": "<=", ">=": "<", "<": ">=", "<=": ">"}
 
 
 @dataclass(frozen=True)
@@ -249,7 +248,7 @@ def _collect(
     left_ref, right_ref = base_field(left), base_field(right)
     op = _OPS[type(node)]
     if negated:
-        op = _NEGATED[op]
+        op = NEGATED[op]
     if left_ref and right_ref:
         joins = {frozenset((left_ref, right_ref))} if op == "=" else set()
         return set(), joins

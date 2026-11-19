@@ -156,6 +156,47 @@ def _node_name(node: exp.Func) -> str:
     return node.sql_name().lower()
 
 
+# SQL-standard call syntax that PostgreSQL names after another function (TRIM -> btrim) or that
+# SQLGlot merges with a call of a different name (POSITION -> strpos).
+_SPECIAL_FORMS = (
+    "extract(year FROM x)",
+    "position('a' IN x)",
+    "substring(x FROM 1 FOR 2)",
+    "trim(BOTH FROM x)",
+    "trim(LEADING 'a' FROM x)",
+    "overlay(x PLACING 'a' FROM 1)",
+)
+
+
+@functools.cache
+def call_names() -> dict[type[exp.Func], str]:
+    """Node type -> the function name it was written with, when that is certain: exactly one
+    allowed name parses to it, and no operator or special syntax does (`x % y` and `mod(x, y)`
+    are both Mod; `ceil` and `ceiling` are both Ceil)."""
+    names: dict[type[exp.Func], set[str]] = {}
+    for name in POSTGRES_FUNCTIONS | POSTGIS:
+        for args in ("", "x", "x, y", "x, y, z"):
+            node = _projection(f"{name}({args})")
+            if isinstance(node, exp.Func) and not isinstance(node, exp.Anonymous):
+                names.setdefault(type(node), set()).add(name)
+    special = {type(_projection(form)) for form in _SPECIAL_FORMS}
+    return {
+        kind: next(iter(written))
+        for kind, written in names.items()
+        if len(written) == 1
+        and kind not in SYNTAX
+        and kind not in special
+        and not issubclass(kind, exp.Binary | exp.Unary | exp.Predicate)
+    }
+
+
+def _projection(sql: str) -> exp.Expression | None:
+    try:
+        return sqlglot.parse_one(f"SELECT {sql}", read="postgres").expressions[0]
+    except SqlglotError:
+        return None
+
+
 @functools.cache
 def _node_types(names: frozenset[str]) -> frozenset[type[exp.Func]]:
     """Node types SQLGlot produces for calls of `names` (some differ by arity or position)."""

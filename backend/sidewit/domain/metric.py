@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from sidewit.domain.issue import Issue
-from sidewit.domain.params import ParamType, matches_allowed_value, value_matches_type
+from sidewit.domain.params import (
+    DATE_TYPES,
+    ParamType,
+    matches_allowed_value,
+    value_matches_type,
+)
 
 if TYPE_CHECKING:
     from sidewit.domain.context import ContextDefinition, ContextField
@@ -289,7 +294,7 @@ def _check_time_fields(
 ) -> None:
     for ref in metric.time_fields:
         field = field_for(definition, ref)
-        if field is not None and field_type(field) not in {"date", "date-time"}:
+        if field is not None and field_type(field) not in DATE_TYPES:
             issues.append(
                 _issue(metric, "time_fields", f"'{ref}' must be a date or timestamp field.")
             )
