@@ -223,12 +223,15 @@ saving Tool revalidation results. There is no transaction across all files: afte
 restart during a write, retrieve current versions before retrying. A Tool tied to an older
 Context version is revalidated before invoke. After a failed write or delete, the API reloads
 all files once. If they cannot be reloaded, the store closes: API and MCP operations return
-503 `storage_unavailable` and health checks 503, without reading the directory again. Repairs
-take effect only at the next start. Stop the API, repair the directory, then start it again.
+503 `storage_unavailable` and health checks 503. The next request or health check retries the
+reload at most every 5 seconds, so a transient error heals without a restart; a reload is
+published only when every file reads. If the 503s persist, repair the directory; stopping the
+API first is still the safe way to edit files.
 Directory listing errors also stop startup or recovery; an unreadable directory is never
 treated as an empty store. Health checks test directory listing as well as temporary writes.
 Storage failure logs report the operation, exception type, OS error number and recovery outcome
-once per failed write; requests answered by a closed store add no further storage events.
+once per failed write and once per failed retry; other requests answered by a closed store
+add no further storage events.
 They omit file paths, file contents and exception messages. Recovery and shutdown discard that
 store's in-memory Tool validation cache and parsed Context definitions.
 

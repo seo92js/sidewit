@@ -8,13 +8,23 @@ from sidewit.observability import emit
 from sidewit.store import Store, StoreError, StoreUnavailable
 
 
+def retry_recovery(store: Store) -> None:
+    """Reload after a failed recovery, at most once per RESTORE_INTERVAL_SECONDS."""
+    if store.restore_due():
+        try:
+            store.restore()
+        except StoreError as error:
+            _log(error, "unavailable")
+
+
 def storage_failure(get_store: Callable[[], Store], error: StoreError) -> SidewitError:
     """503 for any storage error; only a failed change reloads the files."""
     if isinstance(error, StoreUnavailable):
         return SidewitError(
             503,
             "storage_unavailable",
-            "Storage is unavailable. Repair the data directory and restart the server.",
+            "Storage is unavailable. Recovery is retried automatically; repair the data "
+            "directory if this persists.",
         )
     try:
         get_store().restore()
