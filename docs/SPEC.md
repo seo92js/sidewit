@@ -923,7 +923,7 @@ Question ──/generate──▶ Generation (in memory)
 
 ## 9. Evaluation
 
-The goal is a reproducible regression suite for Generate quality. It executes no SQL and does not ask an LLM to judge correctness. All suites were exposed during development and review, so they are **regression evaluations**, not evidence of general accuracy.
+The goal is a reproducible regression suite for Generate quality. Default scoring executes no SQL and does not ask an LLM to judge correctness. An optional development-only mode compares results in a disposable PostgreSQL database. Published suites are **regression evaluations**, not evidence of general accuracy.
 
 ### 9.1 Golden Case format
 
@@ -959,7 +959,7 @@ cases:
 - `parameters`: match required parameters by value and optional type.
 - `forbidden_parameter_values` / `forbidden_literals`: detect regressions that parameterize Rule constants or hard-code user values as literals.
 - `forbidden_constructs`: `select_star`, `relative_time_function`.
-- Optional `reference` is an authored expected Operation used as a test fixture, not for scoring.
+- Optional `reference` is author-written SQL. The default AST scorer does not use it for scoring; execution-result evaluation runs it to obtain expected rows. Set `reference.ordered: true` when result order matters.
 - Empty suites, duplicate case IDs, invalid timezones or Context integrity, and contradictory comparison targets fail before execution.
 
 For `source: plan`, a one-operation plan can use the ordinary SQL expectations above.
@@ -975,8 +975,8 @@ errors retain their step IDs. Malformed plans and invalid step IDs fail evaluati
 - Compare status first. For `ok`, check the public validation result and rerun static validation.
 - Extract resources, fields, joins, aggregates, group_by, constraints and forbidden constructs from the sqlglot AST; do not compare SQL strings. The scorer implements field tracking independently of the validator to avoid hiding the validator's tracking bugs.
 - Supported comparisons: `= / != / <> / IN / NOT IN / >= / <= / > / <`, accounting for NOT/AND/OR, operand reversal, direct-field cast/date wrappers and BETWEEN. Compare numbers with Decimal, dates at midnight in the Context timezone, and date-times by instant.
-- The evaluator checks explicit AST expectations. It does not prove complete semantic equivalence, aggregate results/row counts or Rule application on every path.
-- Case results include pass/fail, failed expectations with explanations, generation_id, reference_time and validation errors. Request errors count as failures, and remaining cases continue.
+- The default evaluator checks explicit AST expectations. It does not prove complete semantic equivalence, aggregate results/row counts or Rule application on every path. Optional execution evaluation compares actual result rows with an author-written reference over synthetic data, still without proving general semantic equivalence.
+- Case results include pass/fail, failed expectations with explanations, generation_id, reference_time, request latency, available token usage and validation errors. Execution mode also records row counts and comparison status, never result rows. Request errors count as failures, and remaining cases continue.
 
 The commerce suite has 18 cases (`ok`: 12, `ambiguous`: 3, `unanswerable`: 3). Period cases use half-open ranges with reference time `2026-10-02T09:00:00+09:00` and timezone `Asia/Seoul`.
 
@@ -987,6 +987,13 @@ Requests go to a running Sidewit API. Provider and model follow server configura
 ```bash
 docker compose run --rm --no-deps -v ./evals:/evals:ro api sidewit-eval run /evals/commerce --api-url http://api:8000
 ```
+
+For an execution-result baseline, use `bash scripts/run-execution-eval.sh`. This opt-in script
+uses a separate API data directory, a synthetic PostgreSQL fixture, a non-superuser read-only
+role and the evaluator's development dependencies. `--execution-url` requires a
+`postgresql+asyncpg` URL naming a database ending in `_eval`; all selected `ok` cases must
+have a single-step `reference`. The production API remains database-independent. See
+[evaluation guidance](../evals/README.md#execution-result-baseline).
 
 - Defaults: `--api-url http://localhost:8000`, `--timeout 120` seconds. Use `SIDEWIT_API_KEY` or `--api-key` when authentication is enabled. Select cases with `--case` and write JSON reports with `--out`.
 - Create the suite's Context if missing; update it with `expected_version` when it differs from the fixture. It remains after evaluation.

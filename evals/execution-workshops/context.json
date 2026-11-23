@@ -1,0 +1,60 @@
+{
+  "name": "eval-workshops-execution",
+  "dialect": "postgresql",
+  "timezone": "Asia/Seoul",
+  "definition": {
+    "resources": [
+      {
+        "name": "members",
+        "description": "Workshop members.",
+        "fields": [
+          { "name": "id", "type": "bigint", "primary_key": true, "nullable": false },
+          { "name": "name", "type": "text", "nullable": false },
+          { "name": "city", "type": "text", "nullable": false },
+          { "name": "status", "type": "text", "nullable": false, "allowed_values": ["ACTIVE", "INACTIVE"] },
+          { "name": "joined_at", "type": "timestamptz", "nullable": false }
+        ]
+      },
+      {
+        "name": "workshops",
+        "description": "Scheduled workshops. Capacity is the maximum number of attendees.",
+        "fields": [
+          { "name": "id", "type": "bigint", "primary_key": true, "nullable": false },
+          { "name": "title", "type": "text", "nullable": false },
+          { "name": "category", "type": "text", "nullable": false, "allowed_values": ["coding", "art", "music"] },
+          { "name": "capacity", "type": "integer", "nullable": false },
+          { "name": "starts_at", "type": "timestamptz", "nullable": false }
+        ]
+      },
+      {
+        "name": "bookings",
+        "description": "A member's reservation for a workshop. Price is in KRW.",
+        "fields": [
+          { "name": "id", "type": "bigint", "primary_key": true, "nullable": false },
+          { "name": "member_id", "type": "bigint", "nullable": false },
+          { "name": "workshop_id", "type": "bigint", "nullable": false },
+          { "name": "state", "type": "text", "nullable": false, "allowed_values": ["PAID", "PENDING", "CANCELLED"] },
+          { "name": "price", "type": "numeric", "nullable": false },
+          { "name": "booked_at", "type": "timestamptz", "nullable": false }
+        ]
+      },
+      {
+        "name": "checkins",
+        "description": "A check-in for a booking. A booking has at most one check-in.",
+        "fields": [
+          { "name": "id", "type": "bigint", "primary_key": true, "nullable": false },
+          { "name": "booking_id", "type": "bigint", "nullable": false },
+          { "name": "checked_in_at", "type": "timestamptz", "nullable": false }
+        ]
+      }
+    ],
+    "relations": [
+      { "from": "bookings.member_id", "to": "members.id" },
+      { "from": "bookings.workshop_id", "to": "workshops.id" },
+      { "from": "checkins.booking_id", "to": "bookings.id" }
+    ],
+    "rules": [
+      { "id": "paid_revenue", "text": "Revenue means the sum of bookings.price where bookings.state = 'PAID'." }
+    ]
+  }
+}

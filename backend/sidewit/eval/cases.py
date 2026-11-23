@@ -92,12 +92,13 @@ class Expectations(OperationExpectations):
 
 
 class ReferenceAnswer(_Strict):
-    """A correct answer written by the case author. Never used for scoring: tests check
-    that it satisfies the expectations, which proves the case is satisfiable."""
+    """Author-written SQL. Structural suites only check it is satisfiable; optional
+    execution evaluation compares its result rows with the generated operation."""
 
     statement: str
     parameters: dict[str, Any] = {}
     parameter_types: dict[str, ParamType] = {}
+    ordered: bool = False
 
 
 class GoldenCase(_Strict):

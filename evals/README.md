@@ -2,7 +2,8 @@
 
 Golden suites for Generate regressions. Each directory holds a `context.json` (the Context to
 create or update) and `cases.yaml` (questions, expected status and deterministic AST
-expectations). Scoring never compares SQL strings and never asks an LLM to judge.
+expectations). Default scoring never compares SQL strings, executes SQL or asks an LLM to judge.
+The optional execution-result suite compares rows in a disposable PostgreSQL instance.
 
 | Suite | Role | Generate path |
 |---|---|---|
@@ -10,12 +11,14 @@ expectations). Scoring never compares SQL strings and never asks an LLM to judge
 | [`library`](library/cases.yaml) | **Separate-schema regression set.** Different schema, values and periods, including joins, business-rule constants, date selection and unavailable data. | model-written SQL |
 | [`metric-library`](metric-library/cases.yaml) | **Separate-schema regression set**, metrics only: the library questions answered through registered metric contracts. | metrics only (`allow_generated_sql: false`) |
 | [`hybrid-library`](hybrid-library/cases.yaml) | **Separate-schema regression set** for hybrid routing: questions a metric answers (`source: metric`), questions none does (`source: generated_sql`), and near misses — a metric plus an extra condition — where the generated SQL must still apply the metric's fixed filters. | hybrid (`allow_generated_sql: true`) |
+| [`execution-workshops`](execution-workshops/cases.yaml) | **Execution-result baseline.** 24 new questions over synthetic workshops, bookings and check-ins. Reference SQL supplies expected rows, including duplicate-sensitive and ordered cases. | model-written SQL |
 
 Report all suite results and their exposure history when describing quality. These suites
 were initially held out from prompt tuning, but cases have since appeared in reviews and
 regressions. They are not a fresh independent benchmark. Every `ok` case may carry an authored
 `reference` answer; backend tests check that each reference satisfies its own expectations in
-every suite, which proves the cases are satisfiable. References are never used for scoring.
+every structural suite, which proves those cases are satisfiable. Structural scoring ignores
+references; execution scoring uses their result rows as the oracle.
 
 ## Coverage
 
@@ -42,8 +45,48 @@ docker compose run --rm -T --no-deps -v ./evals:/evals:ro -v ./eval-results:/res
   api sidewit-eval run /evals/library --api-url http://api:8000 --out /results/library.json
 ```
 
-Exit code: 0 all passed, 1 some case failed, 2 setup error. No SQL is executed. Run results
-are not committed to the repository.
+Exit code: 0 all passed, 1 some case failed, 2 setup error. The default run executes no SQL.
+Run results are not committed to the repository.
+
+## Execution-result baseline
+
+Configure a real provider in `.env`, then run from the repository root:
+
+```bash
+bash scripts/run-execution-eval.sh
+# Or one case while developing:
+bash scripts/run-execution-eval.sh seoul_member_count
+```
+
+The script creates a separate Compose project with a disposable Sidewit API and PostgreSQL
+database. It does not mount `./data` or publish a database port. PostgreSQL receives only
+[synthetic fixture data](execution-workshops/init.sql); Sidewit receives the Context and questions,
+not the reference SQL. A non-superuser role with `SELECT` grants executes both reference and
+generated SQL in read-only transactions with a five-second statement timeout and a 1,000-row
+limit. Containers and the temporary database are removed when the command exits.
+
+The timestamped report under `eval-results/execution-workshops-*.json` includes status, structural checks,
+execution row counts and match/failure, request latency and provider-reported token counts.
+It does not contain result rows, database credentials or a dollar-cost estimate. Row comparison
+ignores order unless the reference sets `ordered: true`, and preserves duplicate rows. A case
+passes only when both structural expectations and result rows match. A missing or failing
+reference query is a setup error; an invalid generated query is a case failure.
+
+These published, authored cases are a reproducible baseline, **not an independent accuracy
+benchmark**. One small dataset can let semantically different SQL return the same rows; review
+failures and add discriminating data before drawing broader conclusions. This optional evaluator
+connects to PostgreSQL only during development; the Sidewit API does not execute SQL.
+The first suite has no saved Tools, so it measures generated SQL rather than Tool selection or
+mixed plans.
+
+### First real-provider run (2026-11-03 KST)
+
+OpenAI `gpt-6-luna` passed **23/24** new execution cases. All 24 returned structurally valid
+SQL; one produced the wrong result. For `intro_paid_booking_count`, the model bound the title
+`AI 입문 워크숍` although the stored workshop title is `AI 입문`. The query therefore counted no
+matching bookings. This is a semantic value-extraction failure, not a database or evaluator
+error. The run reported 57,742 input and 6,030 output tokens; summed Generate request latency
+was 94.4 seconds. Results can vary across model calls. The local JSON report is ignored by Git.
 
 ## Evaluating operation plans
 

@@ -1,0 +1,196 @@
+# New, authored evaluation cases. The reference SQL is executed only by the optional
+# evaluator against the synthetic, isolated eval database; it is never sent to the model.
+reference_time: 2026-10-15T09:00:00+09:00
+cases:
+  - id: seoul_member_count
+    category: filter
+    question: 서울 회원은 몇 명인가요?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM members WHERE city = :city"
+      parameters: {city: 서울}
+      parameter_types: {city: string}
+
+  - id: active_busan_names
+    category: filter
+    question: 부산에 사는 ACTIVE 회원 이름을 알려줘
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT name FROM members WHERE city = :city AND status = 'ACTIVE'"
+      parameters: {city: 부산}
+      parameter_types: {city: string}
+
+  - id: inactive_member_count
+    category: aggregate
+    question: INACTIVE 회원 수는?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM members WHERE status = 'INACTIVE'"
+
+  - id: september_joined_count
+    category: date_range
+    question: 2026년 9월에 가입한 회원 수를 알려줘
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM members WHERE joined_at >= :start_at AND joined_at < :end_at"
+      parameters: {start_at: "2026-09-01T00:00:00+09:00", end_at: "2026-10-01T00:00:00+09:00"}
+      parameter_types: {start_at: date-time, end_at: date-time}
+
+  - id: workshop_count_by_category
+    category: grouping
+    question: 카테고리별 워크숍 개수를 알려줘
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT category, COUNT(*) FROM workshops GROUP BY category"
+
+  - id: october_workshop_titles
+    category: date_range
+    question: 2026년 10월에 열리는 워크숍 제목은?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT title FROM workshops WHERE starts_at >= :start_at AND starts_at < :end_at"
+      parameters: {start_at: "2026-10-01T00:00:00+09:00", end_at: "2026-11-01T00:00:00+09:00"}
+      parameter_types: {start_at: date-time, end_at: date-time}
+
+  - id: coding_capacity_sum
+    category: aggregate
+    question: coding 카테고리 워크숍의 정원 합계는?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT SUM(capacity) FROM workshops WHERE category = 'coding'"
+
+  - id: total_revenue
+    category: business_rule
+    question: 전체 워크숍 매출은 얼마야?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT SUM(price) FROM bookings WHERE state = 'PAID'"
+
+  - id: seoul_revenue
+    category: join_business_rule
+    question: 서울 회원의 워크숍 매출 합계는?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT SUM(b.price) FROM bookings b JOIN members m ON b.member_id = m.id WHERE m.city = :city AND b.state = 'PAID'"
+      parameters: {city: 서울}
+      parameter_types: {city: string}
+
+  - id: busan_booking_count
+    category: join
+    question: 부산 회원이 만든 예약은 상태와 관계없이 총 몇 건인가요?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM bookings b JOIN members m ON b.member_id = m.id WHERE m.city = :city"
+      parameters: {city: 부산}
+      parameter_types: {city: string}
+
+  - id: intro_paid_booking_count
+    category: join
+    question: AI 입문 워크숍의 PAID 예약 건수는?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM bookings b JOIN workshops w ON b.workshop_id = w.id WHERE w.title = :title AND b.state = 'PAID'"
+      parameters: {title: AI 입문}
+      parameter_types: {title: string}
+
+  - id: september_paid_revenue
+    category: date_business_rule
+    question: booked_at 기준 2026년 9월 워크숍 매출은?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT SUM(price) FROM bookings WHERE state = 'PAID' AND booked_at >= :start_at AND booked_at < :end_at"
+      parameters: {start_at: "2026-09-01T00:00:00+09:00", end_at: "2026-10-01T00:00:00+09:00"}
+      parameter_types: {start_at: date-time, end_at: date-time}
+
+  - id: large_workshop_titles
+    category: numeric_filter
+    question: 정원이 20명 이상인 워크숍 제목을 알려줘
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT title FROM workshops WHERE capacity >= :minimum_capacity"
+      parameters: {minimum_capacity: 20}
+      parameter_types: {minimum_capacity: integer}
+
+  - id: paid_count_by_workshop
+    category: join_grouping
+    question: PAID 예약이 있는 워크숍별 예약 건수는? 제목과 건수를 알려줘
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT w.title, COUNT(*) FROM workshops w JOIN bookings b ON b.workshop_id = w.id WHERE b.state = 'PAID' GROUP BY w.id, w.title"
+
+  - id: total_checkins
+    category: aggregate
+    question: 체크인은 총 몇 건인가요?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM checkins"
+
+  - id: seoul_checkins
+    category: multi_join
+    question: 서울 회원이 한 체크인은 몇 건이야?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM checkins c JOIN bookings b ON c.booking_id = b.id JOIN members m ON b.member_id = m.id WHERE m.city = :city"
+      parameters: {city: 서울}
+      parameter_types: {city: string}
+
+  - id: paid_without_checkin
+    category: anti_join
+    question: 체크인 기록이 없는 PAID 예약 건수는?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM bookings b LEFT JOIN checkins c ON c.booking_id = b.id WHERE b.state = 'PAID' AND c.id IS NULL"
+
+  - id: members_without_bookings
+    category: anti_join
+    question: 한 번도 예약하지 않은 회원의 이름은?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT m.name FROM members m LEFT JOIN bookings b ON b.member_id = m.id WHERE b.id IS NULL"
+
+  - id: workshops_without_paid_bookings
+    category: anti_join
+    question: PAID 예약이 한 건도 없는 워크숍 제목은?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT w.title FROM workshops w WHERE NOT EXISTS (SELECT 1 FROM bookings b WHERE b.workshop_id = w.id AND b.state = 'PAID')"
+
+  - id: expensive_paid_booking_count
+    category: numeric_filter
+    question: 가격이 20000원 이상인 PAID 예약은 몇 건인가요?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM bookings WHERE state = 'PAID' AND price >= :minimum_price"
+      parameters: {minimum_price: 20000}
+      parameter_types: {minimum_price: integer}
+
+  - id: september_busan_members
+    category: combined_filters
+    question: 부산 회원 중 2026년 9월에 가입한 사람은 몇 명인가요?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT COUNT(*) FROM members WHERE city = :city AND joined_at >= :start_at AND joined_at < :end_at"
+      parameters: {city: 부산, start_at: "2026-09-01T00:00:00+09:00", end_at: "2026-10-01T00:00:00+09:00"}
+      parameter_types: {city: string, start_at: date-time, end_at: date-time}
+
+  - id: average_paid_price
+    category: aggregate
+    question: PAID 예약의 평균 가격은?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT AVG(price) FROM bookings WHERE state = 'PAID'"
+
+  - id: most_paid_bookings
+    category: ranking
+    question: PAID 예약이 가장 많은 워크숍 제목은?
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT w.title FROM workshops w JOIN bookings b ON b.workshop_id = w.id WHERE b.state = 'PAID' GROUP BY w.id, w.title ORDER BY COUNT(*) DESC, w.id LIMIT 1"
+
+  - id: top_three_capacities
+    category: ranking
+    question: 정원이 많은 순서대로 워크숍 상위 3개의 제목과 정원을 알려줘
+    expect: {status: ok, source: generated_sql}
+    reference:
+      statement: "SELECT title, capacity FROM workshops ORDER BY capacity DESC, id LIMIT 3"
+      ordered: true
