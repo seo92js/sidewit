@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -7,9 +8,19 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from sidewit.domain.operation import SqlOperation
+from sidewit.domain.params import value_matches_type
 from sidewit.eval.cases import GoldenCase, load_suite
-from sidewit.eval.execution import PostgresExecutionEvaluator
+from sidewit.eval.execution import PostgresExecutionEvaluator, _convert
 from sidewit.eval.runner import EvalSetupError
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2026-10-01T15:00:00Z", "2026-10-01t15:00:00z", "2026-10-02T00:00+09:00"],
+)
+def test_execution_binds_every_date_time_sidewit_accepts(value):
+    assert value_matches_type(value, "date-time")
+    assert _convert(value, "date-time") == datetime(2026, 10, 1, 15, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")

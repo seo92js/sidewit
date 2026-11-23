@@ -147,7 +147,8 @@ def _convert(value: Any, kind: ParamType) -> Any:
     if kind == "date":
         return date.fromisoformat(value)
     if kind == "date-time":
-        return datetime.fromisoformat(value)
+        # Sidewit accepts lowercase t/z (RFC 3339); fromisoformat rejects a lowercase z.
+        return datetime.fromisoformat(value.upper())
     if kind == "number":
         return Decimal(str(value))
     return value
