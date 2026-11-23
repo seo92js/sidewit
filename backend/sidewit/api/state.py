@@ -6,11 +6,13 @@ from fastapi import Depends
 
 from sidewit.application.runtime import get_history as get_history
 from sidewit.application.runtime import get_store as get_store
+from sidewit.application.storage import retry_recovery
 from sidewit.generation.history import GenerationHistory
 from sidewit.store import Store
 
 
 async def available_store(store: Annotated[Store, Depends(get_store)]) -> Store:
+    retry_recovery(store)
     store.require_available()
     return store
 

@@ -7,7 +7,14 @@ from typing import Any, Literal
 ParamType = Literal["string", "integer", "number", "boolean", "date", "date-time"]
 
 PARAM_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+DATE_TYPES = frozenset({"date", "date-time"})
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# RFC 3339 with optional seconds and an optional seconds offset (Python emits it for historical
+# zones). At most six fractional digits: PostgreSQL rounds more, Python truncates them.
+_DATE_TIME = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?"
+    r"(?:[Zz]|[+-]\d{2}:\d{2}(?::\d{2})?)$"
+)
 _DECIMAL = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 
 
@@ -73,7 +80,7 @@ def value_matches_type(value: Any, param_type: ParamType) -> bool:
         case "boolean":
             return isinstance(value, bool)
         case "date":
-            if not isinstance(value, str) or not _DATE.match(value):
+            if not isinstance(value, str) or not _DATE.fullmatch(value):
                 return False
             try:
                 date.fromisoformat(value)
@@ -81,10 +88,10 @@ def value_matches_type(value: Any, param_type: ParamType) -> bool:
                 return False
             return True
         case "date-time":
-            if not isinstance(value, str) or "T" not in value:
+            if not isinstance(value, str) or not _DATE_TIME.fullmatch(value):
                 return False
             try:
-                parsed = datetime.fromisoformat(value)
+                parsed = datetime.fromisoformat(value.upper())
             except ValueError:
                 return False
             return parsed.tzinfo is not None

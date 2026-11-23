@@ -1,9 +1,9 @@
+import { cn } from "cn";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router";
 
-import { useHealth } from "@/api/queries";
 import { LogoutPage } from "@/components/app/AdminAccess";
+import { HealthDot } from "@/components/app/HealthDot";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import ContextsPage from "@/pages/ContextsPage";
 import PlaygroundPage from "@/pages/PlaygroundPage";
 import ToolEditorPage from "@/pages/ToolEditorPage";
@@ -14,27 +14,6 @@ const NAV = [
   { to: "/contexts", label: "Contexts" },
   { to: "/tools", label: "Tools" },
 ];
-
-function HealthDot() {
-  const { data, isError } = useHealth();
-  const ok = data?.status === "ok";
-  return (
-    <span
-      className="flex items-center gap-1.5 text-xs text-muted-foreground"
-      title={
-        isError ? "API unreachable" : `API ${data?.status ?? "…"} · storage ${data?.storage ?? "…"}`
-      }
-    >
-      <span
-        className={cn(
-          "size-2 rounded-full",
-          ok ? "bg-emerald-500" : isError ? "bg-red-500" : "bg-muted-foreground/40",
-        )}
-      />
-      API
-    </span>
-  );
-}
 
 export default function App() {
   return (

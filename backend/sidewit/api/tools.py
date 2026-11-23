@@ -17,7 +17,6 @@ from sidewit.application.tools import (
 from sidewit.application.tools import (
     invoke_tool as run_invoke,
 )
-from sidewit.domain.context import ContextDefinition
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import MetricBinding
 from sidewit.domain.params import ParamType
@@ -25,7 +24,7 @@ from sidewit.domain.tool import TOOL_NAME_PATTERN, ToolOperation, ToolStatus
 from sidewit.errors import SidewitError
 from sidewit.generation.history import GenerationRecord
 from sidewit.generation.operations import operation_steps
-from sidewit.store import Store, ToolRecord
+from sidewit.store import ContextRecord, ToolRecord
 from sidewit.tools.service import (
     ContractUnavailable,
     contract_snapshot,
@@ -148,9 +147,8 @@ class ValidateRequest(BaseModel):
     metric_binding: MetricBinding | None = None
 
 
-def _out(tool: ToolRecord, store: Store) -> ToolOut:
+def _out(tool: ToolRecord, context: ContextRecord) -> ToolOut:
     output = ToolOut.model_validate(tool, from_attributes=True)
-    context = get_context(store, tool.context_id)
     if effective_status(tool, context) == "stale":
         output.status = "stale"
         output.validation = None
@@ -176,12 +174,13 @@ async def list_tools(store: StoreDep, context_id: uuid.UUID | None = None) -> To
     tools = sorted(store.tools.values(), key=lambda t: t.name)
     if context_id is not None:
         tools = [t for t in tools if t.context_id == context_id]
-    return ToolList(items=[_out(t, store) for t in tools])
+    return ToolList(items=[_out(t, get_context(store, t.context_id)) for t in tools])
 
 
 @router.get("/tools/{tool_id}")
 async def read_tool(tool_id: uuid.UUID, store: StoreDep) -> ToolOut:
-    return _out(get_tool(store, tool_id), store)
+    tool = get_tool(store, tool_id)
+    return _out(tool, get_context(store, tool.context_id))
 
 
 @router.post("/tools/draft")
@@ -201,7 +200,7 @@ async def draft_tool(body: DraftRequest, store: StoreDep, history: HistoryDep) -
         )
     step_id, source = _generation_source(generation, body.step_id)
     context = get_context(store, generation.context_id)
-    draft = draft_from_generation(source, context)
+    draft = draft_from_generation(source, context, store.definition(context))
     return ToolDraft.model_validate(draft | {"source_step_id": step_id})
 
 
@@ -233,7 +232,7 @@ def _generation_source(
 @router.post("/tools", status_code=status.HTTP_201_CREATED)
 async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) -> ToolOut:
     context = get_context(store, body.context_id)
-    if store.tool(body.name) is not None:
+    if body.name in store.tools:
         raise SidewitError(409, "tool_name_conflict", f"Tool '{body.name}' already exists.")
     binding = body.metric_binding
     source_step_id = body.source_step_id
@@ -254,7 +253,9 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
                 422, "invalid_metric_binding", "Source metric binding cannot be replaced."
             )
         binding = source_binding
-    validation = validate_tool(context, body.input_schema, body.operation.statement, binding)
+    validation = validate_tool(
+        context, store.definition(context), body.input_schema, body.operation.statement, binding
+    )
     _require_valid(validation)
 
     tool = ToolRecord(
@@ -271,8 +272,7 @@ async def create_tool(body: ToolCreate, store: StoreDep, history: HistoryDep) ->
         source_step_id=source_step_id,
         metric_binding=binding.model_dump() if binding else None,
     )
-    save_validated_tool(store, tool, context, validation)
-    return _out(tool, store)
+    return _out(save_validated_tool(store, tool, context, validation), context)
 
 
 @router.put("/tools/{tool_id}")
@@ -281,10 +281,14 @@ async def update_tool(tool_id: uuid.UUID, body: ToolUpdate, store: StoreDep) -> 
     context = get_context(store, tool.context_id)
     check_tool_version(tool, body.expected_version)
     next_name = body.name if body.name is not None else tool.name
-    if next_name != tool.name and store.tool(next_name) is not None:
+    if next_name != tool.name and next_name in store.tools:
         raise SidewitError(409, "tool_name_conflict", f"Tool '{next_name}' already exists.")
     validation = validate_tool(
-        context, body.input_schema, body.operation.statement, tool_binding(tool)
+        context,
+        store.definition(context),
+        body.input_schema,
+        body.operation.statement,
+        tool_binding(tool),
     )
     _require_valid(validation)
 
@@ -295,13 +299,15 @@ async def update_tool(tool_id: uuid.UUID, body: ToolUpdate, store: StoreDep) -> 
         body.input_schema,
         operation,
     ):
-        tool.name = next_name
-        tool.description = body.description
-        tool.input_schema = body.input_schema
-        tool.operation = operation
-        tool.version += 1
-    save_validated_tool(store, tool, context, validation)
-    return _out(tool, store)
+        tool = replace(
+            tool,
+            name=next_name,
+            description=body.description,
+            input_schema=body.input_schema,
+            operation=operation,
+            version=tool.version + 1,
+        )
+    return _out(save_validated_tool(store, tool, context, validation), context)
 
 
 @router.patch("/tools/{tool_id}")
@@ -310,21 +316,20 @@ async def set_tool_enabled(tool_id: uuid.UUID, body: ToolActivation, store: Stor
     context = get_context(store, tool.context_id)
     check_tool_version(tool, body.expected_version)
     if tool.enabled == body.enabled:
-        return _out(tool, store)
+        return _out(tool, context)
+    changed = replace(tool, enabled=body.enabled, version=tool.version + 1)
     if body.enabled:
         validation = validate_tool(
-            context, tool.input_schema, tool.operation["statement"], tool_binding(tool)
+            context,
+            store.definition(context),
+            tool.input_schema,
+            tool.operation["statement"],
+            tool_binding(tool),
         )
         _require_valid(validation)
-        tool.enabled = True
-        tool.version += 1
-        save_validated_tool(store, tool, context, validation)
-    else:
-        # Disabling must remain possible even when the SQL is invalid or stale.
-        tool.enabled = False
-        tool.version += 1
-        store.save_tool(tool)
-    return _out(tool, store)
+        return _out(save_validated_tool(store, changed, context, validation), context)
+    # Disabling must remain possible even when the SQL is invalid or stale.
+    return _out(store.save_tool(changed), context)
 
 
 @router.post("/tools/{tool_id}/refresh-contract")
@@ -334,20 +339,20 @@ async def refresh_contract(tool_id: uuid.UUID, body: VersionRequest, store: Stor
     tool = get_tool(store, tool_id)
     context = get_context(store, tool.context_id)
     check_tool_version(tool, body.expected_version)
+    definition = store.definition(context)
     try:
-        statement, input_schema = contract_snapshot(tool, context)
+        statement, input_schema = contract_snapshot(tool, context, definition)
     except ContractUnavailable as e:
         raise SidewitError(409, "metric_contract_unavailable", str(e)) from e
-    validation = validate_tool(context, input_schema, statement, tool_binding(tool))
+    validation = validate_tool(context, definition, input_schema, statement, tool_binding(tool))
     _require_valid(validation)
 
     operation = {"type": "sql", "statement": statement}
     if (tool.input_schema, tool.operation) != (input_schema, operation):
-        tool.input_schema = input_schema
-        tool.operation = operation
-        tool.version += 1
-    save_validated_tool(store, tool, context, validation)
-    return _out(tool, store)
+        tool = replace(
+            tool, input_schema=input_schema, operation=operation, version=tool.version + 1
+        )
+    return _out(save_validated_tool(store, tool, context, validation), context)
 
 
 @router.delete("/tools/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -374,7 +379,11 @@ async def validate(body: ValidateRequest, store: StoreDep) -> ValidationResult:
                 "operation.parameter_types and operation.parameters.",
             )
         return validate_tool(
-            context, body.input_schema, body.operation.statement, body.metric_binding
+            context,
+            store.definition(context),
+            body.input_schema,
+            body.operation.statement,
+            body.metric_binding,
         )
     if body.metric_binding is not None:
         raise SidewitError(
@@ -383,7 +392,7 @@ async def validate(body: ValidateRequest, store: StoreDep) -> ValidationResult:
     return validate_sql_operation(
         body.operation.statement,
         context.dialect,
-        ContextDefinition.model_validate(context.definition),
+        store.definition(context),
         body.operation.parameter_types,
         body.operation.parameters,
         DEFAULT_POLICY,

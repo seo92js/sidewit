@@ -1,16 +1,23 @@
 """Saved Tool catalog and deterministic validation of each selected call."""
 
 import json
+import uuid
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
+from sqlglot.errors import SqlglotError
 
+from sidewit.domain.dialect import to_sqlglot
 from sidewit.domain.operation import SqlOperation
+from sidewit.domain.params import DATE_TYPES
 from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS
-from sidewit.generation.dto import LLMParameter
+from sidewit.generation.dto import LLMParameter, LLMPeriodBounds
 from sidewit.generation.parameters import convert_parameter
+from sidewit.generation.periods import bind_periods
 from sidewit.generation.planners import GenerationInput
+from sidewit.sql import parse_sql
 from sidewit.store import ContextRecord, Store, ToolRecord
 from sidewit.tools.service import (
     InvalidArguments,
@@ -20,6 +27,7 @@ from sidewit.tools.service import (
     invoke,
 )
 from sidewit.validation.input_schema import parameter_types
+from sidewit.validation.periods import period_inputs
 from sidewit.validation.sql_validator import ValidationResult
 
 MAX_CATALOG_CHARS = 100_000
@@ -30,6 +38,7 @@ class ToolCall(BaseModel):
 
     tool_name: str
     parameters: list[LLMParameter]
+    periods: list[LLMPeriodBounds]
 
 
 class ToolSelectionError(Exception):
@@ -52,6 +61,9 @@ def selection_context(
                 "input_schema": t.input_schema,
                 "operation": t.operation,
                 "status": effective_status(t, context),
+                "period_inputs": [
+                    {"start": start, "end": end} for start, end in _period_inputs(t, context)
+                ],
             }
             for t in candidates
         ],
@@ -69,20 +81,42 @@ def selection_context(
     )
 
 
+def _period_inputs(tool: ToolRecord, context: ContextRecord) -> list[tuple[str, str]]:
+    dates = [n for n, kind in parameter_types(tool.input_schema).items() if kind in DATE_TYPES]
+    if len(dates) < 2:
+        return []
+    try:
+        ast = parse_sql(tool.operation["statement"], to_sqlglot(context.dialect))[0]
+    except (SqlglotError, RecursionError):
+        return []
+    return period_inputs(ast, dates) if ast is not None else []
+
+
+def unchanged_tool(
+    store: Store, tool_id: uuid.UUID, version: int, details: dict[str, Any] | None = None
+) -> ToolRecord:
+    """The stored Tool, provided it is still the version that was selected."""
+    current = store.tool_snapshot(tool_id)
+    if current is None or current.version != version:
+        raise ToolSelectionError(
+            409, "tool_changed", "Selected Tool changed. Start a new request.", details
+        )
+    return current
+
+
 def invoke_selection(
     selection: ToolCall,
     candidates: list[ToolRecord],
     store: Store,
     context: ContextRecord,
+    reference_time: datetime,
 ) -> tuple[SqlOperation, ValidationResult, ToolRecord]:
     selected = next((t for t in candidates if t.name == selection.tool_name), None)
     if selected is None:
         raise ToolSelectionError(
             422, "invalid_tool_selection", "Selected Tool is not in this Context."
         )
-    current = store.tool(selected.name)
-    if current is None or (current.id, current.version) != (selected.id, selected.version):
-        raise ToolSelectionError(409, "tool_changed", "Selected Tool changed. Start a new request.")
+    current = unchanged_tool(store, selected.id, selected.version)
     types = parameter_types(selected.input_schema)
     arguments = {}
     for parameter in selection.parameters:
@@ -94,8 +128,19 @@ def invoke_selection(
                 "Selected Tool arguments have invalid names or types.",
             )
         arguments[parameter.name] = convert_parameter(parameter.value, parameter.type)
+    periods = bind_periods(selection.periods, types, reference_time, context.timezone)
+    if periods.errors:
+        raise ToolSelectionError(
+            422,
+            "invalid_tool_arguments",
+            "Selected Tool periods do not match its date inputs.",
+            {"tool": current.name, "errors": [issue.model_dump() for issue in periods.errors]},
+        )
+    arguments.update(periods.values)
     try:
-        operation, validation = invoke(store, current, context, arguments)
+        operation, validation = invoke(
+            store, current, context, arguments, period_parameters=periods.parameters
+        )
     except ToolDisabled as exc:
         raise ToolSelectionError(409, "tool_disabled", "Selected Tool is disabled.") from exc
     except ToolInvalid as exc:

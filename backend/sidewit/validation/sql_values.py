@@ -50,6 +50,30 @@ class ValueAnalysis:
             self._values[marker] = result
         return result
 
+    def column(self, scope: Scope, node: exp.Expression, index: int) -> list[ValueOrigin]:
+        """Values of the index-th column of a subquery or VALUES list."""
+        self.analysis.budget.consume()
+        if isinstance(node, exp.Values):
+            rows = node.expressions
+            if any(index >= len(row.expressions) for row in rows):
+                return [UNKNOWN]
+            return [v for row in rows for v in self.values(scope, row.expressions[index])]
+        query = self.scopes.get(id(node))
+        outputs = self.analysis.outputs(query) if query is not None else None
+        if outputs is None or index >= len(outputs):
+            return [UNKNOWN]
+        return self.output(query, index, frozenset())
+
+    def compared(
+        self, scope: Scope, value: exp.Expression | None, column: int | None
+    ) -> list[ValueOrigin]:
+        """Values on the right of a Comparison."""
+        if value is None:
+            return [UNKNOWN]
+        if column is not None:
+            return self.column(scope, value, column)
+        return self.values(scope, value)
+
     def _unique(self, values: list[ValueOrigin]) -> list[ValueOrigin]:
         # Keep distinct AST literals: constant/request checks use their identities.
         unique = {}

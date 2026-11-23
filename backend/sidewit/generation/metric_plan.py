@@ -4,22 +4,16 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict
 
 from sidewit.domain.context import ContextDefinition
-from sidewit.domain.metric import MetricDefinition, Period, field_for
+from sidewit.domain.metric import MetricDefinition, field_for
+from sidewit.domain.period import Period
 from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS, LLMClarification
-from sidewit.generation.dto import LLMParameter, LLMToolSuggestion
+from sidewit.generation.dto import LLMParameter, LLMPeriod, LLMPeriodBounds, LLMToolSuggestion
 from sidewit.generation.prompts import template
 
 METRIC_PROMPT_VERSION = "metric_plan_v3"
-
-
-class LLMPeriod(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["rolling_days", "previous_day", "previous_week", "previous_month"]
-    days: StrictInt | None
 
 
 class LLMHybridPlan(BaseModel):
@@ -36,6 +30,7 @@ class LLMHybridPlan(BaseModel):
     period: LLMPeriod | None
     statement: str | None
     parameters: list[LLMParameter]
+    periods: list[LLMPeriodBounds]
     tool_suggestion: LLMToolSuggestion | None
 
 

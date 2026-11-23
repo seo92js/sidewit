@@ -3,9 +3,6 @@
 This layer has no provider, model output or database dependency.
 """
 
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
@@ -13,20 +10,18 @@ from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sidewit.domain.context import ContextDefinition
 from sidewit.domain.dialect import Dialect, identifier, render_sql, to_sqlglot
 from sidewit.domain.issue import Issue
-from sidewit.domain.metric import MetricBinding, MetricDefinition, Period, field_for, field_type
-from sidewit.domain.params import ParamType
+from sidewit.domain.metric import MetricBinding, MetricDefinition, field_for, field_type
+from sidewit.domain.params import DATE_TYPES, ParamType
 from sidewit.sql import parse_sql
 
 _COMPARISONS = {"=": exp.EQ, "!=": exp.NEQ, ">": exp.GT, ">=": exp.GTE, "<": exp.LT, "<=": exp.LTE}
 
 
 def canonical_ref(definition: ContextDefinition, ref: str) -> str:
-    resource_name, _, field_name = ref.partition(".")
-    resource = definition.find_resource(resource_name)
-    field = field_for(definition, ref)
-    if resource is None or field is None:
+    canonical = definition.canonical_ref(ref)
+    if canonical is None:
         raise ValueError("Unknown metric field.")
-    return f"{resource.name}.{field.name}"
+    return canonical
 
 
 def _column(definition: ContextDefinition, ref: str, dialect: Dialect) -> exp.Column:
@@ -101,7 +96,7 @@ def metric_template(
             raise ValueError("Time field is not allowed by this metric.")
         field = field_for(definition, canonical)
         kind = field_type(field) if field else None
-        if kind not in {"date", "date-time"}:
+        if kind not in DATE_TYPES:
             raise ValueError("Unsupported time field type.")
         for name, comparison in (("start_at", exp.GTE), ("end_at", exp.LT)):
             predicates.append(
@@ -116,34 +111,6 @@ def metric_template(
     if groups:
         query = query.group_by(*[g.copy() for g in groups])
     return render_sql(query, dialect), types
-
-
-def period_bounds(
-    period: Period, reference_time: datetime, timezone: str, kind: ParamType
-) -> tuple[str, str]:
-    if reference_time.utcoffset() is None:
-        raise ValueError("reference_time must be timezone aware.")
-    now = reference_time.astimezone(ZoneInfo(timezone))
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if period.kind == "rolling_days":
-        if period.days is None:
-            raise ValueError("rolling_days requires days.")
-        end = midnight if kind == "date" else now
-        start = end - timedelta(days=period.days)
-    else:
-        if period.days is not None:
-            raise ValueError("Calendar periods require days=null.")
-        if period.kind == "previous_day":
-            end, start = midnight, midnight - timedelta(days=1)
-        elif period.kind == "previous_week":
-            end = midnight - timedelta(days=midnight.weekday())
-            start = end - timedelta(days=7)
-        else:
-            end = midnight.replace(day=1)
-            start = (end - timedelta(days=1)).replace(day=1)
-    if kind == "date":
-        return start.date().isoformat(), end.date().isoformat()
-    return start.isoformat(), end.isoformat()
 
 
 def binding_issues(

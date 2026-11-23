@@ -36,6 +36,24 @@ _RESERVED: dict[str, frozenset[str]] = {
 }
 
 
+def reserved_keyword(name: str, dialect: Dialect) -> bool:
+    return name.lower() in _RESERVED[dialect]
+
+
+_BOOLEAN_WORDS = {"true": True, "yes": True, "false": False, "no": False}
+
+
+def postgres_bool(text: str) -> bool | None:
+    """PostgreSQL boolean input rules; None for text PostgreSQL rejects."""
+    word = text.strip().lower()
+    if word in {"1", "on"}:
+        return True
+    if word in {"0", "off", "of"}:
+        return False
+    matches = {v for full, v in _BOOLEAN_WORDS.items() if word and full.startswith(word)}
+    return matches.pop() if len(matches) == 1 else None
+
+
 def to_sqlglot(dialect: Dialect) -> str:
     return _SQLGLOT_DIALECTS[dialect]
 
@@ -63,7 +81,7 @@ def _needs_quotes(name: str, dialect: Dialect) -> bool:
     unquoted = exp.to_identifier(name)
     if unquoted.quoted or normalized_name(unquoted, dialect) != name:
         return True
-    if name.lower() in _RESERVED[dialect]:
+    if reserved_keyword(name, dialect):
         return True
     read = to_sqlglot(dialect)
     try:
@@ -158,19 +176,7 @@ def cast_value(value: Scalar, to: exp.DataType) -> Scalar | None:
     if result == "string":
         return value[: params[0]] if params else value
     if result == "boolean":
-        if isinstance(value, bool):
-            return value
-        word = value.strip().lower()
-        if word in {"1", "on"}:
-            return True
-        if word in {"0", "off", "of"}:
-            return False
-        matches = {
-            flag
-            for full, flag in {"true": True, "yes": True, "false": False, "no": False}.items()
-            if word and full.startswith(word)
-        }
-        return matches.pop() if len(matches) == 1 else None
+        return value if isinstance(value, bool) else postgres_bool(value)
     if isinstance(value, str):
         word = value.strip()
         if result == "integer" and not re.fullmatch(r"[+-]?[0-9]+", word):
@@ -219,10 +225,20 @@ def user_type_identity(type_: str | exp.DataType) -> tuple[str, str] | None:
     unqualified name is taken as `public`. A Context field type (text) and a cast target in
     SQL (sqlglot DataType) map to the same identity. None for built-in or other types."""
     if isinstance(type_, str):
-        try:
-            type_ = exp.DataType.build(type_, dialect="postgres", udt=True)
-        except (SqlglotError, ValueError):
-            return None
+        return _text_type_identity(type_)
+    return _data_type_identity(type_)
+
+
+@lru_cache(maxsize=4096)
+def _text_type_identity(text: str) -> tuple[str, str] | None:
+    try:
+        data_type = exp.DataType.build(text, dialect="postgres", udt=True)
+    except (SqlglotError, ValueError):
+        return None
+    return _data_type_identity(data_type)
+
+
+def _data_type_identity(type_: exp.DataType) -> tuple[str, str] | None:
     if type_.this != exp.DataType.Type.USERDEFINED:
         return None
     kind = type_.args.get("kind")

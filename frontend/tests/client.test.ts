@@ -149,3 +149,12 @@ test("bad login credentials do not expire a separate existing editor session", a
     window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
   }
 });
+
+test("a body of the wrong shape is invalid_response with its real status", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"x":1}', { status: 503 })));
+  const options = { answerStatuses: [503], isValid: () => false };
+  await expect(request("GET", "/health", undefined, options)).rejects.toMatchObject({
+    status: 503,
+    error: "invalid_response",
+  });
+});

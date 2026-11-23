@@ -29,10 +29,22 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export interface RequestOptions {
+  /** Non-2xx statuses whose body is data, not an error (e.g. the 503 health report). */
+  answerStatuses?: readonly number[];
+  /** Rejects a body of the wrong shape as `invalid_response`. */
+  isValid?: (data: unknown) => boolean;
+}
+
+export async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  options: RequestOptions = {},
+): Promise<T> {
   const revision = sessionRevision;
   try {
-    return await send<T>(method, BASE + path, body);
+    return await send<T>(method, BASE + path, body, options);
   } catch (error) {
     // An old request's delayed 401 must not hide an editor after a new successful login.
     if (error instanceof ApiError && error.status === 401 && revision === sessionRevision) {
@@ -56,7 +68,12 @@ export async function adminSession(
   return result;
 }
 
-async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function send<T>(
+  method: string,
+  url: string,
+  body?: unknown,
+  { answerStatuses = [], isValid }: RequestOptions = {},
+): Promise<T> {
   const headers: Record<string, string> = { "X-Sidewit-Web": "1" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -104,13 +121,20 @@ async function send<T>(method: string, url: string, body?: unknown): Promise<T> 
       details: {},
     });
   }
-  if (!res.ok) {
+  if (!res.ok && !answerStatuses.includes(res.status)) {
     const envelope =
       typeof data === "object" && data !== null ? (data as Partial<ApiErrorBody>) : undefined;
     throw new ApiError(res.status, {
       error: envelope?.error ?? "http_error",
       message: envelope?.message ?? `Request failed with status ${res.status}.`,
       details: envelope?.details ?? {},
+    });
+  }
+  if (isValid && !isValid(data)) {
+    throw new ApiError(res.status, {
+      error: "invalid_response",
+      message: `The server returned an unexpected response (HTTP ${res.status}).`,
+      details: {},
     });
   }
   return data as T;

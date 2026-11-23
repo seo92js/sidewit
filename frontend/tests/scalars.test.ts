@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 
 import type { ContextDefinition, FixedCondition, ScalarValue } from "@/api/types";
 import {
-  coerceScalar,
   contextValueErrors,
   fieldInputType,
   parseScalarExact,
@@ -96,16 +95,19 @@ describe("scalar input", () => {
 });
 
 describe("type coercion", () => {
-  test("coerces only when lossless", () => {
-    expect(coerceScalar("1", "integer")).toBe(1);
-    expect(coerceScalar(1, "string")).toBe("1");
-    expect(coerceScalar(true, "string")).toBe("true");
-    expect(coerceScalar("false", "boolean")).toBe(false);
-    expect(coerceScalar("001", "integer")).toBe("001");
-    expect(coerceScalar("1.5", "integer")).toBe("1.5");
-    expect(coerceScalar(1.5, "integer")).toBe(1.5);
-    expect(coerceScalar(1, "boolean")).toBe(1);
-    expect(coerceScalar("Seoul, KR", "number")).toBe("Seoul, KR");
+  // Coercion is internal to setFieldType; exercise it through a field type change.
+  const retyped = (from: string, to: string, values: ScalarValue[]) =>
+    setFieldType(definitionWith(from, values, { field: "orders.other", value: "" }), 0, 0, to)
+      .resources[0].fields[0].allowed_values;
+
+  test("changing a field type converts values only when lossless", () => {
+    expect(retyped("text", "integer", ["1", "001", "1.5"])).toEqual([1, "001", "1.5"]);
+    expect(retyped("integer", "text", [1])).toEqual(["1"]);
+    expect(retyped("boolean", "text", [true])).toEqual(["true"]);
+    expect(retyped("text", "boolean", ["false"])).toEqual([false]);
+    expect(retyped("numeric", "integer", [1.5])).toEqual([1.5]);
+    expect(retyped("integer", "boolean", [1])).toEqual([1]);
+    expect(retyped("text", "numeric", ["Seoul, KR"])).toEqual(["Seoul, KR"]);
   });
 
   test("changing a field type re-types its allowed values and rule constants", () => {

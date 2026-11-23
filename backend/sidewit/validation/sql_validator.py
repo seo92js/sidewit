@@ -22,6 +22,8 @@ from sidewit.domain.dialect import (
     Dialect,
     cast_result_type,
     cast_value,
+    postgres_bool,
+    reserved_keyword,
     to_sqlglot,
     unbounded_text,
     user_type_identity,
@@ -29,6 +31,7 @@ from sidewit.domain.dialect import (
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
 from sidewit.domain.params import (
+    DATE_TYPES,
     PARAM_NAME_PATTERN,
     ParamType,
     exact_number,
@@ -37,7 +40,14 @@ from sidewit.domain.params import (
     value_matches_type,
 )
 from sidewit.sql import COMPLEXITY_MESSAGE, SqlComplexityError, parse_sql
+from sidewit.validation.comparisons import (
+    EQUALITY,
+    FLIPPED,
+    Comparison,
+    scope_comparisons,
+)
 from sidewit.validation.functions import function_issues
+from sidewit.validation.periods import period_usage_issues
 from sidewit.validation.request_literals import request_literal_issues
 from sidewit.validation.sql_analysis import (
     FieldRef,
@@ -84,21 +94,6 @@ _CURRENT_TIME_FUNCTIONS = {
     "timeofday",
 }
 
-# Comparison node -> operator with the field on the left; flipped when the field is right.
-_COMPARISONS: dict[type[exp.Expression], str] = {
-    exp.EQ: "=",
-    exp.NullSafeEQ: "=",
-    exp.NEQ: "!=",
-    exp.NullSafeNEQ: "!=",
-    exp.GT: ">",
-    exp.GTE: ">=",
-    exp.LT: "<",
-    exp.LTE: "<=",
-}
-_FLIPPED = {"=": "=", "!=": "!=", ">": "<", ">=": "<=", "<": ">", "<=": ">="}
-# A field compared with one of its values by equality; ranges say nothing about the set.
-_EQUALITY = {"=", "!="}
-
 
 @dataclass(frozen=True)
 class ValidationPolicy:
@@ -112,6 +107,8 @@ class ValidationPolicy:
     # False for Generate: a registered constant (Rule condition, metric fixed filter) must
     # stay a SQL literal; binding it to a parameter would make it caller-controlled.
     allow_constant_parameters: bool = True
+    # (start, end) parameters the server filled from a period; each is a half-open bound.
+    period_parameters: tuple[tuple[str, str], ...] = ()
 
 
 DEFAULT_POLICY = ValidationPolicy()
@@ -210,13 +207,15 @@ def parameter_value_issues(
     context: ContextDefinition,
     declared: dict[str, ParamType],
     values: dict[str, Any],
+    period_parameters: tuple[tuple[str, str], ...] = (),
 ) -> list[Issue]:
     """Check actual inputs with the same rules as /validate.
 
     The caller has already validated the saved statement and its Context version, so only
     input-dependent failures from this pass apply to invocation.
     """
-    result = validate_sql_operation(statement, dialect, context, declared, values)
+    policy = replace(DEFAULT_POLICY, period_parameters=period_parameters)
+    result = validate_sql_operation(statement, dialect, context, declared, values, policy)
     return [
         issue
         for issue in result.errors
@@ -226,6 +225,7 @@ def parameter_value_issues(
             "value_unverifiable",
             "parameter_type_mismatch",
             "sql_analysis_error",
+            "period_bound_misused",
         }
     ]
 
@@ -291,6 +291,7 @@ class _Validator:
         for relation in context.relations:
             a, b = context.canonical_ref(relation.from_), context.canonical_ref(relation.to)
             self.relations |= {(a, b), (b, a)}
+        self.comparisons: list[tuple[Scope, Comparison]] = []
         self.errors: list[Issue] = []
         self.warnings: list[Issue] = []
         self.checks: list[str] = []
@@ -310,7 +311,7 @@ class _Validator:
         """Checks that need name resolution are skipped when the analysis fails; the others
         (parameters, placeholders, relative time) still run."""
         self.checks.append("functions")
-        self.errors += function_issues(ast, self.context.sql_extensions)
+        self.errors += function_issues(ast, self.statement, self.context.sql_extensions)
         analyzed = True
         try:
             self.analysis = SqlAnalysis(ast, self.fields, self.string_fields, self.user_types)
@@ -322,16 +323,21 @@ class _Validator:
             self._error("sql_analysis_error", str(e))
             analyzed = False
         self._check_parameters(ast)
+        if self.policy.period_parameters:
+            self.checks.append("periods")
+            self.errors += period_usage_issues(ast, self.policy.period_parameters)
         if analyzed:
+            self.comparisons = scope_comparisons(self.analysis)
+            self.value_analysis = ValueAnalysis(self.analysis)
             try:
-                comparisons = list(self._field_comparisons(scopes))
+                comparisons = list(self._field_comparisons())
             except SqlAnalysisError as e:
                 self._error("sql_analysis_error", str(e))
                 analyzed = False
             else:
                 self._check_allowed_values(comparisons)
                 self._check_constants(comparisons)
-        if not analyzed and (
+        if (not analyzed or self.analysis.unscoped) and (
             self.allowed or (self.constants and not self.policy.allow_constant_parameters)
         ):
             self._error(
@@ -344,8 +350,7 @@ class _Validator:
         if analyzed and self.policy.request_text is not None and not self.errors:
             self.checks.append("request_literals")
             self.errors += request_literal_issues(
-                ast,
-                self.sidewit_dialect,
+                self._data_literals(),
                 self.context,
                 self.policy.request_text,
                 self.constant_literals,
@@ -388,7 +393,19 @@ class _Validator:
                 )
         # Fold unquoted identifiers as PostgreSQL does; every later check (and error refs)
         # sees the names the database would resolve.
-        return normalize_identifiers(statements[0], dialect=self.dialect)
+        ast = normalize_identifiers(statements[0], dialect=self.dialect)
+        # SQLGlot misreads unsupported syntax such as `TABLE t` as names; PostgreSQL never
+        # accepts an unquoted reserved keyword as a table, column or FROM alias.
+        for name in _leading_names(ast):
+            if not name.quoted and reserved_keyword(name.name, self.sidewit_dialect):
+                self._error(
+                    "sql_parse_error",
+                    f"'{name.name.upper()}' is a reserved keyword here; this syntax is not "
+                    "supported. Quote the name if it is a column or table.",
+                    name.name,
+                )
+                return None
+        return ast
 
     # statement_policy -----------------------------------------------------------------
 
@@ -429,6 +446,8 @@ class _Validator:
     def _check_fields(self, scopes: list[Scope]) -> None:
         self.checks.append("fields")
         for scope in scopes:
+            if isinstance(scope.expression, exp.SetOperation):
+                self._check_set_order(scope.expression)
             for problem in self.analysis.using_problems(scope):
                 if problem.ambiguous:
                     code, issue = "ambiguous_field", "appears more than once"
@@ -440,7 +459,7 @@ class _Validator:
                     "join.",
                     problem.name,
                 )
-            for column in _scope_columns(scope):
+            for column in self.analysis.owned(scope, exp.Column):
                 if column.is_star:
                     if (
                         column.table
@@ -490,7 +509,7 @@ class _Validator:
         name = column.name
         for current, env in self.analysis.reachable(scope, column):
             columns, opaque = self.analysis.candidates(current, env, name)
-            matches = [c.aliases[0] for c in columns]
+            matches = [c.aliases[0] if c.aliases else f"USING ({name})" for c in columns]
             if len(matches) > 1:
                 where = (
                     f"'{matches[0]}' has more than one '{name}'."
@@ -501,13 +520,71 @@ class _Validator:
                 return
             if matches or opaque:
                 return
-            if current is scope and _is_alias_reference(scope, column):
+            if current is scope and self._is_output_reference(scope, column):
                 return
         self._error(
             "unknown_field",
             f"Field '{column.name}' does not exist on any resource in this query.",
             column.name,
         )
+
+    def _check_set_order(self, query: exp.SetOperation) -> None:
+        """PostgreSQL sorts a UNION/INTERSECT/EXCEPT only by output names or positions."""
+        order = query.args.get("order")
+        for ordered in order.expressions if order else []:
+            item = ordered.this.unnest()
+            if not (
+                isinstance(item, exp.Column) or (isinstance(item, exp.Literal) and item.is_int)
+            ):
+                self._error(
+                    "sql_analysis_error",
+                    "ORDER BY of UNION/INTERSECT/EXCEPT takes only output column names or "
+                    "positions.",
+                )
+
+    def _is_output_reference(self, scope: Scope, column: exp.Column) -> bool:
+        """PostgreSQL resolves an output column name only as a whole GROUP BY / ORDER BY item
+        of the same query (not inside an expression such as `a + 1`)."""
+        query = scope.expression
+        if column.table:
+            return False
+        item: exp.Expression = column
+        while isinstance(item.parent, exp.Paren):
+            item = item.parent
+        holder = item.parent
+        if isinstance(holder, exp.Ordered):
+            order = holder.parent
+            clause = order if holder.this is item and isinstance(order, exp.Order) else None
+        else:
+            # GROUP BY a, ROLLUP (a), CUBE (a), GROUPING SETS ((a), (a, b))
+            while isinstance(
+                holder, exp.Tuple | exp.Paren | exp.Rollup | exp.Cube | exp.GroupingSets
+            ):
+                holder = holder.parent
+            clause = holder if isinstance(holder, exp.Group) else None
+        if clause is None or clause.parent is not query:
+            return False
+        outputs = self.analysis.outputs(scope)
+        if not isinstance(query, exp.Select):
+            return outputs is None or column.name in {c.name for c in outputs}
+        if outputs is None:  # unknown star expansion: explicit aliases only
+            return column.name in {e.alias for e in query.expressions if e.alias}
+        named = [c for c in outputs if c.name == column.name]
+        if len(named) != 1:  # PostgreSQL: absent, or ambiguous
+            return False
+        target = named[0].expression
+        if (
+            isinstance(clause, exp.Group)
+            and target is not None
+            and target.find(exp.AggFunc, exp.Window)
+        ):
+            self._error(
+                "sql_analysis_error",
+                f"GROUP BY '{column.name}' refers to an output with an aggregate or window "
+                "function.",
+                column.name,
+            )
+        return True
 
     # relations (warning) --------------------------------------------------------------
 
@@ -538,40 +615,45 @@ class _Validator:
 
     # comparisons ----------------------------------------------------------------------
 
-    def _field_comparisons(
-        self, scopes: list[Scope]
-    ) -> Iterator[tuple[FieldRef, str, ValueOrigin]]:
-        """(field, operator, value side) for every comparison of a context field with a
-        value, anywhere in a SELECT: WHERE, HAVING, JOIN ON, but also FILTER, CASE WHEN and
-        projections. `field IN (...)`, `field = ANY(ARRAY[...])` yield each element. Each
-        comparison is visited in the SELECT that contains it."""
-        values_analysis = ValueAnalysis(self.analysis)
-        for scope in scopes:
-            select = scope.expression
-            if not isinstance(select, exp.Select):
+    def _field_comparisons(self) -> Iterator[tuple[FieldRef, str, ValueOrigin]]:
+        """(field, operator, value) for every comparison of a Context field, field on the left."""
+        values = self.value_analysis
+        for scope, c in self.comparisons:
+            field = self.analysis.field(scope, c.left)
+            op, value, column = c.op, c.right, c.column
+            if field is None and c.right is not None and c.column is None:
+                field = self.analysis.field(scope, c.right)
+                op, value = FLIPPED[c.op], c.left
+            if field is None:
                 continue
-            for node in select.find_all(exp.In, *_COMPARISONS):
-                if node.find_ancestor(exp.Select) is not select:
-                    continue
-                if isinstance(node, exp.In):
-                    if node.args.get("unnest"):
-                        continue
-                    field = self.analysis.field(scope, node.this)
-                    op = "!=" if isinstance(node.parent, exp.Not) else "="
-                    query = node.args.get("query")
-                    values = [query] if query is not None else node.expressions
-                else:
-                    op = _COMPARISONS[type(node)]
-                    field = self.analysis.field(scope, node.this)
-                    values = [node.expression]
-                    if field is None:
-                        field = self.analysis.field(scope, node.expression)
-                        op, values = _FLIPPED[op], [node.this]
-                if field is None:
-                    continue
-                for value in values:
-                    for element in values_analysis.values(scope, value):
-                        yield field, op, element
+            for origin in values.compared(scope, value, column):
+                yield field, op, origin
+
+    def _data_literals(self) -> list[tuple[exp.Expression, str]]:
+        """Literals used as values (comparison operands, LIMIT/OFFSET), with their refs."""
+        values = self.value_analysis
+        found: dict[int, tuple[exp.Expression, str]] = {}
+
+        def collect(origins: list[ValueOrigin], ref: str) -> None:
+            for origin in origins:
+                node = origin.expression
+                if origin.kind == "expression" and isinstance(node, exp.Literal | exp.Neg):
+                    found.setdefault(id(node), (node, ref))
+
+        for scope, c in self.comparisons:
+            collect(values.values(scope, c.left), self._compared_ref(c.right or c.node))
+            if c.right is not None:
+                collect(values.compared(scope, c.right, c.column), self._compared_ref(c.left))
+        for scope in self.analysis.scopes:
+            for clause in self.analysis.owned(scope, exp.Limit, exp.Offset, exp.Fetch):
+                count = clause.args.get("expression") or clause.args.get("count")
+                if isinstance(count, exp.Expression):
+                    collect(values.values(scope, count), clause.key)
+        return list(found.values())
+
+    def _compared_ref(self, other: exp.Expression) -> str:
+        column = other.find(exp.Column)
+        return (column if column is not None else other).sql(dialect=self.dialect)
 
     # allowed values -------------------------------------------------------------------
 
@@ -582,27 +664,33 @@ class _Validator:
             return
         self.checks.append("allowed_values")
         for field, op, other in comparisons:
-            if field in self.allowed and op in _EQUALITY:
+            if field in self.allowed and op in EQUALITY:
                 self._check_allowed_value(field, other)
 
     # registered constants --------------------------------------------------------------
 
     def _check_constants(self, comparisons: list) -> None:
         """A parameter bound to a registered constant's field and value makes a business
-        definition caller-controlled. Checked by field and value, not by rule text."""
+        definition caller-controlled. Checked by field and value, not by rule text; an
+        undeterminable value fails closed."""
         if not self.constants:
             return
         self.checks.append("constants")
+        enforce = not self.policy.allow_constant_parameters
         for field, op, other in comparisons:
             ref = ".".join(field)
             matches = [c for c in self.constants if c.field == ref and c.op == op]
-            if not matches:
+            if not matches or other.kind == "database":
+                continue
+            if other.kind == "unknown":
+                if enforce:
+                    self._unverifiable(field)
                 continue
             value, placeholder, _ = self._resolve(field, other)
-            if value is _MISSING:
-                continue
             if placeholder is None:
-                if any(matches_allowed_value(value, c.value) for c in matches):
+                if value is not _MISSING and any(
+                    matches_allowed_value(value, c.value) for c in matches
+                ):
                     # request_literal_issues looks at Literal nodes, also inside -n or casts.
                     literal = (
                         other.expression.find(exp.Literal) if other.expression is not None else None
@@ -610,7 +698,11 @@ class _Validator:
                     if literal is not None:
                         self.constant_literals.add(id(literal))
                 continue
-            if self.policy.allow_constant_parameters:
+            if not enforce:
+                continue
+            if value is _MISSING:
+                if self.values is not None or not self._supported_casts(field, other):
+                    self._unverifiable(field)
                 continue
             constant = next((c for c in matches if matches_allowed_value(value, c.value)), None)
             if constant is not None:
@@ -741,7 +833,9 @@ class _Validator:
         with a boolean column as a boolean ('true', 't', 'yes', 'on', '1', ...)."""
         value = _literal_value(node)
         if field in self.boolean_fields and isinstance(value, str):
-            return _postgres_bool(value)
+            # Rejected input stays text and matches no allowed value.
+            parsed = postgres_bool(value)
+            return value if parsed is None else parsed
         return value
 
     # parameters -----------------------------------------------------------------------
@@ -829,39 +923,39 @@ class _Validator:
             (r.name, f.name)
             for r in self.context.resources
             for f in r.fields
-            if field_type(f) in {"date", "date-time"}
+            if field_type(f) in DATE_TYPES
         }
-        analysis = self.analysis if analyzed else None
-        if analysis:
-            values = TemporalValues(analysis, temporal_fields)
-            for scope in analysis.scopes:
-                for node in scope.expression.walk():
-                    if node.find_ancestor(exp.Select) is not scope.expression:
-                        continue
-                    for source in temporal_inputs(node):
-                        self._check_temporal_values(node, values.values(scope, source))
-                    # Check the comparison operands, not descendant columns: a temporal
-                    # column inside TO_CHAR or a text cast does not make its result temporal.
-                    if isinstance(node, exp.Between):
-                        pairs = [(node.this, node.args[key]) for key in ("low", "high")]
-                    elif isinstance(node, exp.In):
-                        query = node.args.get("query")
-                        pairs = [
-                            (node.this, value)
-                            for value in ([query] if query is not None else node.expressions)
-                        ]
-                    elif type(node) in _COMPARISONS:
-                        pairs = [(node.this, node.expression), (node.expression, node.this)]
-                    else:
-                        continue
-                    for field_expr, value_expr in pairs:
-                        field_expr = field_expr.unnest()
-                        value_expr = value_expr.unnest()
-                        temporal = analysis.field(scope, field_expr) in temporal_fields or any(
-                            v.temporal for v in values.values(scope, field_expr)
-                        )
-                        if temporal:
-                            self._check_temporal_values(node, values.values(scope, value_expr))
+        if not analyzed:
+            return
+        analysis = self.analysis
+        # Only text and parameters can carry special date words; clocks are found above.
+        if any(
+            isinstance(n, exp.Placeholder) or (isinstance(n, exp.Literal) and n.is_string)
+            for q in analysis.unscoped
+            for n in q.walk()
+        ):
+            self._error(
+                "relative_time_unverifiable",
+                "Date input in this subquery cannot be verified as independent of the database "
+                "clock; move the value out of the subquery or use an absolute parameter.",
+            )
+        values = TemporalValues(analysis, temporal_fields)
+        for scope in analysis.scopes:
+            for node in analysis.owned(scope, exp.Expression):
+                for source in temporal_inputs(node):
+                    self._check_temporal_values(node, values.values(scope, source))
+
+        def temporal(scope: Scope, operand: exp.Expression) -> bool:
+            # The operand itself: TO_CHAR(date) or date::text is not temporal.
+            return analysis.field(scope, operand) in temporal_fields or any(
+                v.temporal for v in values.values(scope, operand)
+            )
+
+        for scope, c in self.comparisons:
+            if temporal(scope, c.left):
+                self._check_temporal_values(c.node, values.compared(scope, c.right, c.column))
+            if c.right is not None and c.column is None and temporal(scope, c.right):
+                self._check_temporal_values(c.node, values.values(scope, c.left))
 
     def _check_temporal_values(self, node: exp.Expression, origins: list[ValueOrigin]) -> None:
         for origin in origins:
@@ -940,21 +1034,6 @@ def _literal_value(node: exp.Expression) -> Any:
     return _MISSING
 
 
-_BOOLEAN_WORDS = {"true": True, "yes": True, "false": False, "no": False}
-
-
-def _postgres_bool(text: str) -> bool | str:
-    """PostgreSQL's boolean input: a prefix of true/false/yes/no, on/off, 1/0 (trimmed,
-    case-insensitive). Text it rejects is returned as is (and is not an allowed value)."""
-    word = text.strip().lower()
-    if word in {"1", "on"}:
-        return True
-    if word in {"0", "off", "of"}:
-        return False
-    matches = {v for full, v in _BOOLEAN_WORDS.items() if word and full.startswith(word)}
-    return matches.pop() if len(matches) == 1 else text
-
-
 def resource_issues(
     ast: exp.Expression, resources: Collection[str], dialect: Dialect
 ) -> list[Issue]:
@@ -996,34 +1075,18 @@ def resource_issues(
     return issues
 
 
+def _leading_names(ast: exp.Expression) -> Iterator[exp.Identifier]:
+    """The first identifier of each column, table and FROM-alias name. Names after a dot and
+    output labels may be keywords."""
+    for node in ast.find_all(exp.Column, exp.Table, exp.TableAlias):
+        first = node.parts[0] if isinstance(node, exp.Column | exp.Table) else node.this
+        if isinstance(first, exp.Identifier):
+            yield first
+
+
 def _is_named_table(table: exp.Table) -> bool:
     """False for table functions such as generate_series(...)."""
     return isinstance(table.this, exp.Identifier)
-
-
-def _scope_columns(scope: Scope) -> list[exp.Column]:
-    """Columns written directly in this scope's SELECT, each checked exactly once.
-
-    `Scope.columns` is not used for SELECTs: it also lists unqualified columns of nested
-    subqueries, and it drops names it assumes are output aliases (e.g. in HAVING/ORDER BY),
-    which would hide unknown fields."""
-    select = scope.expression
-    if not isinstance(select, exp.Select):
-        return list(scope.columns)
-    return [c for c in select.find_all(exp.Column) if c.find_ancestor(exp.Select) is select]
-
-
-def _is_alias_reference(scope: Scope, column: exp.Column) -> bool:
-    """PostgreSQL resolves output-column aliases only in the GROUP BY and ORDER BY of the
-    same SELECT, not in WHERE, HAVING or window clauses."""
-    select = scope.expression
-    if not isinstance(select, exp.Select):
-        return False
-    clause = column.find_ancestor(exp.Group, exp.Order, exp.Window, exp.Select)
-    if not isinstance(clause, exp.Group | exp.Order) or clause.parent is not select:
-        return False
-    aliases = {e.alias for e in select.expressions if e.alias}
-    return column.name in aliases
 
 
 def _dedupe(issues: list[Issue]) -> list[Issue]:

@@ -5,8 +5,12 @@ import errno
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import uuid
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -28,8 +32,7 @@ async def test_invalid_unicode_record_is_rejected_before_creating_a_temporary_fi
     context = await create_context(client, DEFINITION)
     path = store.root / "contexts" / f"{context['id']}.json"
     before = path.read_bytes()
-    record = store.context(UUID(context["id"]))
-    record.name = "\ud800"
+    record = replace(store.context_snapshot(UUID(context["id"])), name="\ud800")
     with pytest.raises(StoreError, match="unsupported JSON values"):
         store.save_context(record)
     assert path.read_bytes() == before
@@ -311,6 +314,19 @@ def test_second_process_cannot_open_the_same_directory(store):
     assert result.returncode == 0, result.stderr
 
 
+def test_unwritable_directory_names_the_process_uid(tmp_path, monkeypatch):
+    opened = Path.open
+
+    def denied(self, *args, **kwargs):
+        if self.name == ".lock":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return opened(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", denied)
+    with pytest.raises(StoreError, match=f"not usable by UID {os.getuid()}: Permission denied"):
+        Store(tmp_path / "data")
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -342,7 +358,7 @@ async def test_invalid_context_file_prevents_startup(client, store, change):
 async def test_malformed_tool_file_prevents_startup(client, store, change):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    path = store.root / "tools" / f"{store.tool('review_tool').id}.json"
+    path = store.root / "tools" / f"{store.tools['review_tool'].id}.json"
     path.write_text(json.dumps(json.loads(path.read_text()) | change))
     store.close()
     with pytest.raises(StoreError, match="Invalid data files"):
@@ -352,7 +368,7 @@ async def test_malformed_tool_file_prevents_startup(client, store, change):
 async def test_externally_changed_tool_is_revalidated_on_restart(client, store):
     context = await create_context(client, DEFINITION)
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
-    path = store.root / "tools" / f"{store.tool('review_tool').id}.json"
+    path = store.root / "tools" / f"{store.tools['review_tool'].id}.json"
     data = json.loads(path.read_text())
     data["operation"]["statement"] = "SELECT missing FROM orders"
     path.write_text(json.dumps(data))
@@ -371,7 +387,7 @@ async def test_restore_discards_cached_verdict_even_when_file_versions_are_uncha
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
     url = tool_path("review_tool", "/invoke")
     assert (await client.post(url, json={"arguments": {}})).status_code == 200
-    path = store.root / "tools" / f"{store.tool('review_tool').id}.json"
+    path = store.root / "tools" / f"{store.tools['review_tool'].id}.json"
     data = json.loads(path.read_text())
     data["operation"]["statement"] = "SELECT missing FROM orders"
     path.write_text(json.dumps(data))
@@ -391,7 +407,7 @@ async def test_stores_do_not_share_verdicts_for_identical_ids_and_versions(clien
     assert (await client.post(url, json={"arguments": {}})).status_code == 200
     other_root = tmp_path / "other"
     shutil.copytree(store.root, other_root)
-    path = other_root / "tools" / f"{store.tool('review_tool').id}.json"
+    path = other_root / "tools" / f"{store.tools['review_tool'].id}.json"
     data = json.loads(path.read_text())
     data["operation"]["statement"] = "SELECT missing FROM orders"
     path.write_text(json.dumps(data))
@@ -411,9 +427,95 @@ async def test_saving_context_invalidates_verdicts_even_without_version_incremen
     await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
     url = tool_path("review_tool", "/invoke")
     assert (await client.post(url, json={"arguments": {}})).status_code == 200
-    record = store.context_named(context["name"])
-    record.definition["resources"][0]["fields"] = [{"name": "other", "type": "bigint"}]
-    store.save_context(record)
+    record = store.context_snapshot(uuid.UUID(context["id"]))
+    definition = deepcopy(record.definition)
+    definition["resources"][0]["fields"] = [{"name": "other", "type": "bigint"}]
+    store.save_context(replace(record, definition=definition))
     res = await client.post(url, json={"arguments": {}})
     assert res.status_code == 409
     assert "unknown_field" in res.text
+
+
+async def test_closed_store_retries_recovery_only_after_the_interval(
+    client, store, monkeypatch, caplog
+):
+    context = await create_context(client, DEFINITION)
+    tool = await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
+    path = store.root / "contexts" / f"{context['id']}.json"
+    original = path.read_bytes()
+    path.write_text("broken json")
+
+    def fail(*args):
+        raise OSError("fixture failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", fail)
+        result = await client.put(
+            f"/api/v1/contexts/{context['id']}", json=update_body(context, name="change")
+        )
+    assert result.status_code == 503
+    # Recovery failed once and was logged then. Later requests see the closed store.
+    loads = []
+    load = Store._load
+    monkeypatch.setattr(Store, "_load", lambda self: loads.append(1) or load(self))
+    caplog.clear()
+    requests = [
+        client.get("/api/v1/contexts"),
+        client.get(f"/api/v1/tools/{tool['id']}"),
+        client.post(f"/api/v1/tools/{tool['id']}/invoke", json={"arguments": {}}),
+        client.post("/api/v1/contexts", json={"name": "other", "dialect": "postgresql"}),
+    ]
+    for request in requests:
+        response = await request
+        assert response.status_code == 503
+        assert response.json()["error"] == "storage_unavailable"
+        assert "retried automatically" in response.json()["message"]
+    assert (await client.get("/api/v1/health")).status_code == 503
+    assert loads == []
+    assert not [r for r in caplog.records if getattr(r, "event_name", None) == "storage_failure"]
+    # Due again: a still-broken directory is retried once and logged once.
+    store._next_restore = 0.0
+    assert (await client.get("/api/v1/contexts")).status_code == 503
+    assert (await client.get("/api/v1/contexts")).status_code == 503
+    assert loads == [1]
+    retries = [r for r in caplog.records if getattr(r, "event_name", None) == "storage_failure"]
+    assert [r.event_fields["recovery"] for r in retries] == ["unavailable"]
+    # Once repaired, the next due retry reloads without a restart.
+    path.write_bytes(original)
+    store._next_restore = 0.0
+    assert (await client.get(f"/api/v1/contexts/{context['id']}")).json() == context
+    assert loads == [1, 1]
+
+
+@pytest.mark.parametrize(
+    ("umask", "mode"),
+    [(0o022, 0o644), (0o077, 0o600), (0o002, 0o664)],
+    ids=["umask-022", "umask-077", "umask-002"],
+)
+async def test_new_data_files_get_the_mode_of_a_normal_file_creation(client, store, umask, mode):
+    previous = os.umask(umask)
+    try:
+        context = await create_context(client, DEFINITION)
+        await create_tool(client, context, "SELECT id FROM orders", input_schema_for({}))
+    finally:
+        os.umask(previous)
+    files = sorted(store.root.rglob("*.json"))
+    assert len(files) == 2
+    assert {stat.S_IMODE(p.stat().st_mode) for p in files} == {mode}
+
+
+async def test_replacing_a_data_file_keeps_its_mode(client, store):
+    context = await create_context(client, DEFINITION)
+    path = store.root / "contexts" / f"{context['id']}.json"
+    path.chmod(0o640)
+    previous = os.umask(0o022)
+    try:
+        result = await client.put(
+            f"/api/v1/contexts/{context['id']}", json=update_body(context, name="renamed")
+        )
+    finally:
+        os.umask(previous)
+    assert result.status_code == 200
+    assert json.loads(path.read_text())["name"] == "renamed"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    assert list(path.parent.glob(".*")) == []

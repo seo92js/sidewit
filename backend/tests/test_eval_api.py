@@ -32,6 +32,7 @@ def output(case):
         ]
         if reference
         else [],
+        periods=[],
         tool_suggestion=LLMToolSuggestion(name="fixture_tool", description="Fixture tool")
         if reference
         else None,

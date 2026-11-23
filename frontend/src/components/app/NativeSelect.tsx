@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 
-import { cn } from "@/lib/utils";
+import { cn } from "cn";
 
 /** Compact native select styled like the shadcn Input; used in dense tables and forms. */
 export function NativeSelect({ className, ...props }: ComponentProps<"select">) {

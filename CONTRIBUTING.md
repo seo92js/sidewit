@@ -22,6 +22,13 @@ It also builds the Python wheel and renders all three generation prompts directl
 artifact to catch missing package resources.
 Tests use temporary data directories and provider fixtures, not real LLM keys.
 Frontend checks run Prettier, ESLint, Vitest, TypeScript and the Vite build.
+
+When changing `docker-compose.yml`, a Dockerfile or `frontend/nginx/`, also run
+`bash scripts/check-deploy.sh`. It builds both images, starts them as a separate Compose
+project (its own network prefix, ports and temporary data directory; your `.env` is not read)
+and checks health checks, restart policies, the non-root data owner and file modes, per-client
+sign-in limits through the proxy, and web caching, compression and security headers. It
+removes its containers, network and images on exit.
 The [CI workflow](.github/workflows/checks.yml) also builds both Docker images and rejects
 high/critical npm advisories, including development dependencies. Dependency audits use the
 registry's current advisories, so rerun them when updating a release candidate's lockfiles.

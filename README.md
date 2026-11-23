@@ -54,13 +54,13 @@ Built with Python 3.12, FastAPI, Pydantic and SQLGlot; React, TypeScript and Vit
 
 ## Quick Start
 
-Requires Docker Engine/Desktop and **Docker Compose v2** with `--wait` support. No local Python or Node.js installation is needed. On Windows, use Docker Desktop's WSL 2 backend with Linux containers and run these commands in a WSL terminal; keep the project and data in the WSL Linux filesystem (see [desktop platforms](docs/DEPLOYMENT.md#desktop-platforms)). Run from the repository root:
+Requires Docker Engine 25+ (or a current Docker Desktop) and **Docker Compose v2** with `--wait` support. No local Python or Node.js installation is needed. On Windows, use Docker Desktop's WSL 2 backend with Linux containers and run these commands in a WSL terminal; keep the project and data in the WSL Linux filesystem (see [desktop platforms](docs/DEPLOYMENT.md#desktop-platforms)). Run from the repository root:
 
 ```bash
 cp .env.example .env
 ```
 
-Add one of the [provider configurations](#configuration) below to `.env`, then start Sidewit:
+On Linux, create the data directory yourself (`mkdir -p data`) and set `SIDEWIT_UID`/`SIDEWIT_GID` in `.env` to your `id -u`/`id -g`; the API does not run as root (see [data directory owner](docs/DEPLOYMENT.md#data-directory-owner)). Add one of the [provider configurations](#configuration) below to `.env`, then start Sidewit:
 
 ```bash
 docker compose up -d --build --wait
@@ -110,7 +110,9 @@ See the [evaluation summary](evals/README.md#file-storage-acceptance-2026-10-12-
 | Variable | Purpose | Default |
 |---|---|---|
 | `SIDEWIT_DATA_PATH` | Host data directory mounted at `/data` | `./data` |
+| `SIDEWIT_UID` / `SIDEWIT_GID` | Non-root user that runs the API and owns the data directory ([details](docs/DEPLOYMENT.md#data-directory-owner)) | `1000` / `1000` |
 | `SIDEWIT_API_PORT` / `SIDEWIT_WEB_PORT` | Local API / UI ports | `8000` / `3000` |
+| `SIDEWIT_NETWORK_PREFIX` | Compose network `/24`; the API trusts forwarded client addresses only from `<prefix>.2` ([details](docs/DEPLOYMENT.md#client-addresses-behind-a-proxy)) | `172.30.255` |
 | `SIDEWIT_API_KEY` | Sidewit Bearer authentication | Disabled when unset |
 | `SIDEWIT_MCP_ENABLED` / `SIDEWIT_MCP_KEY` | Enable MCP / its separate Bearer key | `false` / unset |
 | `SIDEWIT_MCP_ALLOWED_HOSTS` / `SIDEWIT_MCP_ALLOWED_ORIGINS` | MCP Host / Origin allowlists (JSON arrays) | Loopback hosts / no Origins |

@@ -8,12 +8,12 @@ from sqlglot import exp
 
 from sidewit.ddl.importer import import_ddl
 from sidewit.domain.context import ContextDefinition, definition_issues
-from sidewit.domain.metric import MetricBinding, MetricInput, Period
-from sidewit.generation.dto import LLMParameter
+from sidewit.domain.metric import MetricBinding, MetricDefinition, MetricInput
+from sidewit.domain.period import Period, period_bounds
+from sidewit.generation.dto import LLMParameter, LLMPeriod
 from sidewit.generation.metric_compiler import compile_plan
-from sidewit.generation.metric_plan import LLMMetricPlan, LLMPeriod
+from sidewit.generation.metric_plan import LLMMetricPlan
 from sidewit.validation.metric_contract import binding_issues as _binding_issues
-from sidewit.validation.metric_contract import period_bounds
 
 DEFINITION = {
     "resources": [
@@ -164,7 +164,9 @@ def test_model_date_choice_is_validated_and_override_takes_precedence():
     assert compile_(output).binding.time_field == "orders.ordered_at"
     assert compile_(output, date_field="orders.paid_at").binding.time_field == "orders.paid_at"
     assert compile_(output, date_field="ORDERS.PAID_AT").binding.time_field == "orders.paid_at"
-    for field in ["orders.id", "other_orders.ordered_at", "ordered_at", "unknown"]:
+    output.date_field = "ordered_at"  # unqualified, unique among the metric's time_fields
+    assert compile_(output).binding.time_field == "orders.ordered_at"
+    for field in ["orders.id", "other_orders.ordered_at", "id", "unknown"]:
         output.date_field = field
         result = compile_(output)
         assert result.errors and result.operation is None
@@ -349,3 +351,20 @@ def test_min_max_do_not_accept_unsupported_field_types(kind):
     context.metrics[0].aggregate.kind = "min"
     context.metrics[0].aggregate.field = "orders.id"
     assert definition_issues(context)
+
+
+def test_time_field_reference_resolves_only_within_the_closed_list():
+    metric = MetricDefinition.model_validate(
+        {
+            "id": "m",
+            "description": "d",
+            "resource": "orders",
+            "aggregate": {"kind": "row_count"},
+            "time_fields": ["orders.paid_at", "orders.ordered_at", "shipments.paid_at"],
+        }
+    )
+    assert metric.time_field("ORDERS.Ordered_At") == "orders.ordered_at"
+    assert metric.time_field("ordered_at") == "orders.ordered_at"
+    assert metric.time_field("paid_at") is None  # two listed fields have this name
+    assert metric.time_field("customers.ordered_at") is None
+    assert metric.time_field("created_at") is None

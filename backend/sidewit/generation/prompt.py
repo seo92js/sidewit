@@ -6,11 +6,12 @@ from sidewit.domain.context import ContextDefinition, ContextField, Rule
 from sidewit.domain.dialect import Dialect, identifier, to_sqlglot
 from sidewit.domain.issue import Issue
 from sidewit.domain.metric import field_type
+from sidewit.domain.params import DATE_TYPES
 from sidewit.generation.clarification import CLARIFICATION_INSTRUCTIONS
 from sidewit.generation.prompts import template
 from sidewit.validation.functions import POSTGIS
 
-PROMPT_VERSION = "generate_v10"
+PROMPT_VERSION = "generate_v11"
 # Bookkeeping timestamps rarely define a business period; they never make a period ambiguous.
 _AUDIT_FIELD = re.compile(r"(^|_)(updated|modified|deleted|synced|archived)(_at|_on)?$", re.I)
 
@@ -65,12 +66,11 @@ def render_context(definition: ContextDefinition) -> str:
             lines.append(line)
         undescribed_dates = [f.name for f in resource.fields if _period_candidate(f)]
         if len(undescribed_dates) > 1:
+            # A fact, not an instruction: when to ask is the system prompt's rule.
             lines.append(
-                "  Only for requests needing date-dependent filtering or grouping. "
-                "Period choice is unresolved by field descriptions: "
+                f"  {resource.name} dates with no documented period basis: "
                 + ", ".join(undescribed_dates)
-                + ". If no relevant rule or explicit user choice settles it, ask which date "
-                "to use; do not default to one. Otherwise do not require a date choice."
+                + "."
             )
 
     lines.append("")
@@ -83,13 +83,13 @@ def render_context(definition: ContextDefinition) -> str:
     return "\n".join(lines)
 
 
-HYBRID_PROMPT_VERSION = "hybrid_v5"
+HYBRID_PROMPT_VERSION = "hybrid_v6"
 
 
 def render_hybrid_prompt(
     definition: ContextDefinition, dialect: Dialect, timezone: str, reference_time: datetime
 ) -> str:
-    """generate_v10 (the SQL route) followed by the registered metrics and routing rules."""
+    """generate_v11 (the SQL route) followed by the registered metrics and routing rules."""
     return render_system_prompt(definition, dialect, timezone, reference_time) + template(
         HYBRID_PROMPT_VERSION
     ).substitute(metrics=render_metrics(definition))
@@ -181,7 +181,7 @@ def _period_candidate(field: ContextField) -> bool:
     """An undescribed date/time field that could plausibly define a requested period."""
     return (
         not field.description
-        and field_type(field) in {"date", "date-time"}
+        and field_type(field) in DATE_TYPES
         and not _AUDIT_FIELD.search(field.name)
     )
 

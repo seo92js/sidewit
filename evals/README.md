@@ -7,7 +7,7 @@ The optional execution-result suite compares rows in a disposable PostgreSQL ins
 
 | Suite | Role | Generate path |
 |---|---|---|
-| [`commerce`](commerce/cases.yaml) | **Development set.** The prompt (`generate_v7`) was iterated against its failures, and the prompt's illustrations cover the same kinds of decisions. A high score here shows the prompt works on what it was tuned for, not that it generalizes. | model-written SQL |
+| [`commerce`](commerce/cases.yaml) | **Development set.** The SQL prompt was iterated against its failures, and the prompt's illustrations cover the same kinds of decisions. A high score here shows the prompt works on what it was tuned for, not that it generalizes. | model-written SQL |
 | [`library`](library/cases.yaml) | **Separate-schema regression set.** Different schema, values and periods, including joins, business-rule constants, date selection and unavailable data. | model-written SQL |
 | [`metric-library`](metric-library/cases.yaml) | **Separate-schema regression set**, metrics only: the library questions answered through registered metric contracts. | metrics only (`allow_generated_sql: false`) |
 | [`hybrid-library`](hybrid-library/cases.yaml) | **Separate-schema regression set** for hybrid routing: questions a metric answers (`source: metric`), questions none does (`source: generated_sql`), and near misses — a metric plus an extra condition — where the generated SQL must still apply the metric's fixed filters. | hybrid (`allow_generated_sql: true`) |
@@ -172,3 +172,35 @@ synthetic order-count metric, `paid_at` as its default, and descriptions for `pa
 `orders.paid_at은 사용하지 마세요` selected `orders.ordered_at` (four successful requests).
 The compiler now validates structured date intent instead of extracting names from answer text.
 These observations do not guarantee semantic accuracy for arbitrary phrasing or other models.
+
+## Small-model prompt and server-period check — 2026-11-19
+
+`gemini-3.5-flash-lite` asked needless clarification questions where descriptions or the data
+already settled the answer, and miscomputed calendar ranges. Five repeats per case, before
+(`generate_v10`/`hybrid_v5`) and after (`generate_v11`/`hybrid_v6`, server-computed periods):
+
+| Case | Before | After |
+|---|---:|---:|
+| library `fees_last_14_days` | 1/5 | 5/5 |
+| hybrid `near_miss_regional_fees_with_minimum` | 4/5 | 5/5 |
+| hybrid `near_miss_average_settled_fee` | 0/5 | 5/5 |
+| commerce `order_count_last_week_uses_ordered_at` | 3/5 | 5/5 |
+| hybrid `sql_route_rental_count_by_zone` | 4/5 | 3/5 |
+
+The last-week case had chosen the right date but the wrong week; the server now computes
+relative periods. A full run with the final prompts passed commerce 18/18, library 9/9,
+metric-library 10/10 and hybrid-library 8/9 (`sql_route_rental_count_by_zone`, which also
+fluctuates with the old prompts). Every case expecting `ambiguous` or `unanswerable` passed.
+
+Prompt wording moved lite results sharply, so each change was measured:
+
+- An example presenting the SQL route as "metric plus extra conditions" made
+  `sql_route_rental_count_by_zone` fail 10/10; it was dropped.
+- An instruction to ask about undescribed dates, scoped to its resource, still made
+  `shipment_carriers_with_amount` (no date involved) ask 5/5. The Context now lists those
+  dates as a fact; when to ask stays in the system prompt. The join passed 5/5 and the
+  date-ambiguity cases still asked 5/5.
+- Lite wrote `date_field: "settled_at"` for `rentals.settled_at` even after repair. An
+  unqualified name now resolves when exactly one of the metric's time fields has it.
+
+`gemini-3.5-flash` passed the first three cases 13/13 with the old prompts.

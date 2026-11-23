@@ -3,7 +3,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 
 import "./monaco";
 
-interface Props {
+export interface SqlEditorProps {
   value: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
@@ -30,7 +30,12 @@ const READ_ONLY_OPTIONS = {
   renderLineHighlight: "none",
 } as const;
 
-export default function SqlEditor({ value, onChange, readOnly = false, height = 220 }: Props) {
+export default function SqlEditor({
+  value,
+  onChange,
+  readOnly = false,
+  height = 220,
+}: SqlEditorProps) {
   // Parents pass inline callbacks; a stable handler keeps Monaco's change listener in place.
   const onChangeRef = useRef(onChange);
   useLayoutEffect(() => {

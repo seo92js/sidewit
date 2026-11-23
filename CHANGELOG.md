@@ -6,6 +6,27 @@ Initial release candidate.
 
 ### Breaking changes
 
+- The API container runs as a non-root user (UID/GID 1000, configurable with `SIDEWIT_UID`
+  and `SIDEWIT_GID`). On Linux, `chown` a data directory written by an earlier root container
+  before upgrading, and create `./data` before the first start (see DEPLOYMENT.md). New data
+  files get normal permissions (0644 with umask 022) instead of 0600.
+
+- The bundled Compose network uses a fixed subnet (`SIDEWIT_NETWORK_PREFIX`, default
+  `172.30.255`) so the API trusts forwarded client addresses only from the bundled proxy.
+  Recreate the containers after upgrading.
+
+- `date-time` parameters and arguments accept RFC 3339 with optional seconds:
+  `YYYY-MM-DDThh:mm[:ss[.ffffff]]` with `Z` or a `±hh:mm[:ss]` offset (`T`/`Z` in either case).
+  Week dates, hour-only times, basic format, a space instead of `T` and more than six
+  fractional digits are rejected.
+
+- The SQL function allowlist is written in PostgreSQL names and checks the name PostgreSQL
+  resolves. Quoted names that differ from the built-in (`"LOWER"(x)`) and SQLGlot-only
+  spellings (`median`, `timestamp_trunc`, `truncate`, `if`) are rejected. Revalidate saved
+  Tools after upgrading.
+
+- The bundled Compose file requires Docker Engine 25 or later (`healthcheck.start_interval`).
+
 - Tool resource URLs now use the immutable UUID: `/tools/{tool_id}` and its invoke/refresh
   subpaths. Use `id` from create/list/get or `selected_tool.id`; names are editable labels.
   Name-based resource URLs are removed. Invoke responses also include `tool_id`.
@@ -15,6 +36,67 @@ Initial release candidate.
   from each step instead of the top level. No legacy response mode is retained.
 
 ### Fixes
+
+- Generation prompts `generate_v11` and `hybrid_v6` cut needless clarification questions from
+  smaller models: an example where a described date settles the period, `unanswerable` limited
+  to missing resources and fields, an explicit SQL route when no metric fits, and undescribed
+  dates listed as a fact instead of an instruction to ask.
+
+- The server computes relative periods for model-written SQL and saved Tool calls, as it
+  already did for metrics. The model returns `periods` (kind and the two bound parameter
+  names) instead of calculating dates; bounds must be used as `>= :start` and `< :end`
+  (`period_bound_misused`). Prompt versions `generate_v11`, `hybrid_v6` and `tool_plan_v4`.
+
+- A metric `date_field` written without its resource (`settled_at`) resolves when exactly one
+  of the metric's time fields has that name; the repair message lists the valid fields.
+
+- Validator: value policies share one definition of a comparison. Allowed values, registered
+  constants, relative time and request literals now cover simple CASE, NULLIF, row
+  comparisons, `IS [NOT] DISTINCT FROM`, `= ANY(ARRAY[...])`, `COLLATE` and `IN (VALUES ...)`
+  alike. A parameter hidden in an expression (`region = upper(:s)`) on a registered constant
+  now fails closed with `value_unverifiable` under Generate.
+
+- Validator: special date words are detected anywhere PostgreSQL reads them
+  (`'00:00 yesterday'`), not only at the start of the text.
+
+- Validator: PostgreSQL's `TABLE t` and other syntax SQLGlot misreads as a column named after a
+  reserved keyword are rejected with `sql_parse_error` instead of resolving as a column.
+
+- Validator: `unnest`, `json_agg`, `var_pop` and `@>` are accepted as documented. Output
+  aliases resolve only as whole ORDER BY / GROUP BY items, `UNION ... ORDER BY` resolves
+  output column names, and names inside an aliased parenthesized join resolve within that
+  join, matching PostgreSQL. Subqueries SQLGlot does not scope fail closed for value policies.
+  A comparison under NOT uses the negated operator, so `NOT (state = :s)` cannot bypass a
+  registered `state <> 'RETIRED'` constant.
+
+- Validator: unaliased output columns get PostgreSQL's names, so `ORDER BY count` and
+  `q.count` over `count(*)` are accepted, and `q.year` over `extract(year FROM ...)` is no
+  longer accepted. Names that are not certain from the parse are rejected, not guessed. GROUP BY
+  naming an aggregate or window output, and an ORDER BY name matching two outputs, are
+  rejected as PostgreSQL does. A JOIN USING of two unknown tables reports them instead of
+  failing with an internal error.
+
+- Storage: a store closed after failed recovery answers 503 and retries the reload at most
+  every 5 seconds, so a transient error heals without a restart and a broken directory is not
+  re-read or logged on each request. Reads share stored snapshots and a parsed definition per Context
+  version instead of deep-copying and re-parsing, and a field type is parsed once instead of
+  on every validation.
+
+- Mixed plans re-check only Context and Tool versions after generation instead of invoking
+  every Tool twice; a Tool changed meanwhile returns 409 `tool_changed`.
+
+- Admin sign-in limits apply per client behind the bundled proxy instead of to all clients.
+  The proxy sets the forwarded address instead of appending a client-supplied one.
+
+- The web image compresses static assets, caches hashed assets for a year, never serves
+  `index.html` for a missing asset, and applies security headers on every response. Compose
+  services restart automatically, and health checks run every 30 s instead of every 2 s.
+
+- Web UI: Generate reconciles cached Context versions with the server, so a clarification no
+  longer stays blocked after the Context changes elsewhere. A failed background refresh keeps
+  the page and its inputs. A failed SQL editor load falls back to a plain editor with retry
+  instead of replacing the app. The health indicator reflects outages and storage state.
+  Version-conflict hints name the right resource.
 
 - Require `pyasn1>=0.6.5` and update the lockfile to exclude vulnerable ASN.1 parsing
   releases used by Google Auth.
@@ -105,7 +187,7 @@ Initial release candidate.
   normal validation/repair, preserve original request values, and recheck versions after
   generation. No partial operations are returned on failure or clarification.
 - Label generated steps in the Playground and allow saving each as a Tool draft with its
-  generation/step provenance and metric binding. Selection uses tool_plan_v3.
+  generation/step provenance and metric binding.
 
 - Evaluate saved Tool plans with independent validation and one-to-one step expectations;
   remove the unused Playground clarification display branch.
@@ -150,14 +232,9 @@ Initial release candidate.
   `source: "plan"`, `execution: "independent"` and `operations`, including one-call plans.
   Plans may include generated/metric steps. Whole-question generation also returns an operations
   array containing one step. Administrative generation detail retains its diagnostic fields.
-  Selection uses tool_plan_v3.
 - Remove legacy single-Tool response handling and duplicate text-only clarification/DDL warning
   fields. Use clarification_questions and warning_details. Unknown Generate request fields
   are rejected instead of silently ignored.
-
-
-- SQL function policy and timezone-aware Tool selection use prompt versions generate_v10,
-  hybrid_v5 and tool_plan_v3.
 
 - Enforce a closed SQL function allowlist for generation, validation and Tool invocation.
   Context definitions add optional sql_extensions: ["postgis"] for supported spatial functions.
@@ -192,7 +269,7 @@ Initial release candidate.
 - Reset incompatible invocation inputs when a saved Tool schema changes, keeping displayed and submitted values consistent.
 - Lock Context creation inputs while saving and retain them on failure.
 
-- Provide exact quoted SQL identifiers in generation and repair prompts for mixed-case or reserved Context names (`generate_v8`, `hybrid_v3`).
+- Provide exact quoted SQL identifiers in generation and repair prompts for mixed-case or reserved Context names.
 
 - Render rejected SQL as plain text without loading Monaco; show explicit messages for missing generation logs or SQL.
 

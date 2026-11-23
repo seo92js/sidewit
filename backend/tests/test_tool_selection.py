@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import replace
 
 import pytest
 
@@ -44,6 +45,7 @@ def choice(route="tool", name="count_customers", parameters=None, **kwargs):
                 "parameters": parameters
                 if parameters is not None
                 else [LLMParameter(name="region", type="string", value="서울")],
+                "periods": [],
             }
         ]
         if route == "tool"
@@ -165,16 +167,14 @@ async def test_changes_during_selection_do_not_invoke_new_contract(
     provider = fake()
 
     async def select(*args):
-        current = store.tool(tool["name"])
+        current = store.tools[tool["name"]]
         if change == "edit_tool":
-            current.version += 1
-            store.save_tool(current)
+            store.save_tool(replace(current, version=current.version + 1))
         elif change == "delete_tool":
             store.delete_tool(current)
         elif change == "edit_context":
-            changed = store.context(uuid.UUID(context["id"]))
-            changed.version += 1
-            store.save_context(changed)
+            changed = store.context_snapshot(uuid.UUID(context["id"]))
+            store.save_context(replace(changed, version=changed.version + 1))
         else:
             await client.delete(f"/api/v1/tools/{tool['id']}")
             await client.delete(f"/api/v1/contexts/{context['id']}")
@@ -196,12 +196,16 @@ async def test_changes_during_selection_do_not_invoke_new_contract(
 
 async def test_invalid_tool_does_not_trigger_generation(client, context, fake, store):
     tool = await saved_tool(client, context)
-    record = store.tool(tool["name"])
-    record.operation["statement"] = "SELECT missing FROM absent"
-    record.version += 1
-    record.status = "invalid"
-    record.validation = None
-    store.save_tool(record)
+    record = store.tools[tool["name"]]
+    store.save_tool(
+        replace(
+            record,
+            operation={**record.operation, "statement": "SELECT missing FROM absent"},
+            version=record.version + 1,
+            status="invalid",
+            validation=None,
+        )
+    )
     provider = fake(choice(), ok())
     response = await ask(client, context)
     assert response.status_code == 409, response.text
@@ -302,7 +306,7 @@ async def test_failed_selection_records_usage_once_without_logging_inputs(
     assert str(record.id) == generation_id
     assert (record.input_tokens, record.output_tokens) == (123, 45)
     assert record.latency_ms >= 0
-    assert record.prompt_version == "tool_plan_v3"
+    assert record.prompt_version == "tool_plan_v4"
     assert "REVIEW_PRIVATE_QUESTION" not in caplog.text
     assert "932847" not in caplog.text
     assert any(

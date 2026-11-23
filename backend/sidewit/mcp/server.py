@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.applications import Starlette
 
 from sidewit.application.generate import GenerateRequest, generate_operation
-from sidewit.application.storage import storage_failure
+from sidewit.application.storage import retry_recovery, storage_failure
 from sidewit.application.tools import InvokeRequest, get_context, invoke_tool
 from sidewit.config import Settings
 from sidewit.errors import SidewitError
@@ -121,13 +121,17 @@ def _list_contexts(store: Store, request: PageRequest) -> dict[str, Any]:
 def _list_tools(store: Store, request: ListToolsRequest) -> dict[str, Any]:
     context = get_context(store, request.context_id)
     items = []
-    for tool in sorted(store.tools_of(context.id), key=lambda t: t.id):
+    for tool in sorted(store.tool_snapshots(context.id), key=lambda t: t.id):
         if not tool.enabled or not is_current(tool, context):
             continue
         validation = store.tool_check(tool, context)
         if validation is None:
             validation = validate_tool(
-                context, tool.input_schema, tool.operation["statement"], tool_binding(tool)
+                context,
+                store.definition(context),
+                tool.input_schema,
+                tool.operation["statement"],
+                tool_binding(tool),
             )
             # Discovery does not persist verdicts. Cache only successes so invocation
             # can still revalidate and save an invalid verdict through the Tool service.
@@ -196,6 +200,7 @@ def create_mcp_app(
             )
         try:
             store = get_store()
+            retry_recovery(store)
             store.require_available()
             match name:
                 case "list_contexts":

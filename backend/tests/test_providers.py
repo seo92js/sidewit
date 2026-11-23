@@ -23,6 +23,7 @@ OUTPUT = LLMGenerationOutput(
     clarifications=[],
     statement=None,
     parameters=[],
+    periods=[],
     tool_suggestion=None,
 )
 MESSAGES = [Message("user", "q"), Message("assistant", "a"), Message("user", "fix")]

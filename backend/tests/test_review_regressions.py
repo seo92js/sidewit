@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from sidewit.generation.metric_plan import LLMPeriod
+from sidewit.generation.dto import LLMPeriod
 from sidewit.validation.input_schema import input_schema_for
 from tests.test_generate_api import ask, detail, not_ok, ok
 from tests.test_generate_api import context as context

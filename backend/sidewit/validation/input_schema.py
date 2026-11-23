@@ -7,6 +7,7 @@ from typing import Any
 
 from sidewit.domain.issue import Issue
 from sidewit.domain.params import (
+    DATE_TYPES,
     PARAM_NAME_PATTERN,
     ParamType,
     valid_json_unicode,
@@ -16,7 +17,6 @@ from sidewit.domain.params import (
 _TOP_LEVEL_KEYS = {"type", "properties", "required", "additionalProperties"}
 _PROPERTY_KEYS = {"type", "format", "description", "enum"}
 _JSON_TYPES = {"string", "integer", "number", "boolean"}
-_FORMATS = {"date", "date-time"}
 
 
 def input_schema_issues(schema: Any) -> list[Issue]:
@@ -84,7 +84,7 @@ def _property_issues(name: str, prop: Any, bad) -> None:
     if "format" in prop and (
         json_type != "string"
         or not isinstance(prop["format"], str)
-        or prop["format"] not in _FORMATS
+        or prop["format"] not in DATE_TYPES
     ):
         bad(f"Input '{name}' format must be 'date' or 'date-time' on a string.", f"{ref}.format")
     if "description" in prop and not isinstance(prop["description"], str):
@@ -121,7 +121,7 @@ def parameter_types(schema: dict[str, Any]) -> dict[str, ParamType]:
         if (
             prop["type"] == "string"
             and isinstance(prop.get("format"), str)
-            and prop["format"] in _FORMATS
+            and prop["format"] in DATE_TYPES
         ):
             types[name] = prop["format"]
         else:
@@ -132,7 +132,7 @@ def parameter_types(schema: dict[str, Any]) -> dict[str, ParamType]:
 def input_schema_for(types: dict[str, ParamType]) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     for name, param_type in types.items():
-        if param_type in _FORMATS:
+        if param_type in DATE_TYPES:
             properties[name] = {"type": "string", "format": param_type}
         else:
             properties[name] = {"type": param_type}

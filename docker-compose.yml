@@ -1,6 +1,9 @@
 services:
   api:
     build: ./backend
+    restart: unless-stopped
+    # Must own SIDEWIT_DATA_PATH on the host (DEPLOYMENT.md).
+    user: "${SIDEWIT_UID:-1000}:${SIDEWIT_GID:-1000}"
     logging:
       driver: json-file
       options:
@@ -20,6 +23,8 @@ services:
       SIDEWIT_LLM_MODEL: ${SIDEWIT_LLM_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Trust X-Forwarded-For only from the web proxy.
+      FORWARDED_ALLOW_IPS: ${SIDEWIT_NETWORK_PREFIX:-172.30.255}.2
     volumes:
       # Contexts and Tools as JSON files. One Sidewit instance per directory.
       - ${SIDEWIT_DATA_PATH:-./data}:/data
@@ -27,14 +32,16 @@ services:
       - "127.0.0.1:${SIDEWIT_API_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=2).read()"]
-      interval: 2s
+      interval: 30s
       timeout: 3s
-      retries: 30
-      start_period: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
 
   # Optional management UI; `docker compose up api` runs without it.
   web:
     build: ./frontend
+    restart: unless-stopped
     logging:
       driver: json-file
       options:
@@ -43,12 +50,24 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      default:
+        # Fixed: the API trusts forwarded addresses only from here.
+        ipv4_address: ${SIDEWIT_NETWORK_PREFIX:-172.30.255}.2
     ports:
       - "127.0.0.1:${SIDEWIT_WEB_PORT:-3000}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
 
   # The eval profile is isolated from the normal API and its persistent data directory.
   eval-api:
     profiles: [eval]
+    networks: [eval]
     build: ./backend
     environment:
       SIDEWIT_DATA_DIR: /tmp/sidewit-eval-data
@@ -66,6 +85,7 @@ services:
 
   eval-db:
     profiles: [eval]
+    networks: [eval]
     image: postgres:16
     environment:
       POSTGRES_DB: sidewit_eval
@@ -80,6 +100,7 @@ services:
 
   eval:
     profiles: [eval]
+    networks: [eval]
     build:
       context: ./backend
       dockerfile: Dockerfile.eval
@@ -93,3 +114,14 @@ services:
         condition: service_healthy
       eval-db:
         condition: service_healthy
+
+networks:
+  default:
+    ipam:
+      config:
+        # Change SIDEWIT_NETWORK_PREFIX if this overlaps another network.
+        - subnet: ${SIDEWIT_NETWORK_PREFIX:-172.30.255}.0/24
+          # Keeps automatic addresses away from the web address.
+          ip_range: ${SIDEWIT_NETWORK_PREFIX:-172.30.255}.128/25
+  # Eval containers stay off the fixed default subnet so they can run beside the main stack.
+  eval: {}

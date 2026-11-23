@@ -6,7 +6,8 @@
 !index.html
 !tsconfig.json
 !vite.config.ts
-!nginx.conf
+!nginx/
+!nginx/*.conf
 !src/
 !src/**
 **/.env*

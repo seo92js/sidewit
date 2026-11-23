@@ -1,4 +1,5 @@
 import copy
+from dataclasses import replace
 
 import pytest
 
@@ -405,9 +406,7 @@ async def test_invalid_tool_can_be_fixed_by_update(client, context, tool):
 async def test_stale_tool_is_revalidated_on_invoke(client, context, tool, store):
     from uuid import UUID
 
-    record = store.context(UUID(context["id"]))
-    record.version = 5
-    store.save_context(record)
+    store.save_context(replace(store.context_snapshot(UUID(context["id"])), version=5))
 
     res = await invoke(client)
     assert res.status_code == 200
@@ -436,6 +435,7 @@ def generation_output(status="ok"):
             clarifications=[{"question": "q?", "options": []}] if status == "ambiguous" else [],
             statement=None,
             parameters=[],
+            periods=[],
             tool_suggestion=None,
         )
     return LLMGenerationOutput(
@@ -447,6 +447,7 @@ def generation_output(status="ok"):
             LLMParameter(name="region", type="string", value="서울"),
             LLMParameter(name="start_at", type="date-time", value="2026-09-02T00:00:00+09:00"),
         ],
+        periods=[],
         tool_suggestion=LLMToolSuggestion(name="regional_revenue", description="지역 매출"),
     )
 

@@ -47,7 +47,7 @@ CONTEXT = ContextDefinition.model_validate(
     }
 )
 # Context value rules, deliberately stricter than PostgreSQL.
-VALUE_RULES = {"value_not_allowed"}
+VALUE_RULES = {"value_not_allowed", "value_unverifiable"}
 
 STATEMENTS = [
     # JOIN USING / NATURAL
@@ -85,6 +85,15 @@ STATEMENTS = [
     "SELECT status AS s FROM orders ORDER BY s",
     "SELECT status AS s, COUNT(*) FROM orders GROUP BY s",
     "SELECT status AS s FROM orders WHERE s = 'ACTIVE'",
+    # output aliases only as whole ORDER BY / GROUP BY items
+    "SELECT amount AS a FROM orders ORDER BY a + 1",
+    "SELECT amount AS a FROM orders GROUP BY a + 1",
+    'SELECT status AS s FROM orders ORDER BY s COLLATE "C"',
+    "SELECT amount AS a FROM orders ORDER BY (a)",
+    "SELECT amount AS a FROM orders ORDER BY a DESC NULLS LAST",
+    "SELECT status AS s, COUNT(*) FROM orders GROUP BY ROLLUP (s)",
+    "SELECT status AS s, COUNT(*) FROM orders GROUP BY GROUPING SETS ((s), ())",
+    "SELECT status AS s, COUNT(*) FROM orders GROUP BY (s)",
     # table functions, recursion, set operations
     "SELECT id FROM orders CROSS JOIN LATERAL unnest(tags) AS t",
     "SELECT o.id, t FROM orders o CROSS JOIN LATERAL unnest(o.tags) AS t",
@@ -137,6 +146,21 @@ STATEMENTS = [
     "SELECT 1 FROM customers x JOIN (orders o JOIN customers c ON o.id = c.id) ON x.id = o.id",
     "SELECT o.id FROM (orders o JOIN customers c ON true) JOIN customers x USING (id)",
     "SELECT q.id FROM (orders o JOIN LATERAL (SELECT o.id) q ON true)",
+    # set operations: ORDER BY takes output names, as whole items only
+    "SELECT id FROM orders UNION SELECT id FROM customers ORDER BY id",
+    "SELECT id AS x FROM orders UNION SELECT id FROM customers ORDER BY x",
+    "SELECT id AS x FROM orders UNION SELECT id FROM customers ORDER BY id",
+    "SELECT id FROM orders UNION SELECT id FROM customers ORDER BY id + 1",
+    "SELECT id FROM orders UNION SELECT id FROM customers ORDER BY orders.id",
+    # subqueries sqlglot does not scope are not name-checked
+    "SELECT id FROM orders UNION SELECT id FROM orders LIMIT (SELECT max(id) FROM orders)",
+    "SELECT id FROM orders UNION SELECT id FROM orders ORDER BY (SELECT 1)",
+    # aliased parenthesized join trees
+    "SELECT * FROM (customers c JOIN LATERAL (SELECT c.id AS z) s ON true) AS j",
+    "SELECT * FROM (customers c JOIN orders o ON o.id = (SELECT c.id)) AS j",
+    "SELECT j.z FROM (customers c JOIN LATERAL (SELECT c.id AS z) s ON true) AS j",
+    "SELECT * FROM (customers c JOIN LATERAL (SELECT x.id) s ON true) AS j",
+    "SELECT c.id FROM (customers c JOIN orders o ON true) AS j",
     # table column alias lists rename columns
     "SELECT o.x FROM orders AS o(x, s)",
     "SELECT o.id FROM orders AS o(x, s)",
@@ -150,6 +174,43 @@ STATEMENTS = [
     "SELECT * FROM (VALUES (1, 2), (3, 4)) q",
     "SELECT *",
     "SELECT * FROM (SELECT 1) q(a, b)",
+    # names PostgreSQL gives unaliased output columns
+    "SELECT status, count(*) FROM orders GROUP BY status ORDER BY count DESC",
+    "SELECT sum(amount) FROM orders ORDER BY sum",
+    "SELECT upper(name) FROM customers ORDER BY upper",
+    "SELECT q.count FROM (SELECT count(*) FROM orders) q",
+    "SELECT q.count FROM (SELECT count(*) OVER () FROM orders) q",
+    "SELECT q.count FROM (SELECT count(*) FILTER (WHERE flag) FROM orders) q",
+    "SELECT q.coalesce FROM (SELECT coalesce(amount, 0) FROM orders) q",
+    "SELECT q.nullif FROM (SELECT nullif(status, 'x') FROM orders) q",
+    "SELECT q.greatest FROM (SELECT greatest(id, 1) FROM orders) q",
+    "SELECT q.current_date FROM (SELECT current_date FROM orders) q",
+    "SELECT q.exists FROM (SELECT EXISTS (SELECT 1) FROM orders) q",
+    "SELECT q.tags FROM (SELECT tags[1] FROM orders) q",
+    "SELECT q.amount FROM (SELECT amount::text FROM orders) q",
+    "SELECT q.case FROM (SELECT CASE WHEN flag THEN 1 END FROM orders) q",
+    "SELECT q.amount FROM (SELECT CASE WHEN flag THEN 0 ELSE amount END FROM orders) q",
+    "SELECT q.case FROM (SELECT CASE WHEN flag THEN 0 ELSE amount END FROM orders) q",
+    "SELECT q.max FROM (SELECT (SELECT max(id) FROM customers) FROM orders) q",
+    "SELECT q.id FROM (SELECT (SELECT max(id) FROM customers) FROM orders) q",
+    "SELECT q.year FROM (SELECT extract(year FROM current_date) FROM orders) q",
+    "SELECT q.mod FROM (SELECT amount % 2 FROM orders) q",
+    "SELECT id AS x, amount AS x FROM orders ORDER BY x",
+    "SELECT status AS s, count(*) FROM orders GROUP BY s",
+    "SELECT count(*) FROM orders GROUP BY count",
+    "SELECT count(*) AS c FROM orders GROUP BY c",
+    "SELECT row_number() OVER () AS r FROM orders GROUP BY r",
+]
+
+# PostgreSQL accepts these, but the written name is not certain from the parse tree (ceil and
+# ceiling, now() and CURRENT_TIMESTAMP, cast type names), so references are rejected instead
+# of guessed.
+UNCERTAIN_NAMES = [
+    "SELECT q.ceil FROM (SELECT ceil(amount) FROM orders) q",
+    "SELECT q.now FROM (SELECT now() FROM orders) q",
+    "SELECT q.extract FROM (SELECT extract(year FROM current_date) FROM orders) q",
+    "SELECT q.text FROM (SELECT 'a'::text FROM orders) q",
+    "SELECT length(name) FROM customers ORDER BY length",
 ]
 
 
@@ -166,7 +227,7 @@ def postgres_verdicts(database_url) -> dict[str, str | None]:
                 for statement in filter(None, (s.strip() for s in DDL.split(";"))):
                     await conn.execute(text(statement))
                 await conn.execute(text(f"SET search_path TO {SCHEMA}"))
-                for sql in STATEMENTS:
+                for sql in STATEMENTS + UNCERTAIN_NAMES:
                     try:
                         await conn.exec_driver_sql("EXPLAIN " + sql)
                         verdicts[sql] = None
@@ -188,3 +249,10 @@ def test_validator_matches_postgres(sql, postgres_verdicts):
     assert (postgres is None) == (not structural), (
         f"PostgreSQL: {postgres or 'accepts'}; validator: {structural or 'accepts'}"
     )
+
+
+@pytest.mark.parametrize("sql", UNCERTAIN_NAMES)
+def test_uncertain_output_names_are_rejected_not_guessed(sql, postgres_verdicts):
+    assert postgres_verdicts[sql] is None
+    result = validate_sql_operation(sql, "postgresql", CONTEXT, {})
+    assert [e.code for e in result.errors] == ["unknown_field"]

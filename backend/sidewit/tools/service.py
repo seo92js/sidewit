@@ -4,6 +4,7 @@ Nothing here calls an LLM, executes SQL or connects to an application database.
 """
 
 import uuid
+from dataclasses import replace
 from typing import Any
 
 from pydantic import BaseModel
@@ -63,6 +64,7 @@ class Revalidation(BaseModel):
 
 def validate_tool(
     context: ContextRecord,
+    definition: ContextDefinition,
     input_schema: Any,
     statement: str,
     metric_binding: MetricBinding | None = None,
@@ -76,7 +78,6 @@ def validate_tool(
             valid=False, errors=schema_errors, warnings=[], checks=["input_schema"]
         )
         return result
-    definition = ContextDefinition.model_validate(context.definition)
     declared = parameter_types(input_schema)
     analysis = analyze_sql_operation(
         statement, context.dialect, definition, declared, None, DEFAULT_POLICY
@@ -113,28 +114,29 @@ def tool_binding(tool: ToolRecord) -> MetricBinding | None:
 
 def save_validated_tool(
     store: Store, tool: ToolRecord, context: ContextRecord, result: ValidationResult
-) -> None:
-    """Persist one validation outcome, then cache it against the same Tool/Context versions."""
-    tool.validation = result.model_dump(mode="json")
+) -> ToolRecord:
+    """Persist one validation outcome as a new Tool record and cache it; returns the record."""
     if result.valid:
-        tool.status = "valid"
-        tool.context_version = context.version
-        tool.validation_errors = []
+        verdict = {"status": "valid", "context_version": context.version, "validation_errors": []}
     else:
         # context_version keeps the last version the tool was valid against (§3.3).
-        tool.status = "invalid"
-        tool.validation_errors = [e.model_dump() for e in result.errors]
-    store.save_tool(tool)
-    store.remember_tool_check(tool, context, result)
+        verdict = {
+            "status": "invalid",
+            "validation_errors": [e.model_dump() for e in result.errors],
+        }
+    saved = store.save_tool(replace(tool, validation=result.model_dump(mode="json"), **verdict))
+    store.remember_tool_check(saved, context, result)
+    return saved
 
 
 def revalidate_context_tools(store: Store, context: ContextRecord) -> Revalidation:
     """Rechecks and saves every Tool of `context`. Runs without awaiting, in the same
     synchronous step as the Context save (store concurrency model)."""
     summary = Revalidation()
-    for tool in store.tools_of(context.id):
+    definition = store.definition(context)
+    for tool in store.tool_snapshots(context.id):
         result = validate_tool(
-            context, tool.input_schema, tool.operation["statement"], tool_binding(tool)
+            context, definition, tool.input_schema, tool.operation["statement"], tool_binding(tool)
         )
         save_validated_tool(store, tool, context, result)
         summary.checked += 1
@@ -159,14 +161,20 @@ def is_current(tool: ToolRecord, context: ContextRecord) -> bool:
 
 
 def invoke(
-    store: Store, tool: ToolRecord, context: ContextRecord, arguments: dict[str, Any]
+    store: Store,
+    tool: ToolRecord,
+    context: ContextRecord,
+    arguments: dict[str, Any],
+    *,
+    period_parameters: tuple[tuple[str, str], ...] = (),
 ) -> tuple[SqlOperation, ValidationResult]:
     if not tool.enabled:
         raise ToolDisabled("Tool is disabled.")
+    definition = store.definition(context)
     result = store.tool_check(tool, context)
     if result is None:
         result = validate_tool(
-            context, tool.input_schema, tool.operation["statement"], tool_binding(tool)
+            context, definition, tool.input_schema, tool.operation["statement"], tool_binding(tool)
         )
         if not is_current(tool, context) or not result.valid:
             save_validated_tool(store, tool, context, result)
@@ -183,9 +191,10 @@ def invoke(
     issues = parameter_value_issues(
         tool.operation["statement"],
         context.dialect,
-        ContextDefinition.model_validate(context.definition),
+        definition,
         parameter_types(tool.input_schema),
         arguments,
+        period_parameters,
     )
     if issues:
         raise InvalidArguments(issues)
@@ -200,7 +209,9 @@ def invoke(
     ), result
 
 
-def draft_from_generation(generation: GenerationRecord, context: ContextRecord) -> dict[str, Any]:
+def draft_from_generation(
+    generation: GenerationRecord, context: ContextRecord, definition: ContextDefinition
+) -> dict[str, Any]:
     """Draft material only: not validated and not trusted. Saving re-validates it. String
     inputs compared with an enum-like field accept only that field's allowed values."""
     operation = generation.operation or {}
@@ -209,11 +220,7 @@ def draft_from_generation(generation: GenerationRecord, context: ContextRecord) 
     if operation.get("statement"):
         _restrict_to_allowed_values(
             schema,
-            allowed_values_by_parameter(
-                operation["statement"],
-                context.dialect,
-                ContextDefinition.model_validate(context.definition),
-            ),
+            allowed_values_by_parameter(operation["statement"], context.dialect, definition),
         )
     return {
         "context_id": generation.context_id,
@@ -227,14 +234,15 @@ def draft_from_generation(generation: GenerationRecord, context: ContextRecord) 
     }
 
 
-def contract_snapshot(tool: ToolRecord, context: ContextRecord) -> tuple[str, dict[str, Any]]:
+def contract_snapshot(
+    tool: ToolRecord, context: ContextRecord, definition: ContextDefinition
+) -> tuple[str, dict[str, Any]]:
     """SQL and input_schema rebuilt from the Tool's metric contract in the current Context.
     String inputs on enum-like fields take the Context's allowed values; descriptions (and a
     hand-set enum, when the field has no allowed values) are kept where the type is unchanged."""
     if tool.metric_binding is None:
         raise ContractUnavailable("This tool is not bound to a metric contract.")
     binding = MetricBinding.model_validate(tool.metric_binding)
-    definition = ContextDefinition.model_validate(context.definition)
     metric = next((m for m in definition.metrics if m.id == binding.metric_id), None)
     if metric is None:
         raise ContractUnavailable(f"Metric '{binding.metric_id}' is no longer registered.")

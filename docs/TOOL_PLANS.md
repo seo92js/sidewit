@@ -82,6 +82,12 @@ Multiple steps require an explicit ID. Saved Tool steps cannot be drafted again.
 4. Execute the operations against your own database, retaining step IDs with their results.
 5. Present or compare the results in your application.
 
+Relative periods on a saved Tool's date inputs (the last N days, yesterday, the last calendar
+week or month) are computed by the server, not the model. The Tool catalog lists as
+`period_inputs` the input pairs used only as `field >= :start` and `field < :end`; a Tool
+without them, such as one with an inclusive end, is not used for a relative period, and that
+part becomes a generated task.
+
 Independent means there are no step-output bindings or required result dependencies.
 Your application can choose its execution order, concurrency, transaction policy and handling
 of database failures. An all-valid plan is not an execution transaction or an execution-safety
@@ -100,7 +106,10 @@ Generation runs concurrently for uncovered tasks (at most four), with one repair
 under the same 90-second overall request deadline. Every task uses the original request and
 answers for literal validation and the same reference time. A model-written subquestion
 cannot redefine the user's input values. Context and selected Tool versions are checked again
-after generation. Results from separate versions cannot be combined into a successful plan.
+after generation. Results from separate versions cannot be combined into a successful plan:
+a changed Context returns 409 `context_changed`, and a selected Tool that was edited, renamed,
+disabled, enabled or deleted returns 409 `tool_changed` with its `step_id`. Saved Tool steps are
+validated and invoked once, before generation, and reused when their versions are unchanged.
 Unexpected worker exceptions and request cancellation cancel all remaining workers and wait
 for their cleanup before the request exits. Expected provider/validation failures retain the
 normal error handling; no successful partial operations are published.

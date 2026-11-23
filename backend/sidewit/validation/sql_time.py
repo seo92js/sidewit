@@ -28,8 +28,12 @@ def temporal_inputs(node: exp.Expression) -> list[exp.Expression]:
     return []
 
 
+# PostgreSQL reads these as whole runs of letters anywhere: '10:00yesterday' yes, 'todayx' no.
+_SPECIAL_DATE_WORD = re.compile(r"(?<![a-z])(?:now|today|tomorrow|yesterday)(?![a-z])", re.I)
+
+
 def special_time_literal(value: str) -> bool:
-    return bool(re.match(r"^\s*(now|today|tomorrow|yesterday)(?:\s|$)", value, re.I))
+    return _SPECIAL_DATE_WORD.search(value) is not None
 
 
 class TemporalValues(ValueAnalysis):

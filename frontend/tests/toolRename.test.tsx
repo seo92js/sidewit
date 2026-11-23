@@ -274,3 +274,11 @@ test("renaming to new keeps the saved editor separate from the create screen", a
   expect(screen.queryByRole("button", { name: "Save tool" })).toBeNull();
   qc.clear();
 });
+
+test("the editor reloads through the page's Tool query instead of a second observer", () => {
+  vi.mocked(request).mockResolvedValue(validation);
+  const { qc } = editor();
+  const query = qc.getQueryCache().find({ queryKey: ["tools", tool.id], exact: true });
+  expect(query?.getObserversCount()).toBe(1);
+  qc.clear();
+});

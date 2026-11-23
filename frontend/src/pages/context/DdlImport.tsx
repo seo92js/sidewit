@@ -192,7 +192,7 @@ export function DdlImport({
           Finish saving or fix the Context input errors before previewing.
         </p>
       )}
-      <ErrorAlert error={importDdl.error} title="Could not preview DDL" />
+      <ErrorAlert error={importDdl.error} resource="Context" title="Could not preview DDL" />
       {preview && changes && (
         <div className="space-y-3 rounded-md border bg-background p-3">
           <h4 className="font-medium">Changes to your current schema</h4>
