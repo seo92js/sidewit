@@ -234,6 +234,10 @@ docker compose run --rm -T --no-deps -v ./evals:/evals:ro api sidewit-eval run /
 ```
 
 The suites are **regression cases exposed during development and review**, not a general NL2SQL accuracy benchmark. FakeProvider results do not measure real-model accuracy either. See [evaluation guidance](evals/README.md) for suites and result summaries, and [contributing](CONTRIBUTING.md#development-checks) for lint, test and build commands. Development parity tests use a temporary PostgreSQL instance; the product does not need one.
+For a separate execution-result baseline against 24 new synthetic workshop questions, run
+`bash scripts/run-execution-eval.sh`. This starts disposable evaluation containers and writes
+an `eval-results/execution-workshops-*.json` report; the production API still never connects
+to a database.
 
 ## Limitations and roadmap
 

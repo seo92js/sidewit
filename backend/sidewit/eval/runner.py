@@ -1,14 +1,29 @@
 """Runs a golden suite through the public Sidewit API (the same path applications use)."""
 
 from datetime import datetime
-from typing import Any
+from time import perf_counter
+from typing import Any, Protocol
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from sidewit.domain.operation import SqlOperation
 from sidewit.eval.cases import GoldenCase, Suite
 from sidewit.eval.plans import score_plan
 from sidewit.eval.scoring import Failure
+
+
+class ExecutionComparison(BaseModel):
+    matched: bool
+    expected_row_count: int
+    actual_row_count: int | None = None
+    error: str | None = None
+
+
+class ExecutionEvaluator(Protocol):
+    async def prepare(self, cases: list[GoldenCase]) -> None: ...
+
+    async def compare(self, case_id: str, operation: SqlOperation) -> ExecutionComparison: ...
 
 
 class CaseResult(BaseModel):
@@ -25,6 +40,10 @@ class CaseResult(BaseModel):
     generation_id: str | None
     failures: list[Failure]
     validation_errors: list[dict[str, Any]] = []
+    execution: ExecutionComparison | None = None
+    request_latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class SuiteReport(BaseModel):
@@ -40,6 +59,7 @@ class SuiteReport(BaseModel):
     passed: int
     failed: int
     cases: list[CaseResult]
+    execution_enabled: bool = False
 
 
 class EvalSetupError(Exception):
@@ -47,7 +67,10 @@ class EvalSetupError(Exception):
 
 
 async def run_suite(
-    client: httpx.AsyncClient, suite: Suite, case_ids: list[str] | None = None
+    client: httpx.AsyncClient,
+    suite: Suite,
+    case_ids: list[str] | None = None,
+    execution: ExecutionEvaluator | None = None,
 ) -> SuiteReport:
     started = datetime.now().astimezone()
     unknown = set(case_ids or []) - {c.id for c in suite.cases}
@@ -56,9 +79,11 @@ async def run_suite(
     cases = [c for c in suite.cases if not case_ids or c.id in case_ids]
     if not cases:
         raise EvalSetupError("No cases selected.")
+    if execution is not None:
+        await execution.prepare(cases)
     context = await _sync_context(client, suite)
 
-    results = [await _run_case(client, suite, context["id"], case) for case in cases]
+    results = [await _run_case(client, suite, context["id"], case, execution) for case in cases]
     meta = await _generation_meta(client, results)
     passed = sum(r.passed for r in results)
     return SuiteReport(
@@ -74,6 +99,7 @@ async def run_suite(
         passed=passed,
         failed=len(results) - passed,
         cases=results,
+        execution_enabled=execution is not None,
     )
 
 
@@ -97,7 +123,11 @@ async def _sync_context(client: httpx.AsyncClient, suite: Suite) -> dict[str, An
 
 
 async def _run_case(
-    client: httpx.AsyncClient, suite: Suite, context_id: str, case: GoldenCase
+    client: httpx.AsyncClient,
+    suite: Suite,
+    context_id: str,
+    case: GoldenCase,
+    execution: ExecutionEvaluator | None = None,
 ) -> CaseResult:
     reference_time = case.reference_time or suite.reference_time
     common = {
@@ -107,6 +137,7 @@ async def _run_case(
         "reference_time": reference_time,
         "expected_status": case.expect.status,
     }
+    started = perf_counter()
     try:
         res = await client.post(
             "/generate",
@@ -117,6 +148,7 @@ async def _run_case(
             },
         )
     except httpx.HTTPError as e:
+        common["request_latency_ms"] = round((perf_counter() - started) * 1000)
         # Exception text may include a credential-bearing URL; record the class only.
         return CaseResult(
             **common,
@@ -125,6 +157,7 @@ async def _run_case(
             generation_id=None,
             failures=[Failure(expectation="generation", detail=type(e).__name__)],
         )
+    common["request_latency_ms"] = round((perf_counter() - started) * 1000)
     try:
         body = res.json()
         if not isinstance(body, dict):
@@ -161,6 +194,7 @@ async def _run_case(
         )
     failures: list[Failure] = []
     validation_errors: list[dict[str, Any]] = []
+    comparison = None
     if status != case.expect.status:
         failures.append(
             Failure(expectation="status", detail=f"expected {case.expect.status}, got {status}")
@@ -172,6 +206,8 @@ async def _run_case(
             failures.append(
                 Failure(expectation="source", detail=f"expected {case.expect.source}, got {source}")
             )
+        if execution is not None and not failures:
+            comparison = await _compare_rows(execution, case.id, body, failures)
     return CaseResult(
         **common,
         passed=not failures,
@@ -180,18 +216,51 @@ async def _run_case(
         generation_id=body["generation_id"],
         failures=failures,
         validation_errors=validation_errors,
+        execution=comparison,
     )
 
 
-async def _generation_meta(client: httpx.AsyncClient, results: list[CaseResult]) -> dict:
-    generation_id = next((r.generation_id for r in results if r.generation_id), None)
-    if generation_id is None:
-        return {}
+async def _compare_rows(
+    execution: ExecutionEvaluator, case_id: str, body: dict[str, Any], failures: list[Failure]
+) -> ExecutionComparison | None:
     try:
-        res = await client.get(f"/generations/{generation_id}")
-    except httpx.HTTPError:
-        return {}
-    return res.json() if res.status_code == 200 else {}
+        operation = SqlOperation.model_validate(body["operations"][0]["operation"])
+    except (KeyError, IndexError, TypeError, ValidationError):
+        detail = "Response operation was malformed."
+        failures.append(Failure(expectation="execution", detail=detail))
+        return None
+    comparison = await execution.compare(case_id, operation)
+    if comparison.error:
+        failures.append(Failure(expectation="execution", detail=comparison.error))
+    elif not comparison.matched:
+        if comparison.expected_row_count == comparison.actual_row_count:
+            detail = f"Result values differ ({comparison.expected_row_count} rows each)."
+        else:
+            detail = (
+                "Result row counts differ "
+                f"(expected {comparison.expected_row_count}, got {comparison.actual_row_count})."
+            )
+        failures.append(Failure(expectation="execution", detail=detail))
+    return comparison
+
+
+async def _generation_meta(client: httpx.AsyncClient, results: list[CaseResult]) -> dict:
+    first = {}
+    for result in results:
+        if result.generation_id is None:
+            continue
+        try:
+            res = await client.get(f"/generations/{result.generation_id}")
+            record = res.json() if res.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        if not first:
+            first = record
+        result.input_tokens = record.get("input_tokens")
+        result.output_tokens = record.get("output_tokens")
+    return first
 
 
 def _ensure(res: httpx.Response, action: str) -> None:

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from sidewit.application.runtime import get_llm_provider
-from sidewit.eval.runner import EvalSetupError, run_suite
+from sidewit.eval.runner import EvalSetupError, ExecutionComparison, _compare_rows, run_suite
 from sidewit.generation.dto import LLMGenerationOutput, LLMParameter, LLMToolSuggestion
 from sidewit.generation.prompt import PROMPT_VERSION
 from sidewit.generation.providers.fake import FakeProvider
@@ -82,6 +82,46 @@ async def test_entire_golden_suite_through_real_api_with_fixture_provider(
     assert data["cases"][0]["reference_time"]
     record = (await eval_client.get(f"/generations/{report.cases[0].generation_id}")).json()
     assert record["reference_time"] == "2026-10-02T00:00:00Z"
+
+
+async def test_execution_oracle_scores_rows_after_structural_validation(
+    eval_client, golden_suite, install_provider
+):
+    case = case_by_id(golden_suite, "total_revenue")
+    install_provider(output(case))
+
+    class Oracle:
+        def __init__(self):
+            self.calls = []
+
+        async def prepare(self, cases):
+            assert [item.id for item in cases] == [case.id]
+
+        async def compare(self, case_id, operation):
+            self.calls.append((case_id, operation.statement))
+            return ExecutionComparison(matched=False, expected_row_count=1, actual_row_count=1)
+
+    oracle = Oracle()
+    report = await run_suite(eval_client, golden_suite, [case.id], oracle)
+    assert report.execution_enabled
+    assert report.failed == 1
+    assert report.cases[0].execution is not None
+    assert report.cases[0].execution.matched is False
+    assert [failure.expectation for failure in report.cases[0].failures] == ["execution"]
+    assert oracle.calls == [(case.id, case.reference.statement)]
+
+
+async def test_execution_malformed_operation_fails_only_that_case():
+    class Oracle:
+        async def compare(self, case_id, operation):
+            raise AssertionError("must not compare a malformed operation")
+
+    failures = []
+    body = {"operations": [{"operation": {"statement": "SELECT 1"}}]}
+    assert await _compare_rows(Oracle(), "case", body, failures) is None
+    assert [(f.expectation, f.detail) for f in failures] == [
+        ("execution", "Response operation was malformed.")
+    ]
 
 
 async def test_repeat_suite_reuses_identical_context_without_version_bump(

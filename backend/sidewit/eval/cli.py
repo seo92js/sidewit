@@ -57,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--case", action="append", dest="cases", help="run only this case id")
     run.add_argument("--out", type=Path, help="write the JSON report here")
     run.add_argument("--timeout", type=_timeout, default=120.0)
+    run.add_argument(
+        "--execution-url",
+        help="compare result rows in an isolated PostgreSQL _eval database",
+    )
     args = parser.parse_args(argv)
 
     headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
@@ -82,13 +86,23 @@ async def _run(args, suite, headers) -> SuiteReport:
     async with httpx.AsyncClient(
         base_url=args.api_url.rstrip("/") + "/api/v1", headers=headers, timeout=args.timeout
     ) as client:
-        return await run_suite(client, suite, args.cases)
+        if not getattr(args, "execution_url", None):
+            return await run_suite(client, suite, args.cases)
+        try:
+            from sidewit.eval.execution import PostgresExecutionEvaluator
+        except ImportError as e:
+            raise EvalSetupError(
+                "Execution evaluation requires the backend dev dependencies."
+            ) from e
+        async with PostgresExecutionEvaluator(args.execution_url) as execution:
+            return await run_suite(client, suite, args.cases, execution)
 
 
 def render(report: SuiteReport) -> str:
     lines = [
         f"suite {report.suite} · context v{report.context_version} · "
-        f"provider {report.provider} · model {report.model} · prompt {report.prompt_version}",
+        f"provider {report.provider} · model {report.model} · prompt {report.prompt_version}"
+        + (" · execution rows checked" if report.execution_enabled else ""),
         "",
     ]
     width = max((len(c.id) for c in report.cases), default=10)
@@ -96,12 +110,26 @@ def render(report: SuiteReport) -> str:
         mark = "PASS" if case.passed else "FAIL"
         actual = case.actual_status + (f"/{case.actual_source}" if case.actual_source else "")
         status = actual if case.passed else f"{actual} (expected {case.expected_status})"
-        lines.append(f"{mark}  {case.id:<{width}}  {status}  {case.generation_id or '-'}")
+        actual_rows = case.execution.actual_row_count if case.execution else None
+        rows = f"  rows={actual_rows}" if actual_rows is not None else ""
+        lines.append(f"{mark}  {case.id:<{width}}  {status}  {case.generation_id or '-'}{rows}")
         for failure in case.failures:
             lines.append(f"      ✗ {failure.expectation}: {failure.detail}")
         for error in case.validation_errors:
             lines.append(f"      ✗ validation {error.get('code')}: {error.get('message')}")
     lines += ["", f"{report.passed}/{report.total} passed, {report.failed} failed"]
+    reported = [
+        case
+        for case in report.cases
+        if case.input_tokens is not None and case.output_tokens is not None
+    ]
+    if reported:
+        lines.append(
+            "reported tokens: "
+            f"input {sum(case.input_tokens or 0 for case in reported)}, "
+            f"output {sum(case.output_tokens or 0 for case in reported)} "
+            f"({len(reported)}/{report.total} cases)"
+        )
     return "\n".join(lines)
 
 

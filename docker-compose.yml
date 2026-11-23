@@ -45,3 +45,51 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${SIDEWIT_WEB_PORT:-3000}:80"
+
+  # The eval profile is isolated from the normal API and its persistent data directory.
+  eval-api:
+    profiles: [eval]
+    build: ./backend
+    environment:
+      SIDEWIT_DATA_DIR: /tmp/sidewit-eval-data
+      SIDEWIT_API_KEY: ${SIDEWIT_API_KEY:-}
+      SIDEWIT_LLM_PROVIDER: ${SIDEWIT_LLM_PROVIDER:-}
+      SIDEWIT_LLM_MODEL: ${SIDEWIT_LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  eval-db:
+    profiles: [eval]
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sidewit_eval
+      POSTGRES_PASSWORD: sidewit_eval_setup
+    volumes:
+      - ./evals/execution-workshops/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d sidewit_eval"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  eval:
+    profiles: [eval]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.eval
+    environment:
+      SIDEWIT_API_KEY: ${SIDEWIT_API_KEY:-}
+    volumes:
+      - ./evals:/evals:ro
+      - ./eval-results:/results
+    depends_on:
+      eval-api:
+        condition: service_healthy
+      eval-db:
+        condition: service_healthy
